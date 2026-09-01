@@ -237,11 +237,13 @@ def _apply_proposal(ad, key, proposal):
 
 
 def _plot_verdicts(ad, figdir):
+    from .plots import UMAP_DPI, umap_axes
+
     os.makedirs(figdir, exist_ok=True)
     xy = np.asarray(ad.obsm["X_umap"])
     act = ad.obs["_msp_action"].astype(str).values
-    base = max(1.0, 120000 / ad.n_obs)
-    fig, ax = plt.subplots(figsize=(7, 6))
+    base = 120000 / ad.n_obs
+    fig, ax = umap_axes(ad)
     for name, color, size in (("keep", "#d3d3d3", base), ("flag", "#b8860b", 1.5 * base),
                               ("drop", "#8b0000", 1.5 * base)):
         m = act == name
@@ -249,9 +251,8 @@ def _plot_verdicts(ad, figdir):
             ax.scatter(xy[m, 0], xy[m, 1], s=size, c=color, linewidths=0,
                        label=f"{name} (n={int(m.sum())})")
     ax.set_title("UMAP: inspection action (proposal)")
-    ax.set_xlabel("UMAP1"); ax.set_ylabel("UMAP2")
     ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
-    fig.savefig(os.path.join(figdir, "inspect_umap_action.png"), dpi=150, bbox_inches="tight")
+    fig.savefig(os.path.join(figdir, "inspect_umap_action.png"), dpi=UMAP_DPI)
     plt.close(fig)
 
 

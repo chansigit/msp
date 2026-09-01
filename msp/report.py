@@ -44,6 +44,10 @@ img.fig { max-width: 100%; display: block; border: 1px solid #ddd; }
 .row { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: flex-start; }
 .row > div { flex: 1 1 45%; min-width: 320px; }
 .row img.fig { width: 100%; }
+.grid { display: flex; flex-wrap: wrap; gap: 1.2rem; margin: .5rem 0 1rem 0; }
+.grid-item { flex: 0 0 330px; margin: 0; }
+.grid-item img.fig { width: 330px; }
+.grid-item figcaption { text-align: center; }
 figure { margin: 1rem 0; }
 figcaption { font-size: .78rem; color: #555; margin-top: .25rem; }
 #inspection td, #agent-tables td { text-align: left; vertical-align: top; }
@@ -81,13 +85,22 @@ def _h2(anchor: str) -> str:
     return f'<h2 id="{anchor}">{_SECTION_LABELS[anchor]}</h2>'
 
 
-def _img(path: str) -> str:
+def _img(path: str, cls: str = "") -> str:
     with open(path, "rb") as fh:
         b64 = base64.b64encode(fh.read()).decode("ascii")
     ext = os.path.splitext(path)[1].lstrip(".") or "png"
     name = html.escape(os.path.basename(path))
-    return (f'<figure><img class="fig" src="data:image/{ext};base64,{b64}" '
+    cls_attr = f' class="{cls}"' if cls else ""
+    return (f'<figure{cls_attr}><img class="fig" src="data:image/{ext};base64,{b64}" '
             f'alt="{name}"><figcaption>{name}</figcaption></figure>')
+
+
+def _grid(paths: list[str]) -> str:
+    """Tile a family of single-metric panels into a grid (osp's report
+    pattern: one file per plot, tiled here so the family reads as one view)."""
+    if not paths:
+        return ""
+    return '<div class="grid">' + "".join(_img(p, cls="grid-item") for p in paths) + "</div>"
 
 
 def _csv_table(path: str) -> str:
@@ -230,19 +243,24 @@ def _section_inspection(outdir: str, inspect_figs: list[str]) -> str:
     return _h2("inspection") + "".join(parts)
 
 
-def _section_qc_umap(outdir: str, qc_figs: list[str]) -> str:
+def _section_qc_umap(qc_figs: list[str]) -> str:
     if not qc_figs:
         return ""
+    umaps = [p for p in qc_figs if "umap" in os.path.basename(p)]
+    violins = [p for p in qc_figs if "violin" in os.path.basename(p)]
+    other = [p for p in qc_figs if p not in umaps and p not in violins]
     return (_h2("qc-umap")
-            + '<p class="hint">pct_counts_mt uses a fixed color ceiling (vmax=20) — '
-            "the scale never autoscales.</p>"
-            + "".join(_img(p) for p in qc_figs))
+            + '<p class="hint">One metric per panel; pct_counts_mt uses a fixed color '
+            "ceiling (vmax=20) — the scale never autoscales.</p>"
+            + _grid(umaps)
+            + ("<h3>per-cluster violins</h3>" + _grid(violins) if violins else "")
+            + _grid(other))
 
 
 def _section_umaps(umap_figs: list[str]) -> str:
     if not umap_figs:
         return ""
-    return _h2("umaps") + "".join(_img(p) for p in umap_figs)
+    return _h2("umaps") + _grid(umap_figs)
 
 
 def _number_sections(section_htmls):
@@ -281,7 +299,7 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
         _section_deg(outdir),
         _section_standissect(outdir, standissect_figs),
         _section_inspection(outdir, inspect_figs),
-        _section_qc_umap(outdir, qc_figs),
+        _section_qc_umap(qc_figs),
         _section_umaps(umap_figs),
     ]
     sections, toc = _number_sections(sections)

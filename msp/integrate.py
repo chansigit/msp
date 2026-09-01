@@ -24,6 +24,8 @@ import pandas as pd
 import scanpy as sc
 from sklearn.decomposition import PCA
 
+from .plots import UMAP_DPI, save_single_umap, slug, umap_axes
+
 
 def load_and_merge(inputs, batch_col, counts_layer="counts"):
     """Read per-sample clustered.h5ad files and concat them.
@@ -98,26 +100,25 @@ def _plot_fragments(ad, primary_key, figdir, minors=None):
     lab = ad.obs["original_cluster_split"].astype(str).values
     if minors is None:
         minors = sorted({v for v in lab if not v.endswith("_0")})
-    fig, ax = plt.subplots(figsize=(9, 8))
+    fig, ax = umap_axes(ad)
+    base = 120000 / ad.n_obs
     is_main = np.array([v.endswith("_0") for v in lab])
     dust_mask = ~is_main & ~np.isin(lab, minors)  # non-main, below size threshold
-    ax.scatter(xy[is_main, 0], xy[is_main, 1], s=2, c="#d9d9d9", linewidths=0)
+    ax.scatter(xy[is_main, 0], xy[is_main, 1], s=base, c="#d9d9d9", linewidths=0)
     if dust_mask.any():
-        ax.scatter(xy[dust_mask, 0], xy[dust_mask, 1], s=4, c="#000000", linewidths=0,
+        ax.scatter(xy[dust_mask, 0], xy[dust_mask, 1], s=1.5 * base, c="#000000", linewidths=0,
                    label=f"sub-threshold dust (n={int(dust_mask.sum())} cells, "
                          f"{len(set(lab[dust_mask]))} fragments)")
         ax.legend(loc="upper right", fontsize=7, framealpha=0.9)
     cmap = plt.get_cmap("tab20")
     for i, m in enumerate(minors):
         mm = lab == m
-        ax.scatter(xy[mm, 0], xy[mm, 1], s=6, c=[cmap(i % 20)], linewidths=0)
+        ax.scatter(xy[mm, 0], xy[mm, 1], s=1.5 * base, c=[cmap(i % 20)], linewidths=0)
         ax.text(float(xy[mm, 0].mean()), float(xy[mm, 1].mean()), m, fontsize=7, ha="center",
                 bbox=dict(boxstyle="round,pad=0.15", fc="white", alpha=0.75, lw=0))
-    ax.set_title(f"minor siblings ({primary_key} × umap_cluster); "
+    ax.set_title(f"UMAP: minor siblings ({primary_key} × umap_cluster)\n"
                  "main cores grey, sub-threshold dust black")
-    ax.set_xlabel("UMAP1")
-    ax.set_ylabel("UMAP2")
-    fig.savefig(os.path.join(figdir, "standissect_fragments.png"), dpi=150, bbox_inches="tight")
+    fig.savefig(os.path.join(figdir, "standissect_fragments.png"), dpi=UMAP_DPI)
     plt.close(fig)
 
 
@@ -125,27 +126,23 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
     """QC evidence for the integrated space: metric UMAPs, the inherited
     keep/flag/drop overlay, and per-sample / per-cluster QC tables — the
     raw material for the later per-cluster inspection step."""
+    # one metric per file — never a multi-panel figure (osp's rule: a human
+    # or an agent reads one signal per image)
     metrics = [(m, vmax) for m, vmax in QC_UMAP_METRICS if m in ad.obs]
-    if metrics:
-        sc.pl.umap(ad, color=[m for m, _ in metrics], vmax=[v for _, v in metrics],
-                   ncols=3, show=False)
-        # dpi kept modest: agents Read this multi-panel PNG over a pipe with a
-        # bounded message buffer
-        plt.savefig(os.path.join(figdir, "qc_umap_metrics.png"), dpi=110, bbox_inches="tight")
-        plt.close("all")
+    for m, vmax in metrics:
+        save_single_umap(ad, m, os.path.join(figdir, f"qc_umap_{slug(m)}.png"), vmax=vmax)
 
     for m, _ in metrics:
         sc.pl.violin(ad, m, groupby=primary_key, stripplot=False, rotation=90, show=False)
-        plt.savefig(os.path.join(figdir, f"qc_violin_{m}.png"), dpi=110, bbox_inches="tight")
+        plt.savefig(os.path.join(figdir, f"qc_violin_{slug(m)}.png"), dpi=UMAP_DPI,
+                    bbox_inches="tight")
         plt.close("all")
 
     if "_qc_action" in ad.obs:
         order = [c for c in ("keep", "flag", "drop") if c in set(ad.obs["_qc_action"].astype(str))]
         ad.obs["_qc_action"] = pd.Categorical(ad.obs["_qc_action"].astype(str), categories=order)
-        sc.pl.umap(ad, color="_qc_action", palette=[QC_ACTION_PALETTE[c] for c in order],
-                   show=False)
-        plt.savefig(os.path.join(figdir, "qc_umap_qc_action.png"), dpi=150, bbox_inches="tight")
-        plt.close("all")
+        save_single_umap(ad, "_qc_action", os.path.join(figdir, "qc_umap_qc_action.png"),
+                         palette=[QC_ACTION_PALETTE[c] for c in order])
 
     def _agg(groupby):
         g = ad.obs.groupby(groupby, observed=True)
@@ -260,10 +257,8 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     os.makedirs(figdir, exist_ok=True)
     colorings = [batch_col] + leiden_keys + (["_ann_coarse"] if "_ann_coarse" in ad.obs else [])
     for color in colorings:
-        sc.pl.umap(ad, color=color, legend_fontsize=6, show=False)
-        plt.savefig(os.path.join(figdir, f"umap_{color.replace('.', '_')}.png"),
-                    dpi=150, bbox_inches="tight")
-        plt.close("all")
+        save_single_umap(ad, color, os.path.join(figdir, f"umap_{slug(color)}.png"),
+                         legend_fontsize=6)
 
     _plot_fragments(ad, primary_key, figdir,
                     minors=res.fragments.loc[res.fragments.is_minor_sibling, "subcluster"].tolist())
