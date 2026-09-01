@@ -338,7 +338,7 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
         dendrogram_ratio=(0.01, 0.08),
         xticklabels=True, yticklabels=True,
         cbar_kws={"label": "z-score", "orientation": "horizontal"},
-        cbar_pos=(0.02, 0.02, 0.12, 0.015),
+        cbar_pos=(0.02, -0.05, 0.12, 0.015),  # below the x-axis cluster-name labels, not beside them
     )
     cg.ax_col_dendrogram.set_visible(False)  # ordering used, tree not shown — it's not the point
     for label in cg.ax_heatmap.get_xticklabels():
@@ -347,6 +347,8 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
             label.set_fontweight("bold")
         if name in removal_set:
             label.set_color("#c0392b")
+    for x in range(1, n_clusters):  # thin white separators between columns only
+        cg.ax_heatmap.axvline(x, color="white", linewidth=0.6)
     cg.ax_heatmap.set_xlabel("standissect cluster (core + fractals)")
     cg.ax_heatmap.set_ylabel("marker gene")
     cg.savefig(os.path.join(figdir, "fractal_marker_heatmap.png"), dpi=UMAP_DPI, bbox_inches="tight")
