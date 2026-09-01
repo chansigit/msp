@@ -302,7 +302,33 @@ def _section_per_cluster(outdir: str, violins: list[str]) -> str:
     return _h2("per-cluster-qc") + "".join(parts) if parts else ""
 
 
-def _section_deg(outdir: str, top_n: int = 10) -> str:
+def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
+    path = os.path.join(outdir, "fractal_markers.csv")
+    if not os.path.exists(path) and not fractal_figs:
+        return ""
+    parts = ["<h3>Fractal marker heatmap</h3>",
+             '<p class="hint">Each parent\'s CORE cells (rank 0) DE\'d one-vs-rest against every '
+             "other parent's core cells (core-only, so minor siblings never leak into either side); "
+             "per parent, top 10 markers with logFC&gt;0, padj&lt;0.05, ribosomal genes excluded. "
+             "Heatmap: average log1p expression of the union of those markers across every "
+             "standissect cluster (cores AND fractals), row-wise z-scored, both axes "
+             "hierarchically clustered with optimal leaf ordering.</p>"]
+    parts += [_img(p) for p in fractal_figs]
+    if os.path.exists(path):
+        with open(path) as f:
+            rows = list(csv.DictReader(f))
+        body = "".join(
+            "<tr><td>" + "</td><td>".join(html.escape(r[c]) for c in
+                                           ("parent", "gene", "rank", "logfoldchange", "pvals_adj")) + "</td></tr>"
+            for r in rows
+        )
+        parts.append("<details><summary>marker gene list</summary>"
+                     "<table><tr><th>parent</th><th>gene</th><th>rank</th><th>logfoldchange</th>"
+                     f"<th>pvals_adj</th></tr>{body}</table></details>")
+    return "".join(parts)
+
+
+def _section_deg(outdir: str, fractal_figs: list[str], top_n: int = 10) -> str:
     parts = []
     for p in sorted(glob.glob(os.path.join(outdir, "de_top_genes_*.csv"))):
         key = os.path.basename(p)[len("de_top_genes_"):-len(".csv")]
@@ -319,6 +345,7 @@ def _section_deg(outdir: str, top_n: int = 10) -> str:
         )
         parts += [f"<h3>{html.escape(key)}</h3>",
                   f"<table><tr><th>cluster</th><th>top genes (logFC)</th></tr>{body}</table>"]
+    parts.append(_section_fractal_heatmap(outdir, fractal_figs))
     return _h2("deg") + "".join(parts) if parts else ""
 
 
@@ -457,8 +484,9 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     figs = sorted(glob.glob(os.path.join(figdir, "*.png")))
     qc_figs = [p for p in figs if os.path.basename(p).startswith("qc_")]
     standissect_figs = [p for p in figs if os.path.basename(p).startswith("standissect_")]
+    fractal_figs = [p for p in figs if os.path.basename(p).startswith("fractal_")]
     umap_figs = [p for p in figs if p not in qc_figs and not os.path.basename(p).startswith("inspect_")
-                 and p not in standissect_figs]
+                 and p not in standissect_figs and p not in fractal_figs]
 
     violins = [p for p in qc_figs if "violin" in os.path.basename(p)]
     qc_figs = [p for p in qc_figs if p not in violins]
@@ -468,7 +496,7 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
         _section_sample_summary(outdir),
         _section_umaps(umap_figs, standissect_figs, qc_figs),
         _section_per_cluster(outdir, violins),
-        _section_deg(outdir),
+        _section_deg(outdir, fractal_figs),
         _section_inspection(outdir),
     ]
     sections, toc = _number_sections(sections)

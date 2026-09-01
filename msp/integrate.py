@@ -22,6 +22,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scanpy as sc
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+from scipy.cluster.hierarchy import linkage
 from sklearn.decomposition import PCA
 
 from .plots import UMAP_DPI, save_single_umap, slug
@@ -245,6 +248,77 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
     cl.to_csv(os.path.join(outdir, f"cluster_qc_{violin_key}.csv"))
 
 
+# Seurat's classic DoHeatmap palette (colorRampPalette(c("purple","black","yellow")))
+SEURAT_HEATMAP_CMAP = LinearSegmentedColormap.from_list(
+    "seurat_purple_black_yellow", ["purple", "black", "yellow"])
+
+
+def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
+    """Explain fractal identity from the transcriptome, not just QC stats:
+    DE each parent's core cells one-vs-rest against every OTHER parent's
+    core cells (core-only, so a minor sibling's cells never leak into
+    either side of the comparison) -> per-parent top markers (logFC>0,
+    padj<0.05, ribosomal genes excluded) -> average log1p expression of
+    those markers across every standissect cluster (cores AND fractals) ->
+    row-wise (per-gene) z-score -> two-way hierarchical clustering with
+    optimal leaf ordering, Seurat-style purple-black-yellow heatmap."""
+    frag = res.fragments
+    core_rows = frag.loc[frag["rank"] == 0]
+    parent_of_core = dict(zip(core_rows["subcluster"], core_rows["parent"]))
+    core_mask = ad.obs["standissect_product"].astype(str).isin(parent_of_core)
+    core_ad = ad[core_mask].copy()
+    core_ad.obs["parent"] = (
+        core_ad.obs["standissect_product"].astype(str).map(parent_of_core).astype(str).astype("category")
+    )
+
+    print("== parent-core DEG (one vs other parent cores)", flush=True)
+    sc.tl.rank_genes_groups(core_ad, "parent", method="wilcoxon", use_raw=True, pts=True)
+    de_df = sc.get.rank_genes_groups_df(core_ad, group=None)
+    de_df.to_csv(os.path.join(outdir, "de_parent_core_vs_core.csv"), index=False)
+
+    ribo = set(ad.var_names[ad.var["ribo"]]) if "ribo" in ad.var else set()
+    markers, marker_rows = [], []
+    for parent, g in de_df.groupby("group", observed=True):
+        g = g[(g["pvals_adj"] < 0.05) & (g["logfoldchanges"] > 0) & (~g["names"].isin(ribo))]
+        g = g.sort_values("logfoldchanges", ascending=False).head(top_n)
+        for rank, row in enumerate(g.itertuples(), start=1):
+            markers.append(row.names)
+            marker_rows.append({"parent": parent, "gene": row.names, "rank": rank,
+                                 "logfoldchange": round(row.logfoldchanges, 3),
+                                 "pvals_adj": row.pvals_adj})
+    pd.DataFrame(marker_rows).to_csv(os.path.join(outdir, "fractal_markers.csv"), index=False)
+    markers = list(dict.fromkeys(markers))  # de-dup (shared across parents), keep first-seen order
+    if not markers:
+        print("== no marker genes passed the filters — skipping heatmap", flush=True)
+        return
+
+    print(f"== fractal marker heatmap ({len(markers)} genes x "
+          f"{ad.obs['standissect_product'].nunique()} clusters)", flush=True)
+    sub = ad[:, markers]
+    X = sub.X.toarray() if hasattr(sub.X, "toarray") else np.asarray(sub.X)
+    expr = pd.DataFrame(X, index=ad.obs_names, columns=markers)
+    expr["cluster"] = ad.obs["standissect_product"].astype(str).values
+    avg = expr.groupby("cluster").mean().T  # genes x clusters, average log1p expression
+    avg.to_csv(os.path.join(outdir, "fractal_marker_avg_expr.csv"))
+
+    z = avg.sub(avg.mean(axis=1), axis=0).div(avg.std(axis=1).replace(0, 1), axis=0).fillna(0)
+
+    row_linkage = linkage(z.values, method="average", metric="euclidean", optimal_ordering=True)
+    col_linkage = linkage(z.values.T, method="average", metric="euclidean", optimal_ordering=True)
+
+    n_genes, n_clusters = z.shape
+    cg = sns.clustermap(
+        z, row_linkage=row_linkage, col_linkage=col_linkage,
+        cmap=SEURAT_HEATMAP_CMAP, center=0, vmin=-2.5, vmax=2.5,
+        figsize=(max(6.0, n_clusters * 0.35 + 3), max(6.0, n_genes * 0.18 + 2)),
+        xticklabels=True, yticklabels=True, cbar_kws={"label": "z-score (avg log1p expr)"},
+    )
+    cg.ax_heatmap.set_xlabel("standissect cluster (core + fractals)")
+    cg.ax_heatmap.set_ylabel("marker gene")
+    cg.savefig(os.path.join(figdir, "fractal_marker_heatmap.png"), dpi=UMAP_DPI, bbox_inches="tight")
+    plt.close("all")
+
+
 def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
                               resolutions=(0.3, 1.0, 2.0), n_top_genes=2000,
                               n_pcs=50, n_neighbors=15, counts_layer="counts",
@@ -364,6 +438,9 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
 
     print("== QC figures/tables", flush=True)
     _qc_outputs(ad, batch_col, primary_key, outdir, figdir)
+
+    print("== fractal marker heatmap", flush=True)
+    _fractal_marker_heatmap(ad, res, outdir, figdir)
 
     summary = {
         "n_cells": int(ad.n_obs),
