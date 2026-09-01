@@ -62,6 +62,14 @@ figcaption { font-size: .78rem; color: #555; margin-top: .25rem; }
 pre.notes { white-space: pre-wrap; font-size: .85rem; background: #f7f7f7; padding: .8rem; border-radius: 6px; }
 .meta { color: #666; font-size: .9rem; margin: .2rem 0 1rem 0; }
 .hint { color: #555; font-size: .88rem; margin: .3rem 0 1rem 0; max-width: 75ch; }
+.tabset { margin: .5rem 0 1rem 0; }
+.tab-input { display: none; }
+.tab-label { display: inline-block; padding: .4rem .9rem; margin: 0 .3rem -1px 0; cursor: pointer;
+             border: 1px solid #ccc; border-bottom: none; border-radius: 6px 6px 0 0;
+             background: #f2f2f2; font-size: .9rem; color: #444; }
+.tab-input:checked + .tab-label { background: #fff; border-color: #999; font-weight: 600; color: #1a1a1a; }
+.tab-panels { border-top: 1px solid #999; padding-top: .8rem; }
+.tab-panel { display: none; }
 .layout { display: flex; gap: 2rem; align-items: flex-start; }
 .content { flex: 1; min-width: 0; }
 nav.toc { position: -webkit-sticky; position: sticky; top: 50%; transform: translateY(-50%);
@@ -142,6 +150,26 @@ def _img(path: str, cls: str = "") -> str:
     cls_attr = f' class="{cls}"' if cls else ""
     return (f'<figure{cls_attr}><img class="fig" src="data:image/{ext};base64,{b64}" '
             f'alt="{name}"><figcaption>{name}</figcaption></figure>')
+
+
+def _tabs(group_id: str, items: list[tuple[str, str]]) -> str:
+    """CSS-only tabset (radio input + label; no JS) — checked radio's panel
+    is shown via an ID-selector rule that outranks the default .tab-panel
+    { display:none }, no !important needed."""
+    if not items:
+        return ""
+    inputs, labels, panels, rules = [], [], [], []
+    for i, (label, content) in enumerate(items):
+        tid = f"{group_id}-tab-{i}"
+        checked = " checked" if i == 0 else ""
+        inputs.append(f'<input type="radio" name="{group_id}" id="{tid}"{checked} class="tab-input">')
+        labels.append(f'<label for="{tid}" class="tab-label">{html.escape(label)}</label>')
+        panels.append(f'<div class="tab-panel" id="{tid}-panel">{content}</div>')
+        rules.append(f"#{tid}:checked ~ .tab-panels #{tid}-panel")
+    style = f"<style>{', '.join(rules)} {{ display: block; }}</style>"
+    return (f'<div class="tabset">'
+            + "".join(x for pair in zip(inputs, labels) for x in pair)
+            + f'<div class="tab-panels">{"".join(panels)}</div></div>{style}')
 
 
 def _grid(paths: list[str]) -> str:
@@ -335,53 +363,60 @@ def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
     return "".join(parts)
 
 
+def _deg_global_table(path: str, top_n: int) -> str:
+    with open(path) as f:
+        rows = list(csv.DictReader(f))
+    by_group: dict[str, list[str]] = {}
+    for r in rows:
+        g = by_group.setdefault(r["group"], [])
+        if len(g) < top_n:
+            g.append(f"{r['names']} ({float(r['logfoldchanges']):.1f})")
+    body = "".join(
+        f"<tr><td>{html.escape(g)}</td><td style='text-align:left'>{html.escape(', '.join(genes))}</td></tr>"
+        for g, genes in by_group.items()
+    )
+    return f"<table><tr><th>cluster</th><th>top genes (logFC)</th></tr>{body}</table>"
+
+
+def _deg_local_table(path: str, top_n: int) -> str:
+    with open(path) as f:
+        rows = list(csv.DictReader(f))
+    by_group: dict[str, list[str]] = {}
+    neighbors_by_group: dict[str, str] = {}
+    for r in rows:
+        g = by_group.setdefault(r["group"], [])
+        neighbors_by_group.setdefault(r["group"], r.get("neighbors", ""))
+        if len(g) < top_n:
+            g.append(f"{r['names']} ({float(r['logfoldchanges']):.1f})")
+    body = "".join(
+        f"<tr><td>{html.escape(g)}</td><td>{html.escape(neighbors_by_group.get(g, ''))}</td>"
+        f"<td style='text-align:left'>{html.escape(', '.join(genes))}</td></tr>"
+        for g, genes in by_group.items()
+    )
+    return f"<table><tr><th>cluster</th><th>neighbors</th><th>top genes (logFC)</th></tr>{body}</table>"
+
+
 def _section_deg(outdir: str, top_n: int = 10) -> str:
-    parts = []
     global_paths = sorted(glob.glob(os.path.join(outdir, "deg_global_*.csv")))
-    if global_paths:
-        parts.append(
-            '<p class="hint">Cells from any standissect fragment marked recommend_removal '
-            "(see Minor sibling fractals QC) are excluded from every comparison below — "
-            "computation-only, no cells are dropped from the data. Global view: cluster vs every "
-            "other cluster (one-vs-rest). Local view: cluster vs its 3 nearest neighbors by PAGA "
-            "connectivity, pooled into one reference group — a sharper comparison when neighbors "
-            "are transcriptionally close and get washed out by the global one-vs-rest.</p>")
+    if not global_paths:
+        return ""
+    parts = [
+        '<p class="hint">Cells from any standissect fragment marked recommend_removal '
+        "(see Minor sibling fractals QC) are excluded from every comparison below — "
+        "computation-only, no cells are dropped from the data. Global view: cluster vs every "
+        "other cluster (one-vs-rest). Local view: cluster vs its 3 nearest neighbors by PAGA "
+        "connectivity, pooled into one reference group — a sharper comparison when neighbors "
+        "are transcriptionally close and get washed out by the global one-vs-rest.</p>"]
+
+    tabs = []
     for p in global_paths:
         key = os.path.basename(p)[len("deg_global_"):-len(".csv")]
-        with open(p) as f:
-            rows = list(csv.DictReader(f))
-        by_group: dict[str, list[str]] = {}
-        for r in rows:
-            g = by_group.setdefault(r["group"], [])
-            if len(g) < top_n:
-                g.append(f"{r['names']} ({float(r['logfoldchanges']):.1f})")
-        body = "".join(
-            f"<tr><td>{html.escape(g)}</td><td style='text-align:left'>{html.escape(', '.join(genes))}</td></tr>"
-            for g, genes in by_group.items()
-        )
-        parts += [f"<h3>{html.escape(key)} — global view (vs all other clusters)</h3>",
-                  f"<table><tr><th>cluster</th><th>top genes (logFC)</th></tr>{body}</table>"]
-
+        tabs.append((f"{key} — global", _deg_global_table(p, top_n)))
         local_p = os.path.join(outdir, f"deg_local_{key}.csv")
         if os.path.exists(local_p):
-            with open(local_p) as f:
-                lrows = list(csv.DictReader(f))
-            by_group2: dict[str, list[str]] = {}
-            neighbors_by_group: dict[str, str] = {}
-            for r in lrows:
-                g = by_group2.setdefault(r["group"], [])
-                neighbors_by_group.setdefault(r["group"], r.get("neighbors", ""))
-                if len(g) < top_n:
-                    g.append(f"{r['names']} ({float(r['logfoldchanges']):.1f})")
-            body2 = "".join(
-                f"<tr><td>{html.escape(g)}</td><td>{html.escape(neighbors_by_group.get(g, ''))}</td>"
-                f"<td style='text-align:left'>{html.escape(', '.join(genes))}</td></tr>"
-                for g, genes in by_group2.items()
-            )
-            parts += [f"<h3>{html.escape(key)} — local view (vs top-3 PAGA neighbors)</h3>",
-                      "<table><tr><th>cluster</th><th>neighbors</th><th>top genes (logFC)</th></tr>"
-                      f"{body2}</table>"]
-    return _h2("deg") + "".join(parts) if parts else ""
+            tabs.append((f"{key} — local", _deg_local_table(local_p, top_n)))
+    parts.append(_tabs("deg", tabs))
+    return _h2("deg") + "".join(parts)
 
 
 def _section_inspection(outdir: str) -> str:
