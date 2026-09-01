@@ -82,7 +82,6 @@ _SECTION_LABELS = {
     "umaps": "UMAPs",
     "per-cluster-qc": "Per-cluster QC",
     "deg": "Cluster DEG",
-    "standissect": "standissect-lite (minor siblings)",
     "inspection": "Inspection Verdicts",
     "qc-umap": "QC (integrated space)",
 }
@@ -177,36 +176,7 @@ def _section_deg(outdir: str, top_n: int = 10) -> str:
     return _h2("deg") + "".join(parts) if parts else ""
 
 
-_FRAGMENT_COLS = ("subcluster", "parent", "_umap_partition", "n_cells", "frac_of_parent", "rank")
-
-
-def _section_standissect(outdir: str) -> str:
-    hits = sorted(glob.glob(os.path.join(outdir, "fragments_*.csv")))
-    if not hits:
-        return ""
-    parts = []
-    for path in hits:
-        key = os.path.basename(path)[len("fragments_"):-len(".csv")]
-        with open(path) as f:
-            rows = list(csv.DictReader(f))
-        minors = [r for r in rows if str(r.get("is_minor_sibling", "")).lower() in ("true", "1")]
-        parts.append(f"<h3>{html.escape(key)} × umap-side clustering</h3>"
-                     '<p class="hint">Cartesian product of the RNA-side leiden with a '
-                     "UMAP-side clustering; within each parent, fragments are ranked by "
-                     "size — rank 0 is the main core, the rest are minor siblings "
-                     "(subcluster naming: c{parent}_{rank}, always largest-to-smallest). "
-                     "Detection only, candidates not verdicts. "
-                     f"{len(minors)} minor sibling(s) among {len(rows)} fragments.</p>")
-        head = "".join(f"<th>{html.escape(c)}</th>" for c in _FRAGMENT_COLS)
-        body = "".join(
-            "<tr>" + "".join(f"<td>{html.escape(r.get(c, ''))}</td>" for c in _FRAGMENT_COLS) + "</tr>"
-            for r in minors
-        )
-        parts.append(f"<table><tr>{head}</tr>{body}</table>")
-    return _h2("standissect") + "".join(parts)
-
-
-def _section_inspection(outdir: str, inspect_figs: list[str]) -> str:
+def _section_inspection(outdir: str) -> str:
     path = os.path.join(outdir, "inspection_proposal.json")
     if not os.path.exists(path):
         return ""
@@ -240,7 +210,8 @@ def _section_inspection(outdir: str, inspect_figs: list[str]) -> str:
                       for a in cells)) + "</p>")
     if prop.get("overall"):
         parts.append(f"<p><b>Overall:</b> {html.escape(prop['overall'])}</p>")
-    parts += [_img(p) for p in inspect_figs]
+    # the verdict UMAP (keep/flag/drop) is intentionally not repeated here —
+    # it looks like the OSP-inherited _qc_action panel shown earlier
     notes = os.path.join(outdir, "inspection_notes.md")
     if os.path.exists(notes):
         with open(notes) as f:
@@ -313,9 +284,8 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     figdir = os.path.join(outdir, "figures")
     figs = sorted(glob.glob(os.path.join(figdir, "*.png")))
     qc_figs = [p for p in figs if os.path.basename(p).startswith("qc_")]
-    inspect_figs = [p for p in figs if os.path.basename(p).startswith("inspect_")]
     standissect_figs = [p for p in figs if os.path.basename(p).startswith("standissect_")]
-    umap_figs = [p for p in figs if p not in qc_figs and p not in inspect_figs
+    umap_figs = [p for p in figs if p not in qc_figs and not os.path.basename(p).startswith("inspect_")
                  and p not in standissect_figs]
 
     title = title or f"msp Integration Report — {os.path.basename(os.path.abspath(outdir))}"
@@ -325,8 +295,7 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
         _section_umaps(umap_figs, standissect_figs),
         _section_per_cluster(outdir),
         _section_deg(outdir),
-        _section_standissect(outdir),
-        _section_inspection(outdir, inspect_figs),
+        _section_inspection(outdir),
         _section_qc_umap(qc_figs),
     ]
     sections, toc = _number_sections(sections)
