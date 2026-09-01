@@ -339,12 +339,24 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     parent_palette = dict(zip(parents, sns.color_palette("tab20", n_colors=max(len(parents), 1))))
 
     n_genes, n_clusters = z.shape
-    fig_w = max(6.5, n_clusters * 0.4 + 3)
-    fig_h = max(6.0, n_genes * 0.2 + 2)
+
+    # Every margin below is a fixed inch amount, not a figure-fraction — so
+    # whitespace stays constant (tight) regardless of n_genes/n_clusters,
+    # instead of growing with figure size the way fraction-based offsets did.
+    left_margin, strip_w, col_gap, right_margin = 1.3, 0.18, 0.06, 0.15
+    top_margin, plot_col_w = 0.1, n_clusters * 0.32
+    xtick_h, legend_gap, legend_h, bottom_margin = 0.9, 0.12, 0.8, 0.05
+    plot_row_h = max(2.0, n_genes * 0.16)
+
+    fig_w = left_margin + strip_w + col_gap + plot_col_w + right_margin
+    fig_h = top_margin + plot_row_h + xtick_h + legend_gap + legend_h + bottom_margin
     fig = plt.figure(figsize=(fig_w, fig_h))
-    gs = fig.add_gridspec(1, 2, width_ratios=[0.4, n_clusters], wspace=0.05)
-    ax_strip = fig.add_subplot(gs[0, 0])
-    ax = fig.add_subplot(gs[0, 1], sharey=ax_strip)
+
+    plot_bottom = (xtick_h + legend_gap + legend_h + bottom_margin) / fig_h
+    plot_h = plot_row_h / fig_h
+    ax_strip = fig.add_axes((left_margin / fig_w, plot_bottom, strip_w / fig_w, plot_h))
+    ax = fig.add_axes(((left_margin + strip_w + col_gap) / fig_w, plot_bottom,
+                       plot_col_w / fig_w, plot_h), sharey=ax_strip)
 
     strip = np.array([parent_palette[gene_parent[g]] for g in markers])[:, None, :]
     ax_strip.imshow(strip, aspect="auto")
@@ -380,23 +392,25 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
         if name in removal_set:
             label.set_color("#c0392b")
 
-    # colorbar (dot color = z-score) and size legend, both placed a fixed
-    # ~0.6in below the x-axis cluster-name labels regardless of fig height
-    # (a figure-fraction offset alone would grow the gap on tall figures)
-    gap = 0.6 / fig_h
-    cax = fig.add_axes((0.42, -gap, 0.2, 0.15 / fig_h))
+    # colorbar (dot color = z-score) and size legend, packed into the fixed
+    # legend_h/bottom_margin band reserved above — no negative coordinates,
+    # so there's no bbox_inches="tight" guesswork; every element's text stays
+    # within its own axes' [0,1] range so nothing depends on overflow room
+    cax = fig.add_axes(((left_margin + strip_w + col_gap) / fig_w,
+                        (bottom_margin + 0.4) / fig_h, 1.6 / fig_w, 0.15 / fig_h))
     fig.colorbar(sca, cax=cax, orientation="horizontal", label="z-score")
 
-    lax = fig.add_axes((0.68, -gap - 0.25 / fig_h, 0.28, 0.45 / fig_h))
+    lax = fig.add_axes(((left_margin + strip_w + col_gap + 2.1) / fig_w, bottom_margin / fig_h,
+                        2.2 / fig_w, legend_h / fig_h))
     lax.set_xlim(0, 4)
     lax.set_ylim(0, 1)
     lax.axis("off")
     for i, frac_ref in enumerate((0.25, 0.5, 0.75, 1.0)):
-        lax.scatter([i], [0.5], s=frac_ref * max_dot_area + 2, c="grey")
-        lax.text(i, -0.6, f"{frac_ref:g}", ha="center", va="top", fontsize=7)
-    lax.text(1.5, 1.1, "fraction expressing", ha="center", va="bottom", fontsize=8)
+        lax.scatter([i], [0.55], s=frac_ref * max_dot_area + 2, c="grey")
+        lax.text(i, 0.15, f"{frac_ref:g}", ha="center", va="top", fontsize=7)
+    lax.text(1.5, 0.95, "fraction expressing", ha="center", va="top", fontsize=8)
 
-    fig.savefig(os.path.join(figdir, "fractal_marker_heatmap.png"), dpi=UMAP_DPI, bbox_inches="tight")
+    fig.savefig(os.path.join(figdir, "fractal_marker_heatmap.png"), dpi=UMAP_DPI)
     plt.close("all")
 
 

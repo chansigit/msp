@@ -284,7 +284,7 @@ def _section_minor_sibling(outdir: str) -> str:
     return f"<h3>Minor sibling fractals QC</h3>{hint}{table}{details}"
 
 
-def _section_per_cluster(outdir: str, violins: list[str]) -> str:
+def _section_per_cluster(outdir: str, violins: list[str], fractal_figs: list[str]) -> str:
     parts = []
     for p in sorted(glob.glob(os.path.join(outdir, "cluster_qc_*.csv"))):
         key = os.path.basename(p)[len("cluster_qc_"):-len(".csv")]
@@ -299,6 +299,7 @@ def _section_per_cluster(outdir: str, violins: list[str]) -> str:
                   "product), not the primary leiden — so a minor sibling's QC profile can be "
                   "compared against its main core.</p>",
                   _grid(violins)]
+    parts.append(_section_fractal_heatmap(outdir, fractal_figs))
     return _h2("per-cluster-qc") + "".join(parts) if parts else ""
 
 
@@ -307,8 +308,11 @@ def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
     if not os.path.exists(path) and not fractal_figs:
         return ""
     parts = ["<h3>Fractal marker dot plot</h3>",
-             '<p class="hint">Each parent\'s CORE cells (rank 0) DE\'d one-vs-rest against every '
-             "other parent's core cells (core-only, so minor siblings never leak into either side); "
+             '<p class="hint">Transcriptomic evidence for what a fractal actually is — e.g. a '
+             "doublet fractal co-expressing two parents' marker sets shows up as a column lit up "
+             "in both parents' colored rows, not just one. Each parent's CORE cells (rank 0) DE'd "
+             "one-vs-rest against every other parent's core cells (core-only, so minor siblings "
+             "never leak into either side); "
              "per parent, top 10 markers with logFC&gt;0, padj&lt;0.05, ribosomal genes excluded. "
              "Dot plot across every standissect cluster (cores AND fractals): dot size = fraction "
              "of a cluster's cells expressing the gene, dot color = row-wise z-score of average "
@@ -331,7 +335,7 @@ def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
     return "".join(parts)
 
 
-def _section_deg(outdir: str, fractal_figs: list[str], top_n: int = 10) -> str:
+def _section_deg(outdir: str, top_n: int = 10) -> str:
     parts = []
     for p in sorted(glob.glob(os.path.join(outdir, "de_top_genes_*.csv"))):
         key = os.path.basename(p)[len("de_top_genes_"):-len(".csv")]
@@ -348,7 +352,6 @@ def _section_deg(outdir: str, fractal_figs: list[str], top_n: int = 10) -> str:
         )
         parts += [f"<h3>{html.escape(key)}</h3>",
                   f"<table><tr><th>cluster</th><th>top genes (logFC)</th></tr>{body}</table>"]
-    parts.append(_section_fractal_heatmap(outdir, fractal_figs))
     return _h2("deg") + "".join(parts) if parts else ""
 
 
@@ -498,8 +501,8 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     sections = [
         _section_sample_summary(outdir),
         _section_umaps(umap_figs, standissect_figs, qc_figs),
-        _section_per_cluster(outdir, violins),
-        _section_deg(outdir, fractal_figs),
+        _section_per_cluster(outdir, violins, fractal_figs),
+        _section_deg(outdir),
         _section_inspection(outdir),
     ]
     sections, toc = _number_sections(sections)
