@@ -14,7 +14,9 @@ integrated clusterings get their own msp_leiden_r* keys.
 
 from __future__ import annotations
 
+import csv
 import os
+import re
 
 import matplotlib
 matplotlib.use("Agg")
@@ -260,8 +262,15 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     either side of the comparison) -> per-parent top markers (logFC>0,
     padj<0.05, ribosomal genes excluded) -> average log1p expression of
     those markers across every standissect cluster (cores AND fractals) ->
-    row-wise (per-gene) z-score -> two-way hierarchical clustering with
-    optimal leaf ordering, Seurat-style purple-black-yellow heatmap."""
+    row-wise (per-gene) z-score, Seurat-style purple-black-yellow heatmap.
+
+    Columns are clustered (optimal leaf ordering) but the dendrogram is
+    hidden — it's ordering, not something to read. Rows are NOT clustered:
+    genes stay grouped by the parent they're a marker for, with a colored
+    strip per gene showing that parent, since that grouping is more legible
+    than a gene-gene dendrogram here. Column labels: parent-core clusters
+    (c{parent}_0) bold; clusters minor_sibling_qc.csv marked
+    recommend_removal in red."""
     frag = res.fragments
     core_rows = frag.loc[frag["rank"] == 0]
     parent_of_core = dict(zip(core_rows["subcluster"], core_rows["parent"]))
@@ -277,17 +286,21 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     de_df.to_csv(os.path.join(outdir, "de_parent_core_vs_core.csv"), index=False)
 
     ribo = set(ad.var_names[ad.var["ribo"]]) if "ribo" in ad.var else set()
-    markers, marker_rows = [], []
+    markers, marker_rows, gene_parent = [], [], {}
     for parent, g in de_df.groupby("group", observed=True):
         g = g[(g["pvals_adj"] < 0.05) & (g["logfoldchanges"] > 0) & (~g["names"].isin(ribo))]
         g = g.sort_values("logfoldchanges", ascending=False).head(top_n)
         for rank, row in enumerate(g.itertuples(), start=1):
             markers.append(row.names)
+            gene_parent.setdefault(row.names, parent)  # first parent wins if a gene repeats
             marker_rows.append({"parent": parent, "gene": row.names, "rank": rank,
                                  "logfoldchange": round(row.logfoldchanges, 3),
                                  "pvals_adj": row.pvals_adj})
     pd.DataFrame(marker_rows).to_csv(os.path.join(outdir, "fractal_markers.csv"), index=False)
-    markers = list(dict.fromkeys(markers))  # de-dup (shared across parents), keep first-seen order
+    # row order follows parent order (numeric, not the groupby's alpha-sort), then rank within
+    # parent; de-dup a gene shared across parents by keeping its first (lowest-parent) occurrence
+    marker_rows_sorted = sorted(marker_rows, key=lambda r: (int(r["parent"]), r["rank"]))
+    markers = list(dict.fromkeys(r["gene"] for r in marker_rows_sorted))
     if not markers:
         print("== no marker genes passed the filters — skipping heatmap", flush=True)
         return
@@ -302,17 +315,38 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     avg.to_csv(os.path.join(outdir, "fractal_marker_avg_expr.csv"))
 
     z = avg.sub(avg.mean(axis=1), axis=0).div(avg.std(axis=1).replace(0, 1), axis=0).fillna(0)
+    z = z.loc[markers]  # parent-then-rank order (see marker_rows_sorted above)
 
-    row_linkage = linkage(z.values, method="average", metric="euclidean", optimal_ordering=True)
     col_linkage = linkage(z.values.T, method="average", metric="euclidean", optimal_ordering=True)
+
+    removal_path = os.path.join(outdir, "minor_sibling_qc.csv")
+    removal_set = set()
+    if os.path.exists(removal_path):
+        with open(removal_path) as f:
+            removal_set = {r["subcluster"] for r in csv.DictReader(f) if r.get("recommend_removal") == "True"}
+    core_pattern = re.compile(r"^c\d+_0$")
+
+    parents = sorted({p for p in gene_parent.values()}, key=int)
+    parent_palette = dict(zip(parents, sns.color_palette("tab20", n_colors=max(len(parents), 1))))
+    row_colors = pd.Series({g: parent_palette[gene_parent[g]] for g in markers}, name="parent")
 
     n_genes, n_clusters = z.shape
     cg = sns.clustermap(
-        z, row_linkage=row_linkage, col_linkage=col_linkage,
+        z, row_cluster=False, col_linkage=col_linkage, row_colors=row_colors,
         cmap=SEURAT_HEATMAP_CMAP, center=0, vmin=-2.5, vmax=2.5,
         figsize=(max(6.0, n_clusters * 0.35 + 3), max(6.0, n_genes * 0.18 + 2)),
-        xticklabels=True, yticklabels=True, cbar_kws={"label": "z-score (avg log1p expr)"},
+        dendrogram_ratio=(0.01, 0.08),
+        xticklabels=True, yticklabels=True,
+        cbar_kws={"label": "z-score", "orientation": "horizontal"},
+        cbar_pos=(0.02, 0.02, 0.12, 0.015),
     )
+    cg.ax_col_dendrogram.set_visible(False)  # ordering used, tree not shown — it's not the point
+    for label in cg.ax_heatmap.get_xticklabels():
+        name = label.get_text()
+        if core_pattern.match(name):
+            label.set_fontweight("bold")
+        if name in removal_set:
+            label.set_color("#c0392b")
     cg.ax_heatmap.set_xlabel("standissect cluster (core + fractals)")
     cg.ax_heatmap.set_ylabel("marker gene")
     cg.savefig(os.path.join(figdir, "fractal_marker_heatmap.png"), dpi=UMAP_DPI, bbox_inches="tight")
