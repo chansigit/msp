@@ -83,7 +83,6 @@ _SECTION_LABELS = {
     "per-cluster-qc": "Per-cluster QC",
     "deg": "Cluster DEG",
     "inspection": "Inspection Verdicts",
-    "qc-umap": "QC (integrated space)",
 }
 
 
@@ -221,22 +220,8 @@ def _section_inspection(outdir: str) -> str:
     return _h2("inspection") + "".join(parts)
 
 
-def _section_qc_umap(qc_figs: list[str]) -> str:
-    if not qc_figs:
-        return ""
-    umaps = [p for p in qc_figs if "umap" in os.path.basename(p)]
-    violins = [p for p in qc_figs if "violin" in os.path.basename(p)]
-    other = [p for p in qc_figs if p not in umaps and p not in violins]
-    return (_h2("qc-umap")
-            + '<p class="hint">One metric per panel; pct_counts_mt uses a fixed color '
-            "ceiling (vmax=20) — the scale never autoscales.</p>"
-            + _grid(umaps)
-            + ("<h3>per-cluster violins</h3>" + _grid(violins) if violins else "")
-            + _grid(other))
-
-
-def _section_umaps(umap_figs: list[str], standissect_figs: list[str]) -> str:
-    if not umap_figs and not standissect_figs:
+def _section_umaps(umap_figs: list[str], standissect_figs: list[str], qc_figs: list[str]) -> str:
+    if not umap_figs and not standissect_figs and not qc_figs:
         return ""
     ann_names = ("_ann_coarse", "_qc_action")  # both inherited from OSP per-sample runs
     ann_by_name = {n: p for p in umap_figs for n in ann_names if n in os.path.basename(p)}
@@ -258,6 +243,17 @@ def _section_umaps(umap_figs: list[str], standissect_figs: list[str]) -> str:
     if standissect_figs:
         parts += ["<h3>standissect clusters</h3>",
                   '<div class="trio">' + "".join(_img(p) for p in standissect_figs) + "</div>"]
+    if qc_figs:
+        qc_umaps = [p for p in qc_figs if "umap" in os.path.basename(p)]
+        violins = [p for p in qc_figs if "violin" in os.path.basename(p)]
+        other = [p for p in qc_figs if p not in qc_umaps and p not in violins]
+        parts += ["<h3>QC metrics (integrated space)</h3>",
+                  '<p class="hint">One metric per panel; pct_counts_mt uses a fixed color '
+                  "ceiling (vmax=20) — the scale never autoscales.</p>",
+                  _grid(qc_umaps)]
+        if violins:
+            parts += ["<h3>Per-cluster QC violins</h3>", _grid(violins)]
+        parts += [_grid(other)]
     return "".join(parts)
 
 
@@ -292,11 +288,10 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     sections = [
         _section_summary(outdir),
         _section_per_sample(outdir),
-        _section_umaps(umap_figs, standissect_figs),
+        _section_umaps(umap_figs, standissect_figs, qc_figs),
         _section_per_cluster(outdir),
         _section_deg(outdir),
         _section_inspection(outdir),
-        _section_qc_umap(qc_figs),
     ]
     sections, toc = _number_sections(sections)
 
