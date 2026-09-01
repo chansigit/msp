@@ -199,26 +199,19 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     de_top = de_df.groupby("group", observed=True).head(top_n_de).reset_index(drop=True)
     de_top.to_csv(os.path.join(outdir, f"de_top_genes_{primary_key}.csv"), index=False)
 
-    # standissect-LITE: cross the RNA-side leiden with a UMAP-side clustering
-    # — the direct cartesian product (parent leiden label x umap_cluster
-    # label, concatenated per cell, e.g. "2_u8") becomes its own clustering
-    # scheme, visualized and labeled exactly like the leiden panels. This is
-    # detection only — no main-core/minor-sibling ranking, no grey/colored
-    # split; msp.inspect judges which product cells matter. Parent comes
-    # from the LOWEST resolution: the product hunts strays inside broad
-    # clusters — a high-res leiden has already split them itself.
+    # standissect-lite (>=0.2.0): cross the RNA-side leiden with a UMAP-side
+    # clustering; "subcluster" (c{parent}_{rank}) is its headline per-cell
+    # identifier — rank 0 is always the largest fragment WITHIN that parent,
+    # strictly descending. That's exactly the clustering scheme we visualize
+    # and label, same as the leiden panels: detection only, no grey/colored
+    # main-vs-minor framing here — msp.inspect judges which cells matter.
+    # Parent comes from the LOWEST resolution: the product hunts strays
+    # inside broad clusters — a high-res leiden has already split them.
     standissect_key = leiden_keys[int(np.argmin(resolutions))]
-    print(f"== standissect-lite on {standissect_key} (leiden x umap_cluster product)", flush=True)
+    print(f"== standissect-lite on {standissect_key} (leiden x umap product)", flush=True)
     from standissect_lite import dissect_partition
 
     res = dissect_partition(ad, cluster_col=standissect_key, umap_key="X_umap")
-    ad.obs["umap_cluster"] = res.labels["umap_cluster"]
-    # "subcluster" straight from the package: c{parent}_{rank}, rank 0 = the
-    # largest fragment WITHIN that parent (its own per-parent size ranking —
-    # umap_cluster ids like u5 are ranked globally across the whole dataset,
-    # not per parent, so hand-rolling "c{parent}_{umap id}" would NOT have
-    # rank-0-is-largest). Using the same field the fragments table uses also
-    # guarantees the figure and table agree by construction.
     ad.obs["standissect_product"] = res.labels["subcluster"].astype("category")
     res.fragments.to_csv(os.path.join(outdir, f"fragments_{standissect_key}.csv"), index=False)
     res.overlap.to_csv(os.path.join(outdir, f"overlap_{standissect_key}.csv"))

@@ -177,7 +177,7 @@ def _section_deg(outdir: str, top_n: int = 10) -> str:
     return _h2("deg") + "".join(parts) if parts else ""
 
 
-_FRAGMENT_COLS = ("subcluster", "parent", "umap_label", "n_cells", "frac_of_parent", "rank")
+_FRAGMENT_COLS = ("subcluster", "parent", "_umap_partition", "n_cells", "frac_of_parent", "rank")
 
 
 def _section_standissect(outdir: str) -> str:
@@ -190,10 +190,11 @@ def _section_standissect(outdir: str) -> str:
         with open(path) as f:
             rows = list(csv.DictReader(f))
         minors = [r for r in rows if str(r.get("is_minor_sibling", "")).lower() in ("true", "1")]
-        parts.append(f"<h3>{html.escape(key)} × umap_cluster</h3>"
+        parts.append(f"<h3>{html.escape(key)} × umap-side clustering</h3>"
                      '<p class="hint">Cartesian product of the RNA-side leiden with a '
                      "UMAP-side clustering; within each parent, fragments are ranked by "
-                     "size — rank 0 is the main core, the rest are minor siblings. "
+                     "size — rank 0 is the main core, the rest are minor siblings "
+                     "(subcluster naming: c{parent}_{rank}, always largest-to-smallest). "
                      "Detection only, candidates not verdicts. "
                      f"{len(minors)} minor sibling(s) among {len(rows)} fragments.</p>")
         head = "".join(f"<th>{html.escape(c)}</th>" for c in _FRAGMENT_COLS)
