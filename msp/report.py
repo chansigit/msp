@@ -259,14 +259,14 @@ def _section_qc_umap(qc_figs: list[str]) -> str:
 def _section_umaps(umap_figs: list[str], standissect_figs: list[str]) -> str:
     if not umap_figs and not standissect_figs:
         return ""
-    ann = sorted(p for p in umap_figs if "_ann_" in os.path.basename(p))
-    rest = [p for p in umap_figs if p not in ann]
+    ann = [p for p in umap_figs if "_ann_coarse" in os.path.basename(p)]
+    rest = [p for p in umap_figs if "_ann_" not in os.path.basename(p)]
     # sample-mixing panel first, then the leiden resolutions
     leiden = sorted(p for p in rest if "leiden" in os.path.basename(p))
     samples = [p for p in rest if p not in leiden]
     parts = [_h2("umaps")]
     if ann:
-        parts += ["<h3>Inherited annotation (coarse / fine)</h3>", _grid(ann)]
+        parts += ["<h3>Inherited annotations from One-sample Pipeline (OSP)</h3>", _grid(ann)]
     if samples or leiden:
         parts += ["<h3>Samples & leiden clusterings</h3>", _grid(samples + leiden)]
     if standissect_figs:
