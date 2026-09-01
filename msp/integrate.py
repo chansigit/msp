@@ -90,6 +90,7 @@ QC_ACTION_PALETTE = {"keep": "#d3d3d3", "flag": "#ff8c00", "drop": "#d62728"}
 # — msp.inspect judges what actually matters)
 MIN_N_FOR_TEST = 5          # below this, Mann-Whitney has no real power — mark insufficient_data
 BIG_SIBLING_FRAC = 0.25     # sibling >= this fraction of its own parent's core is skipped, not a "minor" fragment
+BIG_SIBLING_N = 800         # sibling >= this many cells (absolute) is skipped too, regardless of frac_of_core
 DOUBLET_MEDIAN_THRESH = 0.2   # scrublet score, 0-1 scale
 MT_MEDIAN_THRESH = 20.0        # pct_counts_mt is already on a 0-100 scale
 
@@ -112,8 +113,9 @@ def _minor_sibling_qc(ad, res, outdir):
     candidates for msp.inspect to verify, not a removal decision.
 
     Parent cores (rank 0) are never tested. Siblings holding >=25% of their
-    own parent core's cell count are "big" fragments, not minor — skipped.
-    Remaining siblings are tested one-sided (sibling > pooled cores) via
+    own parent core's cell count, OR >=800 cells outright, are "big"
+    fragments, not minor — skipped either way. Remaining siblings are
+    tested one-sided (sibling > pooled cores) via
     Mann-Whitney U on: decontX_contamination, dissociation_score,
     doublet_score, pct_counts_mt. doublet/mt tests additionally require the
     sibling's own median to clear an absolute floor (0.2 and 20% respectively)
@@ -139,7 +141,7 @@ def _minor_sibling_qc(ad, res, outdir):
         cn = int(core_n.get(parent, 0))
         row = {"subcluster": sub, "parent": parent, "n_cells": n_cells,
                "core_n_cells": cn, "frac_of_core": round(n_cells / cn, 3) if cn else None}
-        if cn and n_cells >= BIG_SIBLING_FRAC * cn:
+        if (cn and n_cells >= BIG_SIBLING_FRAC * cn) or n_cells >= BIG_SIBLING_N:
             row["status"] = "big_sibling_skip"
         elif n_cells < MIN_N_FOR_TEST:
             row["status"] = "insufficient_data"

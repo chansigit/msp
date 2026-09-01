@@ -267,8 +267,9 @@ def _section_minor_sibling(outdir: str) -> str:
     hint = (f"<p class=\"hint\">Each minor sibling (standissect fragment, rank&gt;0) tested "
             "one-sided against the pooled parent-core cells (Mann-Whitney U, p&lt;0.05, no "
             "multiple-testing correction — candidate detection only, not a removal verdict). "
-            "Siblings holding ≥25% of their own parent core's cell count are skipped as "
-            "\"big\", not minor; fragments under 5 cells are marked insufficient data. doublet/mt "
+            "Siblings holding ≥25% of their own parent core's cell count, or ≥800 cells "
+            "outright, are skipped as \"big\", not minor; fragments under 5 cells are marked "
+            "insufficient data. doublet/mt "
             "tests additionally require the sibling's own median above an absolute floor (0.2 and "
             f"20%). {n_flagged}/{len(rows)} siblings flagged, {n_tested} tested.</p>")
     return f"<h3>Minor sibling QC flags</h3>{hint}{table}{details}"
