@@ -109,7 +109,7 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
         # prefix) groups it with the OSP-inherited panels, not the
         # integrated-space QC metrics
         save_single_umap(ad, "_qc_action", os.path.join(figdir, "umap__qc_action.png"),
-                         palette=[QC_ACTION_PALETTE[c] for c in order])
+                         palette=[QC_ACTION_PALETTE[c] for c in order], legend_loc="lower right")
 
     def _agg(groupby):
         g = ad.obs.groupby(groupby, observed=True)

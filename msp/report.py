@@ -48,9 +48,11 @@ img.fig { max-width: 100%; display: block; border: 1px solid #ddd; }
 .grid-item { flex: 0 0 330px; margin: 0; }
 .grid-item img.fig { width: 330px; }
 .grid-item figcaption { text-align: center; }
-.trio { display: flex; gap: 1.2rem; margin: .5rem 0 1rem 0; align-items: flex-start; }
-.trio figure { flex: 1 1 0; margin: 0; min-width: 0; }
-.trio img.fig { width: 100%; height: auto; }
+/* fixed height regardless of how many panels share the row, so a 2-panel
+   and a 3-panel row render at the same visual scale */
+.trio { display: flex; gap: 1.2rem; margin: .5rem 0 1rem 0; align-items: flex-start; flex-wrap: wrap; }
+.trio figure { flex: 0 0 auto; margin: 0; }
+.trio img.fig { height: 330px; width: auto; max-width: 100%; }
 .trio figcaption { text-align: center; }
 figure.natural img.fig { height: 330px; width: auto; max-width: 100%; }
 figure { margin: 1rem 0; }
@@ -282,8 +284,8 @@ def _section_umaps(umap_figs: list[str], standissect_figs: list[str]) -> str:
         parts += ["<h3>Leiden clusterings</h3>",
                   '<div class="trio">' + "".join(_img(p) for p in leiden) + "</div>"]
     if standissect_figs:
-        parts += ["<h3>standissect-lite derived</h3>"]
-        parts += [_img(p) for p in standissect_figs]
+        parts += ["<h3>standissect clusters</h3>",
+                  '<div class="trio">' + "".join(_img(p) for p in standissect_figs) + "</div>"]
     return "".join(parts)
 
 
