@@ -79,7 +79,7 @@ nav.toc a:hover { text-decoration: underline; }
 _SECTION_LABELS = {
     "summary": "Summary",
     "per-sample-qc": "Per-sample QC",
-    "umaps": "UMAPs",
+    "umaps": "UMAPs (integrated space)",
     "per-cluster-qc": "Per-cluster QC",
     "deg": "Cluster DEG",
     "inspection": "Inspection Verdicts",
@@ -247,7 +247,7 @@ def _section_umaps(umap_figs: list[str], standissect_figs: list[str], qc_figs: l
         qc_umaps = [p for p in qc_figs if "umap" in os.path.basename(p)]
         violins = [p for p in qc_figs if "violin" in os.path.basename(p)]
         other = [p for p in qc_figs if p not in qc_umaps and p not in violins]
-        parts += ["<h3>QC metrics (integrated space)</h3>",
+        parts += ["<h3>QC metrics</h3>",
                   '<p class="hint">One metric per panel; pct_counts_mt uses a fixed color '
                   "ceiling (vmax=20) — the scale never autoscales.</p>",
                   _grid(qc_umaps)]
