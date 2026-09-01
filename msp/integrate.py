@@ -86,8 +86,10 @@ QC_UMAP_METRICS = (
 QC_ACTION_PALETTE = {"keep": "#d3d3d3", "flag": "#ff8c00", "drop": "#d62728"}
 
 
-# thresholds for minor-sibling QC flagging (candidate detection, not verdicts
-# — msp.inspect judges what actually matters)
+# thresholds for minor-sibling QC testing (candidate detection, not verdicts
+# — msp.inspect judges what actually matters). "suspect"/"n_hits" here are
+# deliberately not "flag" — osp already uses keep/flag/drop for a different,
+# per-cell concept and reusing the word would be confusing side by side.
 MIN_N_FOR_TEST = 5          # below this, Mann-Whitney has no real power — mark insufficient_data
 BIG_SIBLING_FRAC = 0.25     # sibling >= this fraction of its own parent's core is skipped, not a "minor" fragment
 BIG_SIBLING_N = 800         # sibling >= this many cells (absolute) is skipped too, regardless of frac_of_core
@@ -108,8 +110,8 @@ def _mwu_greater(sib_vals, core_vals):
 
 
 def _minor_sibling_qc(ad, res, outdir):
-    """Flag minor-sibling fragments (standissect subclusters c{parent}_i,
-    i>0) whose QC profile looks worse than the pooled parent-core cells —
+    """Test minor-sibling fragments (standissect subclusters c{parent}_i,
+    i>0) for a QC profile worse than the pooled parent-core cells —
     candidates for msp.inspect to verify, not a removal decision.
 
     Parent cores (rank 0) are never tested. Siblings holding >=25% of their
@@ -120,8 +122,8 @@ def _minor_sibling_qc(ad, res, outdir):
     doublet_score, pct_counts_mt. doublet/mt tests additionally require the
     sibling's own median to clear an absolute floor (0.2 and 20% respectively)
     so a sibling merely "less clean than an unusually pristine cohort" isn't
-    flagged. No multiple-testing correction — this is candidate detection,
-    downstream inspection re-verifies."""
+    marked suspect. No multiple-testing correction — this is candidate
+    detection, downstream inspection re-verifies."""
     frag = res.fragments
     core_n = frag.loc[frag["rank"] == 0].set_index("parent")["n_cells"]
     core_subclusters = set(frag.loc[frag["rank"] == 0, "subcluster"])
@@ -148,7 +150,7 @@ def _minor_sibling_qc(ad, res, outdir):
         else:
             row["status"] = "tested"
             sib_mask = ad.obs["standissect_product"].astype(str) == sub
-            n_flags = 0
+            n_hits = 0
             for col, name, thr in metric_tests:
                 sib_vals, core_vals = ad.obs.loc[sib_mask, col], ad.obs.loc[core_mask, col]
                 sig = _mwu_greater(sib_vals, core_vals)
@@ -156,9 +158,9 @@ def _minor_sibling_qc(ad, res, outdir):
                     sig = bool(sib_vals.median() > thr)
                 row[f"{name}_median"] = round(float(sib_vals.median()), 4)
                 row[f"{name}_significant"] = sig
-                n_flags += bool(sig)
-            row["n_flags"] = n_flags
-            row["flagged"] = n_flags > 0
+                n_hits += bool(sig)
+            row["n_hits"] = n_hits
+            row["suspect"] = n_hits > 0
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -303,7 +305,7 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     ad.obs["standissect_product"] = res.labels["subcluster"].astype("category")
     res.fragments.to_csv(os.path.join(outdir, f"fragments_{standissect_key}.csv"), index=False)
     res.overlap.to_csv(os.path.join(outdir, f"overlap_{standissect_key}.csv"))
-    print("== minor-sibling QC flags", flush=True)
+    print("== minor-sibling QC", flush=True)
     _minor_sibling_qc(ad, res, outdir)
 
     ad.uns["msp"] = {

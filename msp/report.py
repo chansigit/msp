@@ -64,7 +64,8 @@ pre.notes { white-space: pre-wrap; font-size: .85rem; background: #f7f7f7; paddi
 .hint { color: #555; font-size: .88rem; margin: .3rem 0 1rem 0; max-width: 75ch; }
 .layout { display: flex; gap: 2rem; align-items: flex-start; }
 .content { flex: 1; min-width: 0; }
-nav.toc { position: -webkit-sticky; position: sticky; top: 1rem; align-self: flex-start;
+nav.toc { position: -webkit-sticky; position: sticky; top: 50%; transform: translateY(-50%);
+          align-self: flex-start;
           z-index: 10; flex: 0 0 200px; max-height: calc(100vh - 2rem); overflow-y: auto;
           display: flex; flex-direction: column; gap: .5rem;
           background: #f7f7f7; border: 1px solid #e0e0e0; border-radius: 6px;
@@ -76,7 +77,7 @@ nav.toc .toc-sub { display: flex; flex-direction: column; gap: .3rem; margin: -.
 nav.toc .toc-sub a { color: #5a6b7a; font-size: .82rem; }
 @media (max-width: 800px) {
   .layout { flex-direction: column; }
-  nav.toc { position: static; flex-direction: row; flex-wrap: wrap; width: auto; }
+  nav.toc { position: static; transform: none; flex-direction: row; flex-wrap: wrap; width: auto; }
 }
 """
 
@@ -233,17 +234,17 @@ def _section_minor_sibling(outdir: str) -> str:
     if not rows:
         return ""
     metric_names = sorted({c[: -len("_median")] for c in rows[0] if c.endswith("_median")})
-    head_cols = ("subcluster", "parent", "n_cells", "core_n_cells", "frac_of_core", "status", "n_flags")
+    head_cols = ("subcluster", "parent", "n_cells", "core_n_cells", "frac_of_core", "status", "n_hits")
     head = "".join(f"<th>{c}</th>" for c in head_cols)
     body_rows = []
     for r in rows:
-        color = "#c0392b" if r.get("flagged") == "True" else (
+        color = "#c0392b" if r.get("suspect") == "True" else (
             "#888" if r["status"] != "tested" else None)
         style = f' style="color:{color}"' if color else ""
 
         def _cell(c, v=r):
             val = v.get(c) or ""
-            if c == "n_flags" and val:
+            if c == "n_hits" and val:
                 val = str(int(float(val)))
             return f"<td>{html.escape(val)}</td>"
 
@@ -262,7 +263,7 @@ def _section_minor_sibling(outdir: str) -> str:
     details = ("<details><summary>per-metric values (tested siblings only)</summary>"
                f"<table><tr><th>subcluster</th>{detail_head}</tr>{detail_rows}</table></details>")
 
-    n_flagged = sum(1 for r in rows if r.get("flagged") == "True")
+    n_suspect = sum(1 for r in rows if r.get("suspect") == "True")
     n_tested = sum(1 for r in rows if r["status"] == "tested")
     hint = (f"<p class=\"hint\">Each minor sibling (standissect fragment, rank&gt;0) tested "
             "one-sided against the pooled parent-core cells (Mann-Whitney U, p&lt;0.05, no "
@@ -271,8 +272,8 @@ def _section_minor_sibling(outdir: str) -> str:
             "outright, are skipped as \"big\", not minor; fragments under 5 cells are marked "
             "insufficient data. doublet/mt "
             "tests additionally require the sibling's own median above an absolute floor (0.2 and "
-            f"20%). {n_flagged}/{len(rows)} siblings flagged, {n_tested} tested.</p>")
-    return f"<h3>Minor sibling QC flags</h3>{hint}{table}{details}"
+            f"20%). {n_suspect}/{len(rows)} siblings suspect, {n_tested} tested.</p>")
+    return f"<h3>Minor sibling QC</h3>{hint}{table}{details}"
 
 
 def _section_per_cluster(outdir: str, violins: list[str]) -> str:
