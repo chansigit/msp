@@ -210,8 +210,13 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
 
     res = dissect_partition(ad, cluster_col=standissect_key, umap_key="X_umap")
     ad.obs["umap_cluster"] = res.labels["umap_cluster"]
+    # standissect-lite's own raw-product naming (its README): "c{parent}u{k}"
+    # — no underscore. NOT the same as the fragments table's "subcluster"
+    # column ("c{parent}_{rank}", underscore) — that one encodes size RANK
+    # within the parent, this one encodes the actual umap_cluster id; they
+    # can disagree (the largest fragment isn't always u0).
     ad.obs["standissect_product"] = (
-        ad.obs[standissect_key].astype(str) + "_" + res.labels["umap_cluster"].astype(str)
+        "c" + ad.obs[standissect_key].astype(str) + res.labels["umap_cluster"].astype(str)
     ).astype("category")
     res.fragments.to_csv(os.path.join(outdir, f"fragments_{standissect_key}.csv"), index=False)
     res.overlap.to_csv(os.path.join(outdir, f"overlap_{standissect_key}.csv"))
