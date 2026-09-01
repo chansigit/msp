@@ -80,8 +80,7 @@ nav.toc .toc-sub a { color: #5a6b7a; font-size: .82rem; }
 """
 
 _SECTION_LABELS = {
-    "summary": "Summary",
-    "per-sample-qc": "Per-sample QC",
+    "sample-summary": "Sample Summary",
     "umaps": "UMAPs (integrated space)",
     "per-cluster-qc": "Per-cluster QC",
     "deg": "Cluster DEG",
@@ -155,16 +154,18 @@ def _section_sample_decisions(outdir: str) -> str:
             f"<table><tr>{head}</tr>{body}</table>")
 
 
-def _section_summary(outdir: str) -> str:
-    t = _kv_table(os.path.join(outdir, "integration_summary.csv"))
-    if not t:
+def _section_sample_summary(outdir: str) -> str:
+    summary_t = _kv_table(os.path.join(outdir, "integration_summary.csv"))
+    qc_t = _csv_table(os.path.join(outdir, "per_sample_qc.csv"))
+    if not summary_t and not qc_t:
         return ""
-    return _h2("summary") + t + _section_sample_decisions(outdir)
-
-
-def _section_per_sample(outdir: str) -> str:
-    t = _csv_table(os.path.join(outdir, "per_sample_qc.csv"))
-    return _h2("per-sample-qc") + t if t else ""
+    parts = [_h2("sample-summary")]
+    if summary_t:
+        parts.append(summary_t)
+    parts.append(_section_sample_decisions(outdir))
+    if qc_t:
+        parts += ["<h3>Per-sample QC</h3>", qc_t]
+    return "".join(parts)
 
 
 def _section_per_cluster(outdir: str) -> str:
@@ -341,8 +342,7 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
 
     title = title or f"msp Integration Report — {os.path.basename(os.path.abspath(outdir))}"
     sections = [
-        _section_summary(outdir),
-        _section_per_sample(outdir),
+        _section_sample_summary(outdir),
         _section_umaps(umap_figs, standissect_figs, qc_figs),
         _section_per_cluster(outdir),
         _section_deg(outdir),
