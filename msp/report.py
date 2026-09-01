@@ -264,13 +264,16 @@ def _section_qc_umap(qc_figs: list[str]) -> str:
 def _section_umaps(umap_figs: list[str], standissect_figs: list[str]) -> str:
     if not umap_figs and not standissect_figs:
         return ""
-    ann = [p for p in umap_figs if "_ann_coarse" in os.path.basename(p)]
-    rest = [p for p in umap_figs if "_ann_" not in os.path.basename(p)]
+    ann_names = ("_ann_coarse", "_qc_action")  # both inherited from OSP per-sample runs
+    ann_by_name = {n: p for p in umap_figs for n in ann_names if n in os.path.basename(p)}
+    ann = [ann_by_name[n] for n in ann_names if n in ann_by_name]
+    rest = [p for p in umap_figs if p not in ann]
     leiden = sorted(p for p in rest if "leiden" in os.path.basename(p))
     samples = [p for p in rest if p not in leiden]
     parts = [_h2("umaps")]
     if ann:
-        parts += ["<h3>Inherited annotations from One-sample Pipeline (OSP)</h3>", _grid(ann)]
+        parts += ["<h3>Inherited annotations from One-sample Pipeline (OSP)</h3>",
+                  '<div class="trio">' + "".join(_img(p) for p in ann) + "</div>"]
     if samples:
         # natural image size: the sample legend carries long names — never
         # squeeze this panel into a fixed grid cell

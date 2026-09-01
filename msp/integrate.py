@@ -105,7 +105,10 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
     if "_qc_action" in ad.obs:
         order = [c for c in ("keep", "flag", "drop") if c in set(ad.obs["_qc_action"].astype(str))]
         ad.obs["_qc_action"] = pd.Categorical(ad.obs["_qc_action"].astype(str), categories=order)
-        save_single_umap(ad, "_qc_action", os.path.join(figdir, "qc_umap_qc_action.png"),
+        # inherited from OSP just like _ann_coarse — filename (no qc_
+        # prefix) groups it with the OSP-inherited panels, not the
+        # integrated-space QC metrics
+        save_single_umap(ad, "_qc_action", os.path.join(figdir, "umap__qc_action.png"),
                          palette=[QC_ACTION_PALETTE[c] for c in order])
 
     def _agg(groupby):
