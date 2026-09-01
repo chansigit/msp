@@ -260,15 +260,15 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     os.makedirs(figdir, exist_ok=True)
     save_single_umap(ad, batch_col, os.path.join(figdir, f"umap_{slug(batch_col)}.png"),
                      legend_fontsize=6)
-    for color in leiden_keys:  # cluster ids on the clusters, no side legend
-        save_single_umap(ad, color, os.path.join(figdir, f"umap_{slug(color)}.png"),
-                         legend_loc="on data", legend_fontsize=12, legend_fontweight="bold",
-                         legend_fontoutline=3)
+    for color in leiden_keys:  # cluster ids on the clusters, repelled apart
+        save_single_umap(ad, color, os.path.join(figdir, f"umap_{slug(color)}.png"), repel=True)
     # inherited per-sample annotation — coarse only (the fine labels are far
     # too many across samples to render legibly)
     if "_ann_coarse" in ad.obs:
+        # many near-duplicate labels across samples — needs a much bigger
+        # canvas for repel to actually separate them
         save_single_umap(ad, "_ann_coarse", os.path.join(figdir, "umap__ann_coarse.png"),
-                         legend_loc="on data", legend_fontsize=5)
+                         repel=True, repel_fontsize=7, figsize=(14, 14))
 
     _plot_fragments(ad, standissect_key, figdir,
                     minors=res.fragments.loc[res.fragments.is_minor_sibling, "subcluster"].tolist())

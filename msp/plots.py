@@ -15,9 +15,14 @@ import re
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import textwrap
+
+import matplotlib.patheffects as pe
 import matplotlib.ticker as mticker
 import numpy as np
+import pandas as pd
 import scanpy as sc
+from adjustText import adjust_text
 
 UMAP_FIGSIZE = (5.5, 5.5)
 UMAP_AXES_RECT = (0.14, 0.12, 0.78, 0.78)  # left, bottom, width, height
@@ -61,15 +66,46 @@ def umap_axes(ad):
     return fig, ax
 
 
-def save_single_umap(ad, color_col, out_path, **kwargs):
+def _repel_on_data_labels(ad, color_col, ax, fontsize=12, fontweight="bold"):
+    """Place one text label per category at its centroid, then repel them
+    apart with adjustText (the ggrepel equivalent) so dense/adjacent
+    clusters don't collide — scanpy's own legend_loc='on data' has no
+    collision avoidance and clumps labels together."""
+    xy = np.asarray(ad.obsm["X_umap"])
+    lab = ad.obs[color_col].astype(str)
+    texts = []
+    for cat in pd.unique(lab):
+        cat = str(cat)
+        m = (lab == cat).values
+        cx, cy = float(xy[m, 0].mean()), float(xy[m, 1].mean())
+        wrapped = "\n".join(textwrap.wrap(cat, width=14)) if len(cat) > 14 else cat
+        texts.append(ax.text(cx, cy, wrapped, fontsize=fontsize, fontweight=fontweight,
+                             ha="center", va="center",
+                             path_effects=[pe.withStroke(linewidth=3, foreground="white")]))
+    adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="#888888", lw=0.7),
+               expand=(1.2, 1.4), force_text=(0.5, 0.7), max_move=200)
+
+
+def save_single_umap(ad, color_col, out_path, repel=False, repel_fontsize=12,
+                     figsize=None, **kwargs):
     """One UMAP colored by one column, saved to its own file (osp's
-    _save_single_umap conventions verbatim)."""
+    _save_single_umap conventions verbatim). repel=True: draw with no
+    scanpy legend and place collision-free on-data labels via adjustText
+    instead (for categorical columns with many/adjacent groups). figsize
+    overrides UMAP_FIGSIZE — a bigger canvas gives repel more room to spread
+    a crowded category set apart (the panel still displays at whatever size
+    the report scales it to; a bigger source image just fits more labels)."""
     xlim, ylim = square_limits(np.asarray(ad.obsm["X_umap"]))
     kwargs.setdefault("size", 120000 / ad.n_obs)
 
-    fig = plt.figure(figsize=UMAP_FIGSIZE)
+    fig = plt.figure(figsize=figsize or UMAP_FIGSIZE)
     ax = fig.add_axes(UMAP_AXES_RECT)
-    sc.pl.umap(ad, color=color_col, ax=ax, show=False, **kwargs)
+    if repel:
+        kwargs["legend_loc"] = None
+        sc.pl.umap(ad, color=color_col, ax=ax, show=False, **kwargs)
+        _repel_on_data_labels(ad, color_col, ax, fontsize=repel_fontsize)
+    else:
+        sc.pl.umap(ad, color=color_col, ax=ax, show=False, **kwargs)
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
     ax.set_aspect("equal", adjustable="box")
