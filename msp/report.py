@@ -234,13 +234,17 @@ def _section_minor_sibling(outdir: str) -> str:
     if not rows:
         return ""
     metric_names = sorted({c[: -len("_median")] for c in rows[0] if c.endswith("_median")})
-    head_cols = ("subcluster", "parent", "n_cells", "core_n_cells", "frac_of_core", "status", "n_hits")
+    head_cols = ("subcluster", "parent", "n_cells", "core_n_cells", "frac_of_core", "status",
+                 "pct_drop_upstream", "n_hits", "recommend_removal")
     head = "".join(f"<th>{c}</th>" for c in head_cols)
     body_rows = []
     for r in rows:
-        color = "#c0392b" if r.get("suspect") == "True" else (
-            "#888" if r["status"] != "tested" else None)
-        style = f' style="color:{color}"' if color else ""
+        if r.get("recommend_removal") == "True":
+            style = ' style="color:#8b0000;font-weight:bold"'
+        elif r["status"] == "big_sibling_skip":
+            style = ' style="color:#888"'
+        else:
+            style = ""
 
         def _cell(c, v=r):
             val = v.get(c) or ""
@@ -263,17 +267,21 @@ def _section_minor_sibling(outdir: str) -> str:
     details = ("<details><summary>per-metric values (tested siblings only)</summary>"
                f"<table><tr><th>subcluster</th>{detail_head}</tr>{detail_rows}</table></details>")
 
-    n_suspect = sum(1 for r in rows if r.get("suspect") == "True")
+    n_removal = sum(1 for r in rows if r.get("recommend_removal") == "True")
     n_tested = sum(1 for r in rows if r["status"] == "tested")
-    hint = (f"<p class=\"hint\">Each minor sibling (standissect fragment, rank&gt;0) tested "
-            "one-sided against the pooled parent-core cells (Mann-Whitney U, p&lt;0.05, no "
-            "multiple-testing correction — candidate detection only, not a removal verdict). "
-            "Siblings holding ≥25% of their own parent core's cell count, or ≥800 cells "
-            "outright, are skipped as \"big\", not minor; fragments under 5 cells are marked "
-            "insufficient data. doublet/mt "
-            "tests additionally require the sibling's own median above an absolute floor (0.2 and "
-            f"20%). {n_suspect}/{len(rows)} siblings suspect, {n_tested} tested.</p>")
-    return f"<h3>Minor sibling QC</h3>{hint}{table}{details}"
+    hint = (f"<p class=\"hint\">Each minor sibling (standissect fragment, rank&gt;0), other than "
+            "\"big\" ones, is checked against two kinds of criteria — hitting ANY ONE marks the "
+            "whole fragment recommend_removal (dark red bold below; a candidate for msp.inspect "
+            "to verify, not an automatic removal). (1) upstream: &gt;50% of the sibling's cells "
+            "already carry _qc_action=\"drop\" from the per-sample annotation. (2) stats "
+            "(only run when the sibling has &ge;5 cells): one-sided Mann-Whitney U, sibling vs. "
+            "the pooled parent-core cells, p&lt;0.05, no multiple-testing correction, on "
+            "decontX_contamination / dissociation_score / doublet_score / pct_counts_mt — the "
+            "latter two also require the sibling's own median above an absolute floor (0.2 and "
+            "20% respectively). Siblings holding ≥25% of their own parent core's cell count, or "
+            "≥800 cells outright, are skipped as \"big\", not minor. "
+            f"{n_removal}/{len(rows)} siblings recommend_removal, {n_tested} stats-tested.</p>")
+    return f"<h3>Minor sibling fractals QC</h3>{hint}{table}{details}"
 
 
 def _section_per_cluster(outdir: str, violins: list[str]) -> str:

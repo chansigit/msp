@@ -86,15 +86,17 @@ QC_UMAP_METRICS = (
 QC_ACTION_PALETTE = {"keep": "#d3d3d3", "flag": "#ff8c00", "drop": "#d62728"}
 
 
-# thresholds for minor-sibling QC testing (candidate detection, not verdicts
-# — msp.inspect judges what actually matters). "suspect"/"n_hits" here are
-# deliberately not "flag" — osp already uses keep/flag/drop for a different,
-# per-cell concept and reusing the word would be confusing side by side.
+# thresholds for minor-sibling QC testing (candidate detection, not a final
+# verdict — msp.inspect judges what actually matters). "n_hits"/
+# "recommend_removal" here are deliberately not "flag" — osp already uses
+# keep/flag/drop for a different, per-cell concept and reusing the word
+# would be confusing side by side.
 MIN_N_FOR_TEST = 5          # below this, Mann-Whitney has no real power — mark insufficient_data
 BIG_SIBLING_FRAC = 0.25     # sibling >= this fraction of its own parent's core is skipped, not a "minor" fragment
 BIG_SIBLING_N = 800         # sibling >= this many cells (absolute) is skipped too, regardless of frac_of_core
 DOUBLET_MEDIAN_THRESH = 0.2   # scrublet score, 0-1 scale
 MT_MEDIAN_THRESH = 20.0        # pct_counts_mt is already on a 0-100 scale
+DROP_PCT_THRESH = 50.0         # % of a sibling's cells already _qc_action=drop upstream (osp)
 
 
 def _mwu_greater(sib_vals, core_vals):
@@ -111,19 +113,30 @@ def _mwu_greater(sib_vals, core_vals):
 
 def _minor_sibling_qc(ad, res, outdir):
     """Test minor-sibling fragments (standissect subclusters c{parent}_i,
-    i>0) for a QC profile worse than the pooled parent-core cells —
-    candidates for msp.inspect to verify, not a removal decision.
+    i>0) for a QC profile worse than the pooled parent-core cells, plus one
+    hard upstream-drop rule — candidates for msp.inspect to verify, but ANY
+    one of these criteria hitting is enough to mark the whole fragment
+    recommend_removal (this function proposes, it never removes anything
+    itself).
 
     Parent cores (rank 0) are never tested. Siblings holding >=25% of their
     own parent core's cell count, OR >=800 cells outright, are "big"
-    fragments, not minor — skipped either way. Remaining siblings are
-    tested one-sided (sibling > pooled cores) via
-    Mann-Whitney U on: decontX_contamination, dissociation_score,
-    doublet_score, pct_counts_mt. doublet/mt tests additionally require the
-    sibling's own median to clear an absolute floor (0.2 and 20% respectively)
-    so a sibling merely "less clean than an unusually pristine cohort" isn't
-    marked suspect. No multiple-testing correction — this is candidate
-    detection, downstream inspection re-verifies."""
+    fragments, not minor — skipped entirely (no rows below apply to them).
+
+    For every remaining (non-big) sibling: if >50% of its cells already
+    carry _qc_action=="drop" from the upstream per-sample annotation, that
+    alone is enough — a fragment that's already majority-drop upstream just
+    inherits that verdict as a group. This is computed even when the
+    sibling is too small for the statistical tests below.
+
+    Siblings with >=5 cells are additionally tested one-sided (sibling >
+    pooled cores) via Mann-Whitney U on: decontX_contamination,
+    dissociation_score, doublet_score, pct_counts_mt. doublet/mt tests
+    additionally require the sibling's own median to clear an absolute
+    floor (0.2 and 20% respectively). No multiple-testing correction — this
+    half is candidate detection, downstream inspection re-verifies. A
+    sibling is recommend_removal if the upstream-drop rule fires OR any one
+    of the four stats tests comes back significant."""
     frag = res.fragments
     core_n = frag.loc[frag["rank"] == 0].set_index("parent")["n_cells"]
     core_subclusters = set(frag.loc[frag["rank"] == 0, "subcluster"])
@@ -145,11 +158,21 @@ def _minor_sibling_qc(ad, res, outdir):
                "core_n_cells": cn, "frac_of_core": round(n_cells / cn, 3) if cn else None}
         if (cn and n_cells >= BIG_SIBLING_FRAC * cn) or n_cells >= BIG_SIBLING_N:
             row["status"] = "big_sibling_skip"
-        elif n_cells < MIN_N_FOR_TEST:
+            rows.append(row)
+            continue
+
+        sib_mask = ad.obs["standissect_product"].astype(str) == sub
+        drop_hit = False
+        if "_qc_action" in ad.obs:
+            pct_drop = float((ad.obs.loc[sib_mask, "_qc_action"] == "drop").mean() * 100)
+            row["pct_drop_upstream"] = round(pct_drop, 2)
+            drop_hit = pct_drop > DROP_PCT_THRESH
+
+        stat_hit = False
+        if n_cells < MIN_N_FOR_TEST:
             row["status"] = "insufficient_data"
         else:
             row["status"] = "tested"
-            sib_mask = ad.obs["standissect_product"].astype(str) == sub
             n_hits = 0
             for col, name, thr in metric_tests:
                 sib_vals, core_vals = ad.obs.loc[sib_mask, col], ad.obs.loc[core_mask, col]
@@ -160,7 +183,9 @@ def _minor_sibling_qc(ad, res, outdir):
                 row[f"{name}_significant"] = sig
                 n_hits += bool(sig)
             row["n_hits"] = n_hits
-            row["suspect"] = n_hits > 0
+            stat_hit = n_hits > 0
+
+        row["recommend_removal"] = bool(drop_hit or stat_hit)
         rows.append(row)
 
     df = pd.DataFrame(rows)
