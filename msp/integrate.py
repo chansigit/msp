@@ -99,15 +99,22 @@ def _plot_fragments(ad, primary_key, figdir, minors=None):
     if minors is None:
         minors = sorted({v for v in lab if not v.endswith("_0")})
     fig, ax = plt.subplots(figsize=(9, 8))
-    main_mask = ~np.isin(lab, minors)
-    ax.scatter(xy[main_mask, 0], xy[main_mask, 1], s=2, c="#d9d9d9", linewidths=0)
+    is_main = np.array([v.endswith("_0") for v in lab])
+    dust_mask = ~is_main & ~np.isin(lab, minors)  # non-main, below size threshold
+    ax.scatter(xy[is_main, 0], xy[is_main, 1], s=2, c="#d9d9d9", linewidths=0)
+    if dust_mask.any():
+        ax.scatter(xy[dust_mask, 0], xy[dust_mask, 1], s=4, c="#000000", linewidths=0,
+                   label=f"sub-threshold dust (n={int(dust_mask.sum())} cells, "
+                         f"{len(set(lab[dust_mask]))} fragments)")
+        ax.legend(loc="upper right", fontsize=7, framealpha=0.9)
     cmap = plt.get_cmap("tab20")
     for i, m in enumerate(minors):
         mm = lab == m
         ax.scatter(xy[mm, 0], xy[mm, 1], s=6, c=[cmap(i % 20)], linewidths=0)
         ax.text(float(xy[mm, 0].mean()), float(xy[mm, 1].mean()), m, fontsize=7, ha="center",
                 bbox=dict(boxstyle="round,pad=0.15", fc="white", alpha=0.75, lw=0))
-    ax.set_title(f"minor siblings ({primary_key} × umap_cluster); main cores grey")
+    ax.set_title(f"minor siblings ({primary_key} × umap_cluster); "
+                 "main cores grey, sub-threshold dust black")
     ax.set_xlabel("UMAP1")
     ax.set_ylabel("UMAP2")
     fig.savefig(os.path.join(figdir, "standissect_fragments.png"), dpi=150, bbox_inches="tight")
