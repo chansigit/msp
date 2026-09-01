@@ -49,15 +49,13 @@ def load_and_merge(inputs, batch_col, counts_layer="counts"):
                 a.obs[c] = (sample + ":" + a.obs[c].astype(str)).astype("category")
         if counts_layer not in a.layers:
             raise ValueError(f"{path}: missing layers[{counts_layer!r}]")
-        a.X = a.layers[counts_layer].copy()
+        counts = a.layers[counts_layer]
+        a.X = counts.copy()
         # per-sample embeddings/uns are meaningless after the merge; raw
-        # counts layer is all downstream needs
+        # counts is all downstream needs
         a.obsm.clear()
         a.uns.clear()
-        keep_layers = {counts_layer: a.layers[counts_layer]}
-        a.layers.clear()
-        for k, v in keep_layers.items():
-            a.layers[k] = v
+        a.layers = {counts_layer: counts}
         adatas.append(a)
 
     merged = ad.concat(adatas, join="inner", merge="same")
@@ -94,7 +92,19 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     del hvg
 
     print("== harmony", flush=True)
-    sc.external.pp.harmony_integrate(ad, batch_col, basis="X_pca", adjusted_basis="X_pca_harmony")
+    # call harmonypy directly: the installed fork returns Z_corr already
+    # cells-by-PCs, which scanpy's wrapper transposes into garbage — accept
+    # either orientation and assert the final shape
+    import harmonypy
+    import numpy as np
+
+    ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col, random_state=0)
+    Z = np.asarray(ho.Z_corr)
+    if Z.shape[0] != ad.n_obs:
+        Z = Z.T
+    if Z.shape != (ad.n_obs, n_comps):
+        raise ValueError(f"harmony returned shape {Z.shape}, expected ({ad.n_obs}, {n_comps})")
+    ad.obsm["X_pca_harmony"] = Z
 
     print("== neighbors (use_rep=X_pca_harmony)", flush=True)
     sc.pp.neighbors(ad, use_rep="X_pca_harmony", n_neighbors=n_neighbors)

@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: msp
+Version: 0.1.0
+Summary: Multi-sample scRNA-seq integration pipeline (harmony) over osp per-sample outputs
+Requires-Python: >=3.10
+Requires-Dist: scanpy
+Requires-Dist: harmonypy
+Requires-Dist: anndata
+Requires-Dist: pandas
+Requires-Dist: numpy
+Requires-Dist: scikit-learn

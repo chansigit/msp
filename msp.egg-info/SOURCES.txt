@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+msp/__init__.py
+msp/__main__.py
+msp/integrate.py
+msp/report.py
+msp.egg-info/PKG-INFO
+msp.egg-info/SOURCES.txt
+msp.egg-info/dependency_links.txt
+msp.egg-info/requires.txt
+msp.egg-info/top_level.txt
