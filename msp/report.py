@@ -48,6 +48,11 @@ img.fig { max-width: 100%; display: block; border: 1px solid #ddd; }
 .grid-item { flex: 0 0 330px; margin: 0; }
 .grid-item img.fig { width: 330px; }
 .grid-item figcaption { text-align: center; }
+.trio { display: flex; gap: 1.2rem; margin: .5rem 0 1rem 0; }
+.trio figure { flex: 1 1 0; margin: 0; }
+.trio img.fig { width: 100%; }
+.trio figcaption { text-align: center; }
+figure.natural img.fig { max-width: 100%; width: auto; }
 figure { margin: 1rem 0; }
 figcaption { font-size: .78rem; color: #555; margin-top: .25rem; }
 #inspection td, #agent-tables td { text-align: left; vertical-align: top; }
@@ -261,14 +266,18 @@ def _section_umaps(umap_figs: list[str], standissect_figs: list[str]) -> str:
         return ""
     ann = [p for p in umap_figs if "_ann_coarse" in os.path.basename(p)]
     rest = [p for p in umap_figs if "_ann_" not in os.path.basename(p)]
-    # sample-mixing panel first, then the leiden resolutions
     leiden = sorted(p for p in rest if "leiden" in os.path.basename(p))
     samples = [p for p in rest if p not in leiden]
     parts = [_h2("umaps")]
     if ann:
         parts += ["<h3>Inherited annotations from One-sample Pipeline (OSP)</h3>", _grid(ann)]
-    if samples or leiden:
-        parts += ["<h3>Samples & leiden clusterings</h3>", _grid(samples + leiden)]
+    if samples:
+        # natural image size: the sample legend carries long names — never
+        # squeeze this panel into a fixed grid cell
+        parts += ["<h3>Samples</h3>"] + [_img(p, cls="natural") for p in samples]
+    if leiden:
+        parts += ["<h3>Leiden clusterings</h3>",
+                  '<div class="trio">' + "".join(_img(p) for p in leiden) + "</div>"]
     if standissect_figs:
         parts += ["<h3>standissect-lite derived</h3>"]
         parts += [_img(p) for p in standissect_figs]
