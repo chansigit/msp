@@ -29,6 +29,7 @@ import glob
 import html
 import json
 import os
+import re
 
 CSS = """
 body { font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 2rem auto; max-width: 1400px; color: #1a1a1a; padding: 0 1rem; }
@@ -70,6 +71,8 @@ nav.toc { position: sticky; top: 1rem; z-index: 10; flex: 0 0 200px;
           box-shadow: 0 2px 4px rgba(0,0,0,.06); }
 nav.toc a { color: #24578a; text-decoration: none; }
 nav.toc a:hover { text-decoration: underline; }
+nav.toc .toc-sub { display: flex; flex-direction: column; gap: .3rem; margin: -.15rem 0 .15rem 1rem; }
+nav.toc .toc-sub a { color: #5a6b7a; font-size: .82rem; }
 @media (max-width: 800px) {
   .layout { flex-direction: column; }
   nav.toc { position: static; flex-direction: row; flex-wrap: wrap; width: auto; }
@@ -277,21 +280,53 @@ def _section_umaps(umap_figs: list[str], standissect_figs: list[str], qc_figs: l
     return "".join(parts)
 
 
+def _add_subsection_anchors(section_html, sec_anchor):
+    """Give every bare <h3>Text</h3> in this section an id (sec_anchor-N) so
+    the TOC can link straight to it. Returns (new_html, [(id, text), ...])."""
+    entries = []
+    counter = [0]
+
+    def repl(m):
+        counter[0] += 1
+        sub_id = f"{sec_anchor}-{counter[0]}"
+        entries.append((sub_id, m.group(1)))
+        return f'<h3 id="{sub_id}">{m.group(1)}</h3>'
+
+    return re.sub(r"<h3>(.*?)</h3>", repl, section_html), entries
+
+
 def _number_sections(section_htmls):
     """Number the sections that actually rendered so a missing one doesn't
-    leave a gap (same mechanism as osp.report)."""
+    leave a gap (same mechanism as osp.report); also anchor every h3
+    subsection and nest it under its parent in the TOC."""
     present = [
         (anchor, label) for anchor, label in _SECTION_LABELS.items()
         if any(f'<h2 id="{anchor}">{label}</h2>' in s for s in section_htmls)
     ]
     numbered = {anchor: f"{i}. {label}" for i, (anchor, label) in enumerate(present, start=1)}
     numbered_htmls = []
+    toc_groups = []
     for s in section_htmls:
+        sec_anchor = next((a for a, l in present if f'<h2 id="{a}">{l}</h2>' in s), None)
         for anchor, label in present:
             s = s.replace(f'<h2 id="{anchor}">{label}</h2>',
                           f'<h2 id="{anchor}">{numbered[anchor]}</h2>', 1)
+        subs = []
+        if sec_anchor:
+            s, subs = _add_subsection_anchors(s, sec_anchor)
+            toc_groups.append((sec_anchor, subs))
         numbered_htmls.append(s)
-    toc = "".join(f'<a href="#{anchor}">{html.escape(numbered[anchor])}</a>' for anchor, _ in present)
+
+    toc_by_anchor = dict(toc_groups)
+    parts = []
+    for anchor, _ in present:
+        parts.append(f'<a href="#{anchor}">{html.escape(numbered[anchor])}</a>')
+        subs = toc_by_anchor.get(anchor, [])
+        if subs:
+            parts.append('<div class="toc-sub">' + "".join(
+                f'<a href="#{sid}">{html.escape(text)}</a>' for sid, text in subs
+            ) + "</div>")
+    toc = "".join(parts)
     return numbered_htmls, (f'<nav class="toc">{toc}</nav>' if toc else "")
 
 
