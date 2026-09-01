@@ -224,6 +224,56 @@ def _section_sample_summary(outdir: str) -> str:
     return "".join(parts)
 
 
+def _section_minor_sibling(outdir: str) -> str:
+    path = os.path.join(outdir, "minor_sibling_qc.csv")
+    if not os.path.exists(path):
+        return ""
+    with open(path) as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        return ""
+    metric_names = sorted({c[: -len("_median")] for c in rows[0] if c.endswith("_median")})
+    head_cols = ("subcluster", "parent", "n_cells", "core_n_cells", "frac_of_core", "status", "n_flags")
+    head = "".join(f"<th>{c}</th>" for c in head_cols)
+    body_rows = []
+    for r in rows:
+        color = "#c0392b" if r.get("flagged") == "True" else (
+            "#888" if r["status"] != "tested" else None)
+        style = f' style="color:{color}"' if color else ""
+
+        def _cell(c, v=r):
+            val = v.get(c) or ""
+            if c == "n_flags" and val:
+                val = str(int(float(val)))
+            return f"<td>{html.escape(val)}</td>"
+
+        cells = "".join(_cell(c) for c in head_cols)
+        body_rows.append(f"<tr{style}>{cells}</tr>")
+    table = f"<table><tr>{head}</tr>{''.join(body_rows)}</table>"
+
+    detail_head = "".join(f"<th>{m}_median</th><th>{m}_significant</th>" for m in metric_names)
+    detail_rows = "".join(
+        "<tr><td>" + html.escape(r["subcluster"]) + "</td>"
+        + "".join(f"<td>{html.escape(r.get(f'{m}_median') or '')}</td>"
+                  f"<td>{html.escape(r.get(f'{m}_significant') or '')}</td>" for m in metric_names)
+        + "</tr>"
+        for r in rows if r["status"] == "tested"
+    )
+    details = ("<details><summary>per-metric values (tested siblings only)</summary>"
+               f"<table><tr><th>subcluster</th>{detail_head}</tr>{detail_rows}</table></details>")
+
+    n_flagged = sum(1 for r in rows if r.get("flagged") == "True")
+    n_tested = sum(1 for r in rows if r["status"] == "tested")
+    hint = (f"<p class=\"hint\">Each minor sibling (standissect fragment, rank&gt;0) tested "
+            "one-sided against the pooled parent-core cells (Mann-Whitney U, p&lt;0.05, no "
+            "multiple-testing correction — candidate detection only, not a removal verdict). "
+            "Siblings holding ≥25% of their own parent core's cell count are skipped as "
+            "\"big\", not minor; fragments under 5 cells are marked insufficient data. doublet/mt "
+            "tests additionally require the sibling's own median above an absolute floor (0.2 and "
+            f"20%). {n_flagged}/{len(rows)} siblings flagged, {n_tested} tested.</p>")
+    return f"<h3>Minor sibling QC flags</h3>{hint}{table}{details}"
+
+
 def _section_per_cluster(outdir: str, violins: list[str]) -> str:
     parts = []
     for p in sorted(glob.glob(os.path.join(outdir, "cluster_qc_*.csv"))):
@@ -232,6 +282,7 @@ def _section_per_cluster(outdir: str, violins: list[str]) -> str:
                   '<p class="hint">flag/drop fractions carried over from per-sample '
                   "annotation; a cluster fed by a single sample is itself a signal.</p>",
                   _csv_table(p)]
+    parts.append(_section_minor_sibling(outdir))
     if violins:
         parts += ["<h3>Per-cluster QC violins</h3>",
                   '<p class="hint">Grouped by the standissect clusters (leiden × UMAP-fragment '

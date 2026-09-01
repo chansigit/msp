@@ -86,6 +86,84 @@ QC_UMAP_METRICS = (
 QC_ACTION_PALETTE = {"keep": "#d3d3d3", "flag": "#ff8c00", "drop": "#d62728"}
 
 
+# thresholds for minor-sibling QC flagging (candidate detection, not verdicts
+# — msp.inspect judges what actually matters)
+MIN_N_FOR_TEST = 5          # below this, Mann-Whitney has no real power — mark insufficient_data
+BIG_SIBLING_FRAC = 0.25     # sibling >= this fraction of its own parent's core is skipped, not a "minor" fragment
+DOUBLET_MEDIAN_THRESH = 0.2   # scrublet score, 0-1 scale
+MT_MEDIAN_THRESH = 20.0        # pct_counts_mt is already on a 0-100 scale
+
+
+def _mwu_greater(sib_vals, core_vals):
+    """One-sided Mann-Whitney U: is `sib_vals` stochastically greater than
+    `core_vals`? Rank-based — doesn't assume normality, works for the small,
+    skewed samples minor siblings usually are."""
+    from scipy.stats import mannwhitneyu
+
+    if len(sib_vals) < MIN_N_FOR_TEST:
+        return None
+    _, p = mannwhitneyu(sib_vals, core_vals, alternative="greater")
+    return bool(p < 0.05)
+
+
+def _minor_sibling_qc(ad, res, outdir):
+    """Flag minor-sibling fragments (standissect subclusters c{parent}_i,
+    i>0) whose QC profile looks worse than the pooled parent-core cells —
+    candidates for msp.inspect to verify, not a removal decision.
+
+    Parent cores (rank 0) are never tested. Siblings holding >=25% of their
+    own parent core's cell count are "big" fragments, not minor — skipped.
+    Remaining siblings are tested one-sided (sibling > pooled cores) via
+    Mann-Whitney U on: decontX_contamination, dissociation_score,
+    doublet_score, pct_counts_mt. doublet/mt tests additionally require the
+    sibling's own median to clear an absolute floor (0.2 and 20% respectively)
+    so a sibling merely "less clean than an unusually pristine cohort" isn't
+    flagged. No multiple-testing correction — this is candidate detection,
+    downstream inspection re-verifies."""
+    frag = res.fragments
+    core_n = frag.loc[frag["rank"] == 0].set_index("parent")["n_cells"]
+    core_subclusters = set(frag.loc[frag["rank"] == 0, "subcluster"])
+    core_mask = ad.obs["standissect_product"].astype(str).isin(core_subclusters)
+
+    metric_tests = [
+        ("decontX_contamination", "decontX", None),
+        ("dissociation_score", "dissociation", None),
+        ("doublet_score", "doublet", DOUBLET_MEDIAN_THRESH),
+        ("pct_counts_mt", "mt", MT_MEDIAN_THRESH),
+    ]
+    metric_tests = [(col, name, thr) for col, name, thr in metric_tests if col in ad.obs]
+
+    rows = []
+    for _, frow in frag[frag["rank"] > 0].iterrows():
+        sub, parent, n_cells = frow["subcluster"], frow["parent"], int(frow["n_cells"])
+        cn = int(core_n.get(parent, 0))
+        row = {"subcluster": sub, "parent": parent, "n_cells": n_cells,
+               "core_n_cells": cn, "frac_of_core": round(n_cells / cn, 3) if cn else None}
+        if cn and n_cells >= BIG_SIBLING_FRAC * cn:
+            row["status"] = "big_sibling_skip"
+        elif n_cells < MIN_N_FOR_TEST:
+            row["status"] = "insufficient_data"
+        else:
+            row["status"] = "tested"
+            sib_mask = ad.obs["standissect_product"].astype(str) == sub
+            n_flags = 0
+            for col, name, thr in metric_tests:
+                sib_vals, core_vals = ad.obs.loc[sib_mask, col], ad.obs.loc[core_mask, col]
+                sig = _mwu_greater(sib_vals, core_vals)
+                if thr is not None and sig:
+                    sig = bool(sib_vals.median() > thr)
+                row[f"{name}_median"] = round(float(sib_vals.median()), 4)
+                row[f"{name}_significant"] = sig
+                n_flags += bool(sig)
+            row["n_flags"] = n_flags
+            row["flagged"] = n_flags > 0
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    df.to_csv(os.path.join(outdir, "minor_sibling_qc.csv"), index=False)
+    return df
+
+
 def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
     """QC evidence for the integrated space: metric UMAPs, the inherited
     keep/flag/drop overlay, and per-sample / per-cluster QC tables — the
@@ -223,6 +301,8 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     ad.obs["standissect_product"] = res.labels["subcluster"].astype("category")
     res.fragments.to_csv(os.path.join(outdir, f"fragments_{standissect_key}.csv"), index=False)
     res.overlap.to_csv(os.path.join(outdir, f"overlap_{standissect_key}.csv"))
+    print("== minor-sibling QC flags", flush=True)
+    _minor_sibling_qc(ad, res, outdir)
 
     ad.uns["msp"] = {
         "batch_col": batch_col,
