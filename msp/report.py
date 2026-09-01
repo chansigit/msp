@@ -48,11 +48,11 @@ img.fig { max-width: 100%; display: block; border: 1px solid #ddd; }
 .grid-item { flex: 0 0 330px; margin: 0; }
 .grid-item img.fig { width: 330px; }
 .grid-item figcaption { text-align: center; }
-.trio { display: flex; gap: 1.2rem; margin: .5rem 0 1rem 0; align-items: flex-start; flex-wrap: wrap; }
-.trio figure { margin: 0; }
-.trio img.fig { width: auto; max-width: 100%; }
+.trio { display: flex; gap: 1.2rem; margin: .5rem 0 1rem 0; align-items: flex-start; }
+.trio figure { flex: 1 1 0; margin: 0; min-width: 0; }
+.trio img.fig { width: 100%; height: auto; }
 .trio figcaption { text-align: center; }
-figure.natural img.fig { max-width: 100%; width: auto; }
+figure.natural img.fig { height: 330px; width: auto; max-width: 100%; }
 figure { margin: 1rem 0; }
 figcaption { font-size: .78rem; color: #555; margin-top: .25rem; }
 #inspection td, #agent-tables td { text-align: left; vertical-align: top; }
