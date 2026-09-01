@@ -391,10 +391,17 @@ DISSOCIATION_GENES_HS = [
 # DCN is in DISSOCIATION_GENES_HS but is ALSO a real parent-core marker in
 # this dataset (fractal_markers.csv: parent 2, rank 9, logFC 4.6) — a
 # genuine connective-tissue/fibroblast lineage signal here, not dissociation
-# artifact, so it's excluded from the stress match. Checked the whole panel
-# against fractal_markers.csv; nothing else in it turned up as a real core
-# marker (e.g. LMNA/SERPINE1 don't appear there), so only DCN is excluded.
-STRESS_GENE_EXCLUDE = {"DCN"}
+# artifact, so it's excluded from the stress match.
+#
+# LMNA/SERPINE1: not confirmed by fractal_markers.csv, but domain judgment —
+# msp_leiden_r1.0 local view cluster 2's top 10 is VIM/TMSB4X/LMNA/LGALS1/
+# CAV1/ANXA2/S100A4/C12orf75/SERPINE1/TNFRSF12A: a coherent myofibroblast-
+# activation/EMT module (TGF-beta response, ECM remodeling, mechanotrans-
+# duction — LMNA routinely goes up under mechanical load, SERPINE1/PAI-1 is
+# a fibrosis/myofibroblast-activation marker), with NONE of the AP-1/
+# immediate-early (FOS/JUN/EGR1) or heat-shock (HSPA*/DNAJ*) genes that
+# actually mark acute dissociation stress. Excluded for that reason.
+STRESS_GENE_EXCLUDE = {"DCN", "LMNA", "SERPINE1"}
 STRESS_GENE_SET = set(DISSOCIATION_GENES_HS) - STRESS_GENE_EXCLUDE  # already uppercase
 STRESS_HIT_THRESHOLD = 3  # a cluster is "stress" if MORE than this many top genes hit
 
