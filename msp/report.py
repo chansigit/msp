@@ -48,6 +48,55 @@ def _kv_table(path: str) -> str:
     return f"<table>{body}</table>"
 
 
+def _de_table(path: str, top_n: int = 10) -> str:
+    """Compact per-cluster top-genes view of a de_top_genes csv."""
+    if not os.path.exists(path):
+        return ""
+    with open(path) as f:
+        rows = list(csv.DictReader(f))
+    by_group: dict[str, list[str]] = {}
+    for r in rows:
+        g = by_group.setdefault(r["group"], [])
+        if len(g) < top_n:
+            g.append(f"{r['names']} ({float(r['logfoldchanges']):.1f})")
+    body = "".join(
+        f"<tr><td>{html.escape(g)}</td><td>{html.escape(', '.join(genes))}</td></tr>"
+        for g, genes in by_group.items()
+    )
+    return f"<table><tr><th>cluster</th><th>top genes (logFC)</th></tr>{body}</table>"
+
+
+STANDISSECT_COLS = ("parent_cluster", "subcluster", "n_cells", "frac_of_parent",
+                    "likely_cause", "diagnosis_confidence", "recommended_disposition",
+                    "diagnosis_rationale")
+
+
+def _standissect_section(outdir: str) -> list[str]:
+    hits = glob.glob(os.path.join(outdir, "standissect", "*", "diagnosis_all.tsv"))
+    parts: list[str] = []
+    for path in sorted(hits):
+        base = os.path.dirname(path)
+        key = os.path.basename(base)
+        with open(path) as f:
+            rows = list(csv.DictReader(f, delimiter="\t"))
+        n_discard = max(0, sum(1 for _ in open(dp)) - 1) if os.path.exists(
+            (dp := os.path.join(base, "discard_cells.tsv"))) else 0
+        parts.append(f"<h2>standissect-lite candidates ({html.escape(key)})</h2>"
+                     "<p>Rule-mode evidence only — dispositions here are proposals; "
+                     f"nothing is removed by msp. {len(rows)} candidate minor(s), "
+                     f"{n_discard} cells in discard_cells.tsv.</p>")
+        head = "".join(f"<th>{html.escape(c)}</th>" for c in STANDISSECT_COLS)
+        body = "".join(
+            "<tr>" + "".join(f"<td>{html.escape(r.get(c, ''))}</td>" for c in STANDISSECT_COLS) + "</tr>"
+            for r in rows
+        )
+        parts.append(f"<table><tr>{head}</tr>{body}</table>")
+        cmp_png = os.path.join(base, "global_umap_compare.png")
+        if os.path.exists(cmp_png):
+            parts.append(_img(cmp_png))
+    return parts
+
+
 def generate_report(outdir: str, out_html: str | None = None) -> str:
     out_html = out_html or os.path.join(outdir, "report.html")
     figdir = os.path.join(outdir, "figures")
@@ -72,6 +121,10 @@ def generate_report(outdir: str, out_html: str | None = None) -> str:
                   "<p>flag/drop carried over from per-sample annotation; a cluster "
                   "fed by a single sample is itself a signal.</p>",
                   _csv_table(p)]
+    for p in sorted(glob.glob(os.path.join(outdir, "de_top_genes_*.csv"))):
+        key = os.path.basename(p)[len("de_top_genes_"):-len(".csv")]
+        parts += [f"<h2>Cluster DEG ({html.escape(key)})</h2>", _de_table(p)]
+    parts += _standissect_section(outdir)
     if qc_figs:
         parts.append("<h2>QC on the integrated UMAP</h2>"
                      "<p>pct_counts_mt uses a fixed color ceiling (vmax=20) — "

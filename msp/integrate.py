@@ -123,7 +123,8 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
 
 def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
                               resolutions=(0.3, 1.0, 2.0), n_top_genes=2000,
-                              n_pcs=50, n_neighbors=15, counts_layer="counts"):
+                              n_pcs=50, n_neighbors=15, counts_layer="counts",
+                              top_n_de=50):
     os.makedirs(outdir, exist_ok=True)
     ad = load_and_merge(inputs, batch_col, counts_layer=counts_layer)
     n_samples = ad.obs[batch_col].astype(str).nunique()
@@ -171,6 +172,35 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     print("== umap", flush=True)
     sc.tl.umap(ad)
 
+    primary_key = leiden_keys[min(1, len(leiden_keys) - 1)]  # middle resolution
+
+    print(f"== rank_genes_groups on {primary_key}", flush=True)
+    sc.tl.rank_genes_groups(ad, primary_key, method="wilcoxon", use_raw=True, pts=True)
+    de_df = sc.get.rank_genes_groups_df(ad, group=None)
+    # pct1/pct2 naming mirrors osp's de_top_genes export
+    de_df = de_df.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
+    de_top = de_df.groupby("group", observed=True).head(top_n_de).reset_index(drop=True)
+    de_top.to_csv(os.path.join(outdir, f"de_top_genes_{primary_key}.csv"), index=False)
+
+    print(f"== standissect-lite on {primary_key} (rule mode)", flush=True)
+    from standissect import run_dissect_pipeline
+
+    run_dissect_pipeline(
+        ad,
+        cluster_col=primary_key,
+        output_dir=os.path.join(outdir, "standissect"),
+        umap_key="X_umap",
+        sample_col=batch_col,
+        batch_col=batch_col,
+        annotation_col="_ann_coarse" if "_ann_coarse" in ad.obs else None,
+        doublet_score_col="doublet_score" if "doublet_score" in ad.obs else None,
+        mito_col="pct_counts_mt" if "pct_counts_mt" in ad.obs else None,
+        feature_count_col="n_genes_by_counts" if "n_genes_by_counts" in ad.obs else None,
+        umi_count_col="total_counts" if "total_counts" in ad.obs else None,
+        diagnosis_mode="rule",  # candidates only — verdicts belong to msp.inspect
+        random_state=0,
+    )
+
     ad.uns["msp"] = {
         "batch_col": batch_col,
         "species": species or "",
@@ -190,7 +220,6 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
         plt.close("all")
 
     print("== QC figures/tables", flush=True)
-    primary_key = leiden_keys[min(1, len(leiden_keys) - 1)]  # middle resolution
     _qc_outputs(ad, batch_col, primary_key, outdir, figdir)
 
     summary = {
