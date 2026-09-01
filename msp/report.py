@@ -151,6 +151,20 @@ def _grid(paths: list[str]) -> str:
     return '<div class="grid">' + "".join(_img(p, cls="grid-item") for p in paths) + "</div>"
 
 
+def _fmt_cell(header: str, value: str) -> str:
+    """Display-only rounding — never touches the underlying CSV. Counts read
+    as integers; other medians only need 2 decimals to be legible."""
+    try:
+        v = float(value)
+    except ValueError:
+        return html.escape(value)
+    if "n_genes_by_counts" in header:
+        return f"{v:.0f}"
+    if header.startswith("median_"):
+        return f"{v:.2f}"
+    return html.escape(value)
+
+
 def _csv_table(path: str) -> str:
     if not os.path.exists(path):
         return ""
@@ -160,7 +174,8 @@ def _csv_table(path: str) -> str:
         return ""
     head = "".join(f"<th>{html.escape(c)}</th>" for c in rows[0])
     body = "".join(
-        "<tr>" + "".join(f"<td>{html.escape(c)}</td>" for c in r) + "</tr>" for r in rows[1:]
+        "<tr>" + "".join(f"<td>{_fmt_cell(h, c)}</td>" for h, c in zip(rows[0], r)) + "</tr>"
+        for r in rows[1:]
     )
     return f"<table><tr>{head}</tr>{body}</table>"
 
