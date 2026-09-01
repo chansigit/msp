@@ -147,14 +147,22 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     ad.obsm["X_pca"] = PCA(n_components=n_comps, svd_solver="arpack", random_state=0).fit_transform(hvg.X)
     del hvg
 
-    print("== harmony", flush=True)
     # call harmonypy directly: the installed fork returns Z_corr already
     # cells-by-PCs, which scanpy's wrapper transposes into garbage — accept
     # either orientation and assert the final shape
     import harmonypy
     import numpy as np
+    import torch
 
-    ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col, random_state=0)
+    # GPU auto-detect (same order as harmonypy's own get_device); MSP_DEVICE
+    # env overrides (cpu|cuda|mps)
+    device = os.environ.get("MSP_DEVICE") or None
+    auto = ("cuda" if torch.cuda.is_available() else
+            "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
+            else "cpu")
+    print(f"== harmony on {device or auto}{'' if device else ' (auto-detected)'}", flush=True)
+    ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col,
+                               random_state=0, device=device)
     Z = np.asarray(ho.Z_corr)
     if Z.shape[0] != ad.n_obs:
         Z = Z.T
