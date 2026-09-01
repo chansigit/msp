@@ -26,7 +26,7 @@ import pandas as pd
 import scanpy as sc
 import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
-from scipy.cluster.hierarchy import linkage
+from scipy.cluster.hierarchy import dendrogram, linkage
 from sklearn.decomposition import PCA
 
 from .plots import UMAP_DPI, save_single_umap, slug
@@ -260,17 +260,17 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     DE each parent's core cells one-vs-rest against every OTHER parent's
     core cells (core-only, so a minor sibling's cells never leak into
     either side of the comparison) -> per-parent top markers (logFC>0,
-    padj<0.05, ribosomal genes excluded) -> average log1p expression of
-    those markers across every standissect cluster (cores AND fractals) ->
-    row-wise (per-gene) z-score, Seurat-style purple-black-yellow heatmap.
+    padj<0.05, ribosomal genes excluded) -> dot plot across every
+    standissect cluster (cores AND fractals): dot size = fraction of a
+    cluster's cells expressing the gene, dot color = row-wise (per-gene)
+    z-score of average log1p expression, Seurat-style purple-black-yellow.
 
-    Columns are clustered (optimal leaf ordering) but the dendrogram is
-    hidden — it's ordering, not something to read. Rows are NOT clustered:
-    genes stay grouped by the parent they're a marker for, with a colored
-    strip per gene showing that parent, since that grouping is more legible
-    than a gene-gene dendrogram here. Column labels: parent-core clusters
-    (c{parent}_0) bold; clusters minor_sibling_qc.csv marked
-    recommend_removal in red."""
+    Columns are clustered (optimal leaf ordering) purely to order them — no
+    dendrogram is drawn. Rows are NOT clustered: genes stay grouped by the
+    parent they're a marker for, with a colored strip per gene showing that
+    parent, since that grouping is more legible than a gene-gene dendrogram
+    here. Column labels: parent-core clusters (c{parent}_0) bold; clusters
+    minor_sibling_qc.csv marked recommend_removal in red."""
     frag = res.fragments
     core_rows = frag.loc[frag["rank"] == 0]
     parent_of_core = dict(zip(core_rows["subcluster"], core_rows["parent"]))
@@ -305,19 +305,28 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
         print("== no marker genes passed the filters — skipping heatmap", flush=True)
         return
 
-    print(f"== fractal marker heatmap ({len(markers)} genes x "
+    print(f"== fractal marker dot plot ({len(markers)} genes x "
           f"{ad.obs['standissect_product'].nunique()} clusters)", flush=True)
     sub = ad[:, markers]
     X = sub.X.toarray() if hasattr(sub.X, "toarray") else np.asarray(sub.X)
     expr = pd.DataFrame(X, index=ad.obs_names, columns=markers)
     expr["cluster"] = ad.obs["standissect_product"].astype(str).values
-    avg = expr.groupby("cluster").mean().T  # genes x clusters, average log1p expression
+    grp = expr.groupby("cluster")
+    avg = grp[markers].mean().T   # genes x clusters, average log1p expression
+    frac = grp[markers].apply(lambda d: (d > 0).mean()).T  # genes x clusters, fraction expressing
     avg.to_csv(os.path.join(outdir, "fractal_marker_avg_expr.csv"))
+    frac.to_csv(os.path.join(outdir, "fractal_marker_frac_expr.csv"))
 
     z = avg.sub(avg.mean(axis=1), axis=0).div(avg.std(axis=1).replace(0, 1), axis=0).fillna(0)
-    z = z.loc[markers]  # parent-then-rank order (see marker_rows_sorted above)
+    z = z.loc[markers]           # parent-then-rank order (see marker_rows_sorted above)
+    frac = frac.loc[markers]
 
+    # column order from hierarchical clustering (optimal leaf ordering) — used
+    # only to order columns, no dendrogram is drawn
     col_linkage = linkage(z.values.T, method="average", metric="euclidean", optimal_ordering=True)
+    leaf_order = dendrogram(col_linkage, no_plot=True)["leaves"]
+    cluster_order = [z.columns[i] for i in leaf_order]
+    z, frac = z[cluster_order], frac[cluster_order]
 
     removal_path = os.path.join(outdir, "minor_sibling_qc.csv")
     removal_set = set()
@@ -328,30 +337,66 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
 
     parents = sorted({p for p in gene_parent.values()}, key=int)
     parent_palette = dict(zip(parents, sns.color_palette("tab20", n_colors=max(len(parents), 1))))
-    row_colors = pd.Series({g: parent_palette[gene_parent[g]] for g in markers}, name="parent")
 
     n_genes, n_clusters = z.shape
-    cg = sns.clustermap(
-        z, row_cluster=False, col_linkage=col_linkage, row_colors=row_colors,
-        cmap=SEURAT_HEATMAP_CMAP, center=0, vmin=-2.5, vmax=2.5,
-        figsize=(max(6.0, n_clusters * 0.35 + 3), max(6.0, n_genes * 0.18 + 2)),
-        dendrogram_ratio=(0.01, 0.08),
-        xticklabels=True, yticklabels=True,
-        cbar_kws={"label": "z-score", "orientation": "horizontal"},
-        cbar_pos=(0.02, -0.05, 0.12, 0.015),  # below the x-axis cluster-name labels, not beside them
-    )
-    cg.ax_col_dendrogram.set_visible(False)  # ordering used, tree not shown — it's not the point
-    for label in cg.ax_heatmap.get_xticklabels():
+    fig_w = max(6.5, n_clusters * 0.4 + 3)
+    fig_h = max(6.0, n_genes * 0.2 + 2)
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    gs = fig.add_gridspec(1, 2, width_ratios=[0.4, n_clusters], wspace=0.05)
+    ax_strip = fig.add_subplot(gs[0, 0])
+    ax = fig.add_subplot(gs[0, 1], sharey=ax_strip)
+
+    strip = np.array([parent_palette[gene_parent[g]] for g in markers])[:, None, :]
+    ax_strip.imshow(strip, aspect="auto")
+    ax_strip.set_xticks([])
+    ax_strip.set_yticks(range(n_genes))
+    ax_strip.set_yticklabels(markers, fontsize=8)
+    ax_strip.set_ylabel("marker gene")
+
+    xs, ys, sizes, colors = [], [], [], []
+    for xi, cl in enumerate(cluster_order):
+        for yi, gene in enumerate(markers):
+            xs.append(xi)
+            ys.append(yi)
+            sizes.append(frac.loc[gene, cl])
+            colors.append(z.loc[gene, cl])
+    max_dot_area = 200.0
+    sca = ax.scatter(xs, ys, s=np.asarray(sizes) * max_dot_area + 2, c=colors,
+                     cmap=SEURAT_HEATMAP_CMAP, vmin=-2.5, vmax=2.5, edgecolor="none")
+    for x in range(1, n_clusters):  # thin separators between columns only
+        ax.axvline(x - 0.5, color="#dddddd", linewidth=0.6, zorder=0)
+    ax.set_xlim(-0.5, n_clusters - 0.5)
+    ax.set_ylim(n_genes - 0.5, -0.5)
+    ax.set_xticks(range(n_clusters))
+    ax.set_xticklabels(cluster_order, rotation=90)
+    # NOT ax.set_yticks([]) — sharey means the y Locator is shared with
+    # ax_strip; clearing ticks here would silently wipe its gene labels too
+    ax.tick_params(axis="y", left=False, labelleft=False)
+    ax.set_xlabel("standissect cluster (core + fractals)")
+    for label in ax.get_xticklabels():
         name = label.get_text()
         if core_pattern.match(name):
             label.set_fontweight("bold")
         if name in removal_set:
             label.set_color("#c0392b")
-    for x in range(1, n_clusters):  # thin white separators between columns only
-        cg.ax_heatmap.axvline(x, color="white", linewidth=0.6)
-    cg.ax_heatmap.set_xlabel("standissect cluster (core + fractals)")
-    cg.ax_heatmap.set_ylabel("marker gene")
-    cg.savefig(os.path.join(figdir, "fractal_marker_heatmap.png"), dpi=UMAP_DPI, bbox_inches="tight")
+
+    # colorbar (dot color = z-score) and size legend, both placed a fixed
+    # ~0.6in below the x-axis cluster-name labels regardless of fig height
+    # (a figure-fraction offset alone would grow the gap on tall figures)
+    gap = 0.6 / fig_h
+    cax = fig.add_axes((0.42, -gap, 0.2, 0.15 / fig_h))
+    fig.colorbar(sca, cax=cax, orientation="horizontal", label="z-score")
+
+    lax = fig.add_axes((0.68, -gap - 0.25 / fig_h, 0.28, 0.45 / fig_h))
+    lax.set_xlim(0, 4)
+    lax.set_ylim(0, 1)
+    lax.axis("off")
+    for i, frac_ref in enumerate((0.25, 0.5, 0.75, 1.0)):
+        lax.scatter([i], [0.5], s=frac_ref * max_dot_area + 2, c="grey")
+        lax.text(i, -0.6, f"{frac_ref:g}", ha="center", va="top", fontsize=7)
+    lax.text(1.5, 1.1, "fraction expressing", ha="center", va="bottom", fontsize=8)
+
+    fig.savefig(os.path.join(figdir, "fractal_marker_heatmap.png"), dpi=UMAP_DPI, bbox_inches="tight")
     plt.close("all")
 
 

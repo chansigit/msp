@@ -306,13 +306,16 @@ def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
     path = os.path.join(outdir, "fractal_markers.csv")
     if not os.path.exists(path) and not fractal_figs:
         return ""
-    parts = ["<h3>Fractal marker heatmap</h3>",
+    parts = ["<h3>Fractal marker dot plot</h3>",
              '<p class="hint">Each parent\'s CORE cells (rank 0) DE\'d one-vs-rest against every '
              "other parent's core cells (core-only, so minor siblings never leak into either side); "
              "per parent, top 10 markers with logFC&gt;0, padj&lt;0.05, ribosomal genes excluded. "
-             "Heatmap: average log1p expression of the union of those markers across every "
-             "standissect cluster (cores AND fractals), row-wise z-scored, both axes "
-             "hierarchically clustered with optimal leaf ordering.</p>"]
+             "Dot plot across every standissect cluster (cores AND fractals): dot size = fraction "
+             "of a cluster's cells expressing the gene, dot color = row-wise z-score of average "
+             "log1p expression. Columns are clustered (optimal leaf ordering) purely to order them "
+             "— no dendrogram shown. Rows are grouped by the parent they're a marker for (colored "
+             "strip), not clustered. Bold column labels = parent-core clusters; red = "
+             "recommend_removal (see Minor sibling fractals QC above).</p>"]
     parts += [_img(p) for p in fractal_figs]
     if os.path.exists(path):
         with open(path) as f:
