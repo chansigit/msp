@@ -64,7 +64,8 @@ pre.notes { white-space: pre-wrap; font-size: .85rem; background: #f7f7f7; paddi
 .hint { color: #555; font-size: .88rem; margin: .3rem 0 1rem 0; max-width: 75ch; }
 .layout { display: flex; gap: 2rem; align-items: flex-start; }
 .content { flex: 1; min-width: 0; }
-nav.toc { position: sticky; top: 1rem; z-index: 10; flex: 0 0 200px;
+nav.toc { position: -webkit-sticky; position: sticky; top: 1rem; align-self: flex-start;
+          z-index: 10; flex: 0 0 200px; max-height: calc(100vh - 2rem); overflow-y: auto;
           display: flex; flex-direction: column; gap: .5rem;
           background: #f7f7f7; border: 1px solid #e0e0e0; border-radius: 6px;
           padding: .8rem 1rem; font-size: .9rem;
