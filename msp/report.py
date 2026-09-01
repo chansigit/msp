@@ -80,6 +80,46 @@ nav.toc .toc-sub a { color: #5a6b7a; font-size: .82rem; }
 }
 """
 
+# `position: sticky` in CSS is the fallback (and what mobile keeps), but it
+# silently no-ops in some flex/ancestor configurations that are hard to spot
+# from CSS alone; this pins the TOC with measured `position: fixed`
+# coordinates instead, which floats unconditionally regardless of any
+# ancestor's overflow/flex quirks. A same-width placeholder keeps .content
+# from jumping left into the space the TOC vacated.
+TOC_PIN_SCRIPT = """<script>
+(function () {
+  var toc = document.querySelector("nav.toc");
+  if (!toc) return;
+  var placeholder = document.createElement("div");
+  placeholder.style.display = "none";
+  toc.parentNode.insertBefore(placeholder, toc);
+
+  function pin() {
+    if (!window.matchMedia("(min-width: 801px)").matches) {
+      toc.style.position = "";
+      toc.style.left = "";
+      toc.style.width = "";
+      placeholder.style.display = "none";
+      return;
+    }
+    placeholder.style.display = "none";
+    toc.style.position = "";
+    toc.style.left = "";
+    toc.style.width = "";
+    var rect = toc.getBoundingClientRect();
+    placeholder.style.display = "block";
+    placeholder.style.flex = "0 0 " + rect.width + "px";
+    placeholder.style.width = rect.width + "px";
+    toc.style.position = "fixed";
+    toc.style.left = rect.left + "px";
+    toc.style.width = rect.width + "px";
+  }
+  window.addEventListener("resize", pin);
+  window.addEventListener("load", pin);
+  pin();
+})();
+</script>"""
+
 _SECTION_LABELS = {
     "sample-summary": "Sample Summary",
     "umaps": "UMAPs (integrated space)",
@@ -169,7 +209,7 @@ def _section_sample_summary(outdir: str) -> str:
     return "".join(parts)
 
 
-def _section_per_cluster(outdir: str) -> str:
+def _section_per_cluster(outdir: str, violins: list[str]) -> str:
     parts = []
     for p in sorted(glob.glob(os.path.join(outdir, "cluster_qc_*.csv"))):
         key = os.path.basename(p)[len("cluster_qc_"):-len(".csv")]
@@ -177,6 +217,12 @@ def _section_per_cluster(outdir: str) -> str:
                   '<p class="hint">flag/drop fractions carried over from per-sample '
                   "annotation; a cluster fed by a single sample is itself a signal.</p>",
                   _csv_table(p)]
+    if violins:
+        parts += ["<h3>Per-cluster QC violins</h3>",
+                  '<p class="hint">Grouped by the standissect clusters (leiden × UMAP-fragment '
+                  "product), not the primary leiden — so a minor sibling's QC profile can be "
+                  "compared against its main core.</p>",
+                  _grid(violins)]
     return _h2("per-cluster-qc") + "".join(parts) if parts else ""
 
 
@@ -270,14 +316,11 @@ def _section_umaps(umap_figs: list[str], standissect_figs: list[str], qc_figs: l
                   '<div class="trio">' + "".join(_img(p) for p in standissect_figs) + "</div>"]
     if qc_figs:
         qc_umaps = [p for p in qc_figs if "umap" in os.path.basename(p)]
-        violins = [p for p in qc_figs if "violin" in os.path.basename(p)]
-        other = [p for p in qc_figs if p not in qc_umaps and p not in violins]
+        other = [p for p in qc_figs if p not in qc_umaps and "violin" not in os.path.basename(p)]
         parts += ["<h3>QC metrics</h3>",
                   '<p class="hint">One metric per panel; pct_counts_mt uses a fixed color '
                   "ceiling (vmax=20) — the scale never autoscales.</p>",
                   _grid(qc_umaps)]
-        if violins:
-            parts += ["<h3>Per-cluster QC violins</h3>", _grid(violins)]
         parts += [_grid(other)]
     return "".join(parts)
 
@@ -341,11 +384,14 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     umap_figs = [p for p in figs if p not in qc_figs and not os.path.basename(p).startswith("inspect_")
                  and p not in standissect_figs]
 
+    violins = [p for p in qc_figs if "violin" in os.path.basename(p)]
+    qc_figs = [p for p in qc_figs if p not in violins]
+
     title = title or f"msp Integration Report — {os.path.basename(os.path.abspath(outdir))}"
     sections = [
         _section_sample_summary(outdir),
         _section_umaps(umap_figs, standissect_figs, qc_figs),
-        _section_per_cluster(outdir),
+        _section_per_cluster(outdir, violins),
         _section_deg(outdir),
         _section_inspection(outdir),
     ]
@@ -356,7 +402,7 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     body = f'{header}<div class="layout">{toc}<div class="content">{"".join(sections)}</div></div>'
     html_doc = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 f"<title>{html.escape(title)}</title><style>{CSS}</style></head>"
-                f"<body>{body}</body></html>")
+                f"<body>{body}{TOC_PIN_SCRIPT}</body></html>")
     with open(out_html, "w") as fh:
         fh.write(html_doc)
     return out_html

@@ -129,11 +129,13 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
         return out
 
     _agg(batch_col).to_csv(os.path.join(outdir, "per_sample_qc.csv"))
-    cl = _agg(primary_key)
+    # standissect clusters, not the primary leiden — same rationale as the
+    # violins: a minor sibling's QC/composition can diverge from its core
+    cl = _agg(violin_key)
     # how many samples contribute to each cluster — a 1-sample cluster in an
     # integrated space is itself a QC signal
-    cl["n_samples"] = ad.obs.groupby(primary_key, observed=True)[batch_col].nunique()
-    cl.to_csv(os.path.join(outdir, f"cluster_qc_{primary_key}.csv"))
+    cl["n_samples"] = ad.obs.groupby(violin_key, observed=True)[batch_col].nunique()
+    cl.to_csv(os.path.join(outdir, f"cluster_qc_{violin_key}.csv"))
 
 
 def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
