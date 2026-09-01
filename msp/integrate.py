@@ -91,7 +91,9 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
     if metrics:
         sc.pl.umap(ad, color=[m for m, _ in metrics], vmax=[v for _, v in metrics],
                    ncols=3, show=False)
-        plt.savefig(os.path.join(figdir, "qc_umap_metrics.png"), dpi=150, bbox_inches="tight")
+        # dpi kept modest: agents Read this multi-panel PNG over a pipe with a
+        # bounded message buffer
+        plt.savefig(os.path.join(figdir, "qc_umap_metrics.png"), dpi=110, bbox_inches="tight")
         plt.close("all")
 
     if "_qc_action" in ad.obs:
