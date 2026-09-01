@@ -109,7 +109,7 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
         # prefix) groups it with the OSP-inherited panels, not the
         # integrated-space QC metrics
         save_single_umap(ad, "_qc_action", os.path.join(figdir, "umap__qc_action.png"),
-                         palette=[QC_ACTION_PALETTE[c] for c in order], legend_loc="lower right")
+                         palette=[QC_ACTION_PALETTE[c] for c in order], legend_loc="best")
 
     def _agg(groupby):
         g = ad.obs.groupby(groupby, observed=True)
@@ -213,12 +213,13 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
 
     res = dissect_partition(ad, cluster_col=standissect_key, umap_key="X_umap")
     ad.obs["umap_cluster"] = res.labels["umap_cluster"]
-    # same "c{parent}_{k}" look as the fragments table's subcluster names —
-    # k here is the umap_cluster id (strip the "u" prefix), not a rank
-    umap_idx = res.labels["umap_cluster"].astype(str).str.removeprefix("u")
-    ad.obs["standissect_product"] = (
-        "c" + ad.obs[standissect_key].astype(str) + "_" + umap_idx
-    ).astype("category")
+    # "subcluster" straight from the package: c{parent}_{rank}, rank 0 = the
+    # largest fragment WITHIN that parent (its own per-parent size ranking —
+    # umap_cluster ids like u5 are ranked globally across the whole dataset,
+    # not per parent, so hand-rolling "c{parent}_{umap id}" would NOT have
+    # rank-0-is-largest). Using the same field the fragments table uses also
+    # guarantees the figure and table agree by construction.
+    ad.obs["standissect_product"] = res.labels["subcluster"].astype("category")
     res.fragments.to_csv(os.path.join(outdir, f"fragments_{standissect_key}.csv"), index=False)
     res.overlap.to_csv(os.path.join(outdir, f"overlap_{standissect_key}.csv"))
 

@@ -121,6 +121,7 @@ def save_single_umap(ad, color_col, out_path, repel=False, repel_fontsize=12,
 
     legend = ax.get_legend()
     if legend is not None:
+        legend.get_frame().set_alpha(0.6)  # semi-transparent: points show through
         # measure the legend, then widen the CANVAS (never the axes box) so
         # nothing is clipped — bbox_to_anchor is axes-relative, so it tracks
         # the axes automatically once the figure is resized
