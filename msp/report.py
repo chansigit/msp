@@ -134,9 +134,29 @@ def _kv_table(path: str) -> str:
 # ---------------------------------------------------------------- sections
 
 
+def _section_sample_decisions(outdir: str) -> str:
+    path = os.path.join(outdir, "sample_decisions.csv")
+    if not os.path.exists(path):
+        return ""
+    with open(path) as f:
+        rows = list(csv.DictReader(f))
+    n_incl = sum(1 for r in rows if r["decision"] == "include")
+    head = "".join(f"<th>{c}</th>" for c in ("sample", "decision", "n_cells", "reason"))
+    body = "".join(
+        f"<tr style=\"{'opacity:.6' if r['decision'] == 'exclude' else ''}\">"
+        + "".join(f"<td>{html.escape(r.get(c, ''))}</td>" for c in ("sample", "decision", "n_cells", "reason"))
+        + "</tr>"
+        for r in rows
+    )
+    return (f"<h3>Sample inclusion ({n_incl}/{len(rows)} entered integration)</h3>"
+            f"<table><tr>{head}</tr>{body}</table>")
+
+
 def _section_summary(outdir: str) -> str:
     t = _kv_table(os.path.join(outdir, "integration_summary.csv"))
-    return _h2("summary") + t if t else ""
+    if not t:
+        return ""
+    return _h2("summary") + t + _section_sample_decisions(outdir)
 
 
 def _section_per_sample(outdir: str) -> str:
