@@ -125,7 +125,7 @@ _SECTION_LABELS = {
     "sample-summary": "Sample Summary",
     "umaps": "UMAPs (integrated space)",
     "per-cluster-qc": "Per-cluster QC (standissect clusters)",
-    "deg": "Cluster DEG",
+    "deg": "Cluster Annotations",
     "inspection": "Inspection Verdicts",
 }
 
@@ -337,8 +337,17 @@ def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
 
 def _section_deg(outdir: str, top_n: int = 10) -> str:
     parts = []
-    for p in sorted(glob.glob(os.path.join(outdir, "de_top_genes_*.csv"))):
-        key = os.path.basename(p)[len("de_top_genes_"):-len(".csv")]
+    global_paths = sorted(glob.glob(os.path.join(outdir, "deg_global_*.csv")))
+    if global_paths:
+        parts.append(
+            '<p class="hint">Cells from any standissect fragment marked recommend_removal '
+            "(see Minor sibling fractals QC) are excluded from every comparison below — "
+            "computation-only, no cells are dropped from the data. Global view: cluster vs every "
+            "other cluster (one-vs-rest). Local view: cluster vs its 3 nearest neighbors by PAGA "
+            "connectivity, pooled into one reference group — a sharper comparison when neighbors "
+            "are transcriptionally close and get washed out by the global one-vs-rest.</p>")
+    for p in global_paths:
+        key = os.path.basename(p)[len("deg_global_"):-len(".csv")]
         with open(p) as f:
             rows = list(csv.DictReader(f))
         by_group: dict[str, list[str]] = {}
@@ -350,8 +359,28 @@ def _section_deg(outdir: str, top_n: int = 10) -> str:
             f"<tr><td>{html.escape(g)}</td><td style='text-align:left'>{html.escape(', '.join(genes))}</td></tr>"
             for g, genes in by_group.items()
         )
-        parts += [f"<h3>{html.escape(key)}</h3>",
+        parts += [f"<h3>{html.escape(key)} — global view (vs all other clusters)</h3>",
                   f"<table><tr><th>cluster</th><th>top genes (logFC)</th></tr>{body}</table>"]
+
+        local_p = os.path.join(outdir, f"deg_local_{key}.csv")
+        if os.path.exists(local_p):
+            with open(local_p) as f:
+                lrows = list(csv.DictReader(f))
+            by_group2: dict[str, list[str]] = {}
+            neighbors_by_group: dict[str, str] = {}
+            for r in lrows:
+                g = by_group2.setdefault(r["group"], [])
+                neighbors_by_group.setdefault(r["group"], r.get("neighbors", ""))
+                if len(g) < top_n:
+                    g.append(f"{r['names']} ({float(r['logfoldchanges']):.1f})")
+            body2 = "".join(
+                f"<tr><td>{html.escape(g)}</td><td>{html.escape(neighbors_by_group.get(g, ''))}</td>"
+                f"<td style='text-align:left'>{html.escape(', '.join(genes))}</td></tr>"
+                for g, genes in by_group2.items()
+            )
+            parts += [f"<h3>{html.escape(key)} — local view (vs top-3 PAGA neighbors)</h3>",
+                      "<table><tr><th>cluster</th><th>neighbors</th><th>top genes (logFC)</th></tr>"
+                      f"{body2}</table>"]
     return _h2("deg") + "".join(parts) if parts else ""
 
 

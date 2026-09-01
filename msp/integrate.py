@@ -414,6 +414,80 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     plt.close("all")
 
 
+def _cluster_annotations(ad, msq_df, leiden_keys, resolutions, outdir, top_n_de=50):
+    """Cluster Annotations: for the r1.0 and r2.0 leiden clusterings, two DE
+    views per cluster — global (one-vs-rest, as before) and local (one-vs-
+    its-top-3-PAGA-neighbors, pooled). Cells from any standissect fragment
+    minor_sibling_qc.csv marked recommend_removal are excluded from BOTH
+    views (and from the PAGA graph itself) — this is a computation-only
+    exclusion, msp never drops cells from ad or the written h5ad."""
+    remove_set = set()
+    if msq_df is not None and "recommend_removal" in msq_df.columns:
+        remove_set = set(msq_df.loc[msq_df["recommend_removal"] == True, "subcluster"])  # noqa: E712
+    keep_mask = ~ad.obs["standissect_product"].astype(str).isin(remove_set)
+    n_excluded = int((~keep_mask).sum())
+    ad_excl = ad[keep_mask].copy()
+    print(f"== cluster annotations: excluding {n_excluded} recommend_removal cells "
+          f"({ad_excl.n_obs}/{ad.n_obs} remain)", flush=True)
+
+    res_to_key = dict(zip(resolutions, leiden_keys))
+    target = [(r, res_to_key[r]) for r in (1.0, 2.0) if r in res_to_key]
+    if not target:
+        print("== cluster annotations: neither r1.0 nor r2.0 in resolutions — skipping", flush=True)
+        return
+
+    print("== cluster annotations: neighbors on the excluded subset", flush=True)
+    sc.pp.neighbors(ad_excl, use_rep="X_pca_harmony")
+
+    for r, key in target:
+        print(f"== cluster annotations on {key} (r={r})", flush=True)
+        sc.tl.paga(ad_excl, groups=key)
+        conn = ad_excl.uns["paga"]["connectivities"].toarray()
+        cats = list(ad_excl.obs[key].cat.categories)
+
+        top3, neighbor_rows = {}, []
+        for i, c in enumerate(cats):
+            order = np.argsort(conn[i])[::-1]
+            picked = [cats[j] for j in order if j != i and conn[i, j] > 0][:3]
+            top3[c] = picked
+            for rank, nb in enumerate(picked, start=1):
+                neighbor_rows.append({"cluster": c, "neighbor": nb, "rank": rank,
+                                      "connectivity": round(float(conn[i, cats.index(nb)]), 4)})
+        pd.DataFrame(neighbor_rows).to_csv(os.path.join(outdir, f"paga_neighbors_{key}.csv"), index=False)
+
+        # global view: cluster vs every other cluster (one-vs-rest)
+        sc.tl.rank_genes_groups(ad_excl, key, method="wilcoxon", use_raw=True, pts=True)
+        gdf = sc.get.rank_genes_groups_df(ad_excl, group=None)
+        gdf = gdf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
+        gdf.groupby("group", observed=True).head(top_n_de).reset_index(drop=True).to_csv(
+            os.path.join(outdir, f"deg_global_{key}.csv"), index=False)
+
+        # local view: cluster vs its pooled top-3 PAGA neighbors — the
+        # reference set differs per cluster, so this can't be one call
+        # across all groups like the global view; loop per cluster
+        local_rows = []
+        for c in cats:
+            neighbors = top3.get(c, [])
+            if not neighbors:
+                continue
+            sub = ad_excl[ad_excl.obs[key].isin([c, *neighbors])].copy()
+            if int((sub.obs[key] == c).sum()) < 2:
+                continue
+            sc.tl.rank_genes_groups(sub, key, groups=[c], reference="rest",
+                                    method="wilcoxon", use_raw=True, pts=True)
+            ldf = sc.get.rank_genes_groups_df(sub, group=c)
+            ldf = ldf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
+            # rank_genes_groups_df drops the "group" column when `group` is a scalar
+            # (only keeps it for group=None/list) — put it back for schema parity
+            # with the global-view CSV and so the report can key off it
+            ldf.insert(0, "group", c)
+            ldf["neighbors"] = "|".join(neighbors)
+            local_rows.append(ldf.head(top_n_de))
+        if local_rows:
+            pd.concat(local_rows, ignore_index=True).to_csv(
+                os.path.join(outdir, f"deg_local_{key}.csv"), index=False)
+
+
 def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
                               resolutions=(0.3, 1.0, 2.0), n_top_genes=2000,
                               n_pcs=50, n_neighbors=15, counts_layer="counts",
@@ -475,14 +549,6 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
 
     primary_key = leiden_keys[min(1, len(leiden_keys) - 1)]  # middle resolution
 
-    print(f"== rank_genes_groups on {primary_key}", flush=True)
-    sc.tl.rank_genes_groups(ad, primary_key, method="wilcoxon", use_raw=True, pts=True)
-    de_df = sc.get.rank_genes_groups_df(ad, group=None)
-    # pct1/pct2 naming mirrors osp's de_top_genes export
-    de_df = de_df.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
-    de_top = de_df.groupby("group", observed=True).head(top_n_de).reset_index(drop=True)
-    de_top.to_csv(os.path.join(outdir, f"de_top_genes_{primary_key}.csv"), index=False)
-
     # standissect-lite (>=0.2.0): cross the RNA-side leiden with a UMAP-side
     # clustering; "subcluster" (c{parent}_{rank}) is its headline per-cell
     # identifier — rank 0 is always the largest fragment WITHIN that parent,
@@ -500,7 +566,10 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     res.fragments.to_csv(os.path.join(outdir, f"fragments_{standissect_key}.csv"), index=False)
     res.overlap.to_csv(os.path.join(outdir, f"overlap_{standissect_key}.csv"))
     print("== minor-sibling QC", flush=True)
-    _minor_sibling_qc(ad, res, outdir)
+    msq_df = _minor_sibling_qc(ad, res, outdir)
+
+    print("== cluster annotations (PAGA + global/local DEG)", flush=True)
+    _cluster_annotations(ad, msq_df, leiden_keys, resolutions, outdir, top_n_de=top_n_de)
 
     ad.uns["msp"] = {
         "batch_col": batch_col,
