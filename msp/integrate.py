@@ -96,6 +96,11 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
         plt.savefig(os.path.join(figdir, "qc_umap_metrics.png"), dpi=110, bbox_inches="tight")
         plt.close("all")
 
+    for m, _ in metrics:
+        sc.pl.violin(ad, m, groupby=primary_key, stripplot=False, rotation=90, show=False)
+        plt.savefig(os.path.join(figdir, f"qc_violin_{m}.png"), dpi=110, bbox_inches="tight")
+        plt.close("all")
+
     if "_qc_action" in ad.obs:
         order = [c for c in ("keep", "flag", "drop") if c in set(ad.obs["_qc_action"].astype(str))]
         ad.obs["_qc_action"] = pd.Categorical(ad.obs["_qc_action"].astype(str), categories=order)

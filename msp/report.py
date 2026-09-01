@@ -72,7 +72,7 @@ _SECTION_LABELS = {
     "deg": "Cluster DEG",
     "standissect": "standissect-lite",
     "inspection": "Inspection Verdicts",
-    "qc-umap": "QC UMAP",
+    "qc-umap": "QC (integrated space)",
     "umaps": "Samples & Clusters",
 }
 
