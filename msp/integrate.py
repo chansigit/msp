@@ -414,13 +414,48 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     plt.close("all")
 
 
+# Conservative "dissociation stress" core panel (not osp's full ~130-gene
+# DISSOCIATION_GENES_HS — that one includes ECM/lineage genes like DCN,
+# LMNA, SERPINE1 that are real cell-identity markers in plenty of tissues).
+# Two independent, mechanistically distinct, well-established acute-
+# dissociation-stress axes: heat-shock/chaperone response, and AP-1/
+# immediate-early transcription — both firing together is far more specific
+# than one broad gene list. Human symbols; matched case-insensitively
+# (dataset gene names uppercased before lookup) so mouse data works too.
+STRESS_GENES_CORE = [
+    "HSPA1A", "HSPA1B", "HSPA8", "HSPB1", "HSP90AA1", "HSP90AB1",
+    "HSPH1", "HSPE1", "DNAJA1", "DNAJB1", "DNAJB4",
+    "FOS", "FOSB", "JUN", "JUNB", "JUND", "EGR1", "EGR2", "ATF3", "NR4A1",
+    "PPP1R15A", "ZFP36", "IER2", "IER3", "DUSP1",
+]
+STRESS_GENE_SET = set(STRESS_GENES_CORE)
+STRESS_HIT_THRESHOLD = 3  # a cluster is "stress" if MORE than this many top genes hit
+STRESS_CHECK_TOP_N = 10   # matches what the report displays, independent of top_n_de
+
+
+def _is_stress_gene(symbol) -> bool:
+    su = str(symbol).upper()
+    return su in STRESS_GENE_SET or su.startswith("MT-")
+
+
+def _stress_hits(names) -> list[str]:
+    return [n for n in names if _is_stress_gene(n)]
+
+
 def _cluster_annotations(ad, msq_df, leiden_keys, resolutions, outdir, top_n_de=50):
     """Cluster Annotations: for the r1.0 and r2.0 leiden clusterings, two DE
     views per cluster — global (one-vs-rest, as before) and local (one-vs-
     its-top-3-PAGA-neighbors, pooled). Cells from any standissect fragment
     minor_sibling_qc.csv marked recommend_removal are excluded from BOTH
     views (and from the PAGA graph itself) — this is a computation-only
-    exclusion, msp never drops cells from ad or the written h5ad."""
+    exclusion, msp never drops cells from ad or the written h5ad.
+
+    Each (key, cluster) is also checked for a dissociation-stress signature
+    (STRESS_GENES_CORE / mitochondrial genes) among its top
+    STRESS_CHECK_TOP_N genes, in each view separately — but if EITHER view
+    hits the threshold, the whole (key, cluster) is recommend_removal,
+    written to stress_clusters.csv. Same rule as everywhere else in msp:
+    propose, never remove cells directly."""
     remove_set = set()
     if msq_df is not None and "recommend_removal" in msq_df.columns:
         remove_set = set(msq_df.loc[msq_df["recommend_removal"] == True, "subcluster"])  # noqa: E712
@@ -439,6 +474,7 @@ def _cluster_annotations(ad, msq_df, leiden_keys, resolutions, outdir, top_n_de=
     print("== cluster annotations: neighbors on the excluded subset", flush=True)
     sc.pp.neighbors(ad_excl, use_rep="X_pca_harmony")
 
+    stress_rows = []
     for r, key in target:
         print(f"== cluster annotations on {key} (r={r})", flush=True)
         sc.tl.paga(ad_excl, groups=key)
@@ -462,6 +498,12 @@ def _cluster_annotations(ad, msq_df, leiden_keys, resolutions, outdir, top_n_de=
         gdf.groupby("group", observed=True).head(top_n_de).reset_index(drop=True).to_csv(
             os.path.join(outdir, f"deg_global_{key}.csv"), index=False)
 
+        for c, sub in gdf.groupby("group", observed=True).head(STRESS_CHECK_TOP_N).groupby(
+                "group", observed=True):
+            hits = _stress_hits(sub["names"].tolist())
+            stress_rows.append({"key": key, "cluster": c, "view": "global", "n_hits": len(hits),
+                                "hit_genes": "|".join(hits), "stress": len(hits) > STRESS_HIT_THRESHOLD})
+
         # local view: cluster vs its pooled top-3 PAGA neighbors — the
         # reference set differs per cluster, so this can't be one call
         # across all groups like the global view; loop per cluster
@@ -482,10 +524,27 @@ def _cluster_annotations(ad, msq_df, leiden_keys, resolutions, outdir, top_n_de=
             # with the global-view CSV and so the report can key off it
             ldf.insert(0, "group", c)
             ldf["neighbors"] = "|".join(neighbors)
+
+            hits = _stress_hits(ldf.head(STRESS_CHECK_TOP_N)["names"].tolist())
+            stress_rows.append({"key": key, "cluster": c, "view": "local", "n_hits": len(hits),
+                                "hit_genes": "|".join(hits), "stress": len(hits) > STRESS_HIT_THRESHOLD})
+
             local_rows.append(ldf.head(top_n_de))
         if local_rows:
             pd.concat(local_rows, ignore_index=True).to_csv(
                 os.path.join(outdir, f"deg_local_{key}.csv"), index=False)
+
+    if stress_rows:
+        stress_df = pd.DataFrame(stress_rows)
+        # a cluster is recommend_removal overall if EITHER its global or its
+        # local view hit the stress threshold — not judged per-view
+        overall = (stress_df.groupby(["key", "cluster"])["stress"].any()
+                   .reset_index().rename(columns={"stress": "recommend_removal"}))
+        stress_df = stress_df.merge(overall, on=["key", "cluster"])
+        stress_df.to_csv(os.path.join(outdir, "stress_clusters.csv"), index=False)
+        n_removal = int(overall["recommend_removal"].sum())
+        print(f"== cluster annotations: {n_removal}/{len(overall)} (key, cluster) pairs "
+              f"recommend_removal (stress signature)", flush=True)
 
 
 def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,

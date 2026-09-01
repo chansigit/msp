@@ -363,53 +363,44 @@ def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
     return "".join(parts)
 
 
-# Conservative "dissociation stress" core panel — NOT osp's full
-# DISSOCIATION_GENES_HS (that ~130-gene panel includes ECM/lineage/
-# inflammation genes like DCN, LMNA, SERPINE1 that are real cell-identity
-# markers in plenty of tissues, e.g. this dataset's own connective-tissue
-# clusters — see git history for the false-positive case that motivated
-# narrowing it). Two independent, mechanistically distinct, well-established
-# acute-dissociation-stress axes instead: heat-shock/chaperone response, and
-# AP-1/immediate-early transcription — both firing together is a much more
-# specific signal than one broad gene list. Human symbols; matched
-# case-insensitively (dataset gene names uppercased before lookup) so mouse
-# data (same symbols, titlecase) works too.
-STRESS_GENES_CORE = [
-    # heat shock proteins / chaperones (protein-folding stress response)
-    "HSPA1A", "HSPA1B", "HSPA8", "HSPB1", "HSP90AA1", "HSP90AB1",
-    "HSPH1", "HSPE1", "DNAJA1", "DNAJB1", "DNAJB4",
-    # AP-1 / immediate-early transcription factors (acute stress transcription)
-    "FOS", "FOSB", "JUN", "JUNB", "JUND", "EGR1", "EGR2", "ATF3", "NR4A1",
-    # mechanistically clear, dissociation-associated, not lineage-confounding
-    "PPP1R15A", "ZFP36", "IER2", "IER3", "DUSP1",
-]
-STRESS_GENE_SET = set(STRESS_GENES_CORE)  # already uppercase
-STRESS_HIT_THRESHOLD = 3  # a cluster is "stress" if MORE than this many top genes hit
+def _load_stress_lookup(outdir: str) -> dict[tuple[str, str, str], dict]:
+    """stress_clusters.csv, written by msp.integrate._cluster_annotations —
+    the report only reads/displays it, computation lives with the rest of
+    the pipeline. Keyed (key, cluster, view); recommend_removal is already
+    merged across global+local for that (key, cluster) there."""
+    path = os.path.join(outdir, "stress_clusters.csv")
+    lookup: dict[tuple[str, str, str], dict] = {}
+    if not os.path.exists(path):
+        return lookup
+    with open(path) as f:
+        for r in csv.DictReader(f):
+            lookup[(r["key"], r["cluster"], r["view"])] = {
+                "hit_genes": set(r["hit_genes"].split("|")) if r["hit_genes"] else set(),
+                "recommend_removal": r["recommend_removal"] == "True",
+            }
+    return lookup
 
 
-def _is_stress_gene(symbol: str) -> bool:
-    su = symbol.upper()
-    return su in STRESS_GENE_SET or su.startswith("MT-")
-
-
-def _deg_row(cluster: str, genes: list[tuple[str, float]], middle_td: str = "") -> str:
-    hits = [name for name, _ in genes if _is_stress_gene(name)]
-    is_stress = len(hits) > STRESS_HIT_THRESHOLD
+def _deg_row(cluster: str, genes: list[tuple[str, float]], stress_info: dict | None,
+             middle_td: str = "") -> str:
+    info = stress_info or {}
+    hit_genes = info.get("hit_genes", set())
+    recommend_removal = info.get("recommend_removal", False)
     cluster_cell = html.escape(cluster)
-    if is_stress:
-        cluster_cell += (' <span style="color:#c0392b;font-weight:bold" title="'
-                         f'{len(hits)}/{len(genes)} top genes are dissociation-stress or '
-                         f'mitochondrial: {html.escape(", ".join(hits))}">[stress cluster]</span>')
+    if recommend_removal:
+        cluster_cell += (' <span style="color:#c0392b;font-weight:bold" title="stress signature '
+                         'in this view or its global/local pair — see Cluster Annotations hint">'
+                         "[recommend_removal]</span>")
     gene_html = ", ".join(
-        f'<b style="color:#c0392b">{html.escape(name)}</b> ({lfc:.1f})' if _is_stress_gene(name)
+        f'<b style="color:#c0392b">{html.escape(name)}</b> ({lfc:.1f})' if name in hit_genes
         else f"{html.escape(name)} ({lfc:.1f})"
         for name, lfc in genes
     )
-    row_style = ' style="background:#fdecea"' if is_stress else ""
+    row_style = ' style="background:#fdecea"' if recommend_removal else ""
     return f"<tr{row_style}><td>{cluster_cell}</td>{middle_td}<td style='text-align:left'>{gene_html}</td></tr>"
 
 
-def _deg_global_table(path: str, top_n: int) -> str:
+def _deg_global_table(path: str, top_n: int, key: str, stress_lookup: dict) -> str:
     with open(path) as f:
         rows = list(csv.DictReader(f))
     by_group: dict[str, list[tuple[str, float]]] = {}
@@ -417,11 +408,13 @@ def _deg_global_table(path: str, top_n: int) -> str:
         g = by_group.setdefault(r["group"], [])
         if len(g) < top_n:
             g.append((r["names"], float(r["logfoldchanges"])))
-    body = "".join(_deg_row(g, genes) for g, genes in by_group.items())
+    body = "".join(
+        _deg_row(g, genes, stress_lookup.get((key, g, "global"))) for g, genes in by_group.items()
+    )
     return f"<table><tr><th>cluster</th><th>top genes (logFC)</th></tr>{body}</table>"
 
 
-def _deg_local_table(path: str, top_n: int) -> str:
+def _deg_local_table(path: str, top_n: int, key: str, stress_lookup: dict) -> str:
     with open(path) as f:
         rows = list(csv.DictReader(f))
     by_group: dict[str, list[tuple[str, float]]] = {}
@@ -432,7 +425,8 @@ def _deg_local_table(path: str, top_n: int) -> str:
         if len(g) < top_n:
             g.append((r["names"], float(r["logfoldchanges"])))
     body = "".join(
-        _deg_row(g, genes, middle_td=f"<td>{html.escape(neighbors_by_group.get(g, ''))}</td>")
+        _deg_row(g, genes, stress_lookup.get((key, g, "local")),
+                middle_td=f"<td>{html.escape(neighbors_by_group.get(g, ''))}</td>")
         for g, genes in by_group.items()
     )
     return f"<table><tr><th>cluster</th><th>neighbors</th><th>top genes (logFC)</th></tr>{body}</table>"
@@ -448,19 +442,22 @@ def _section_deg(outdir: str, top_n: int = 10) -> str:
         "computation-only, no cells are dropped from the data. Global view: cluster vs every "
         "other cluster (one-vs-rest). Local view: cluster vs its 3 nearest neighbors by PAGA "
         "connectivity, pooled into one reference group — a sharper comparison when neighbors "
-        "are transcriptionally close and get washed out by the global one-vs-rest. A cluster is "
-        "marked <b style=\"color:#c0392b\">[stress cluster]</b> (per panel, independently) when "
-        "more than 3 of its displayed top genes are in the conservative heat-shock/AP-1 "
-        "dissociation-stress core panel (STRESS_GENES_CORE) or mitochondrial (MT-*) — flagged "
-        "only, nothing is removed from the data.</p>"]
+        "are transcriptionally close and get washed out by the global one-vs-rest. A (key, "
+        "cluster) is marked <b style=\"color:#c0392b\">[recommend_removal]</b> when EITHER its "
+        "global or local view has more than 3 of its displayed top genes in the conservative "
+        "heat-shock/AP-1 dissociation-stress core panel (STRESS_GENES_CORE) or mitochondrial "
+        "(MT-*) — the verdict is merged, so both the global and local rows for that cluster show "
+        "it even if only one of the two actually crossed the threshold. Flagged only, nothing is "
+        "removed from the data (see stress_clusters.csv for per-view hit genes).</p>"]
 
+    stress_lookup = _load_stress_lookup(outdir)
     tabs = []
     for p in global_paths:
         key = os.path.basename(p)[len("deg_global_"):-len(".csv")]
-        tabs.append((f"{key} — global", _deg_global_table(p, top_n)))
+        tabs.append((f"{key} — global", _deg_global_table(p, top_n, key, stress_lookup)))
         local_p = os.path.join(outdir, f"deg_local_{key}.csv")
         if os.path.exists(local_p):
-            tabs.append((f"{key} — local", _deg_local_table(local_p, top_n)))
+            tabs.append((f"{key} — local", _deg_local_table(local_p, top_n, key, stress_lookup)))
     parts.append(_tabs("deg", tabs))
     return _h2("deg") + "".join(parts)
 
