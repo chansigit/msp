@@ -124,7 +124,7 @@ TOC_PIN_SCRIPT = """<script>
 _SECTION_LABELS = {
     "sample-summary": "Sample Summary",
     "umaps": "UMAPs (integrated space)",
-    "per-cluster-qc": "Per-cluster QC",
+    "per-cluster-qc": "Per-cluster QC (standissect clusters)",
     "deg": "Cluster DEG",
     "inspection": "Inspection Verdicts",
 }
