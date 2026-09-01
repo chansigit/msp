@@ -100,8 +100,10 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
     # not the primary leiden — the whole point of that finer split is to
     # see whether a minor sibling's QC profile diverges from its main core
     violin_key = "standissect_product" if "standissect_product" in ad.obs else primary_key
+    log_metrics = {"n_genes_by_counts", "total_counts"}  # heavy-tailed counts
     for m, _ in metrics:
-        sc.pl.violin(ad, m, groupby=violin_key, stripplot=False, rotation=90, show=False)
+        sc.pl.violin(ad, m, groupby=violin_key, stripplot=False, rotation=90, show=False,
+                    log=m in log_metrics)
         plt.savefig(os.path.join(figdir, f"qc_violin_{slug(m)}.png"), dpi=UMAP_DPI,
                     bbox_inches="tight")
         plt.close("all")
