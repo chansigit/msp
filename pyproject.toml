@@ -3,7 +3,7 @@ name = "msp"
 version = "0.1.0"
 description = "Multi-sample scRNA-seq integration pipeline (harmony) over osp per-sample outputs"
 requires-python = ">=3.10"
-dependencies = ["scanpy", "harmonypy", "anndata", "pandas", "numpy", "scikit-learn"]
+dependencies = ["scanpy", "harmonypy", "anndata", "pandas", "numpy", "scikit-learn", "scipy"]
 
 [build-system]
 requires = ["setuptools>=64"]
