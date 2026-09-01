@@ -24,7 +24,7 @@ import pandas as pd
 import scanpy as sc
 from sklearn.decomposition import PCA
 
-from .plots import UMAP_DPI, save_single_umap, slug, umap_axes
+from .plots import UMAP_DPI, save_single_umap, slug
 
 
 def load_and_merge(inputs, batch_col, counts_layer="counts"):
@@ -84,42 +84,6 @@ QC_UMAP_METRICS = (
 )
 
 QC_ACTION_PALETTE = {"keep": "#d3d3d3", "flag": "#ff8c00", "drop": "#d62728"}
-
-
-def _plot_fragments(ad, primary_key, figdir, minors=None):
-    """The cartesian-product view (leiden × umap_cluster): main cores in
-    grey, minor siblings coloured and labelled — the raw UMAP-side
-    clustering itself is never displayed, only the crossed fragments.
-    `minors` = the is_minor_sibling fragment names (candidates ≥ the size
-    threshold); sub-threshold dust stays grey like the mains so the figure
-    matches the fragments table."""
-    if "original_cluster_split" not in ad.obs:
-        return
-    os.makedirs(figdir, exist_ok=True)
-    xy = np.asarray(ad.obsm["X_umap"])
-    lab = ad.obs["original_cluster_split"].astype(str).values
-    if minors is None:
-        minors = sorted({v for v in lab if not v.endswith("_0")})
-    fig, ax = umap_axes(ad)
-    base = 120000 / ad.n_obs
-    is_main = np.array([v.endswith("_0") for v in lab])
-    dust_mask = ~is_main & ~np.isin(lab, minors)  # non-main, below size threshold
-    ax.scatter(xy[is_main, 0], xy[is_main, 1], s=base, c="#d9d9d9", linewidths=0)
-    if dust_mask.any():
-        ax.scatter(xy[dust_mask, 0], xy[dust_mask, 1], s=1.5 * base, c="#000000", linewidths=0,
-                   label=f"sub-threshold dust (n={int(dust_mask.sum())} cells, "
-                         f"{len(set(lab[dust_mask]))} fragments)")
-        ax.legend(loc="upper right", fontsize=7, framealpha=0.9)
-    cmap = plt.get_cmap("tab20")
-    for i, m in enumerate(minors):
-        mm = lab == m
-        ax.scatter(xy[mm, 0], xy[mm, 1], s=1.5 * base, c=[cmap(i % 20)], linewidths=0)
-        ax.text(float(xy[mm, 0].mean()), float(xy[mm, 1].mean()), m, fontsize=7, ha="center",
-                bbox=dict(boxstyle="round,pad=0.15", fc="white", alpha=0.75, lw=0))
-    ax.set_title(f"UMAP: minor siblings ({primary_key} × umap_cluster)\n"
-                 "main cores grey, sub-threshold dust black")
-    fig.savefig(os.path.join(figdir, "standissect_fragments.png"), dpi=UMAP_DPI)
-    plt.close(fig)
 
 
 def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
@@ -232,20 +196,25 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     de_top = de_df.groupby("group", observed=True).head(top_n_de).reset_index(drop=True)
     de_top.to_csv(os.path.join(outdir, f"de_top_genes_{primary_key}.csv"), index=False)
 
-    # standissect-LITE: detection only — cross the RNA-side leiden with a
-    # UMAP-side clustering (cartesian product), rank fragments per parent,
-    # surface minor siblings as CANDIDATES. Diagnosis/validation belongs to
-    # msp.inspect, not here. Parents come from the LOWEST resolution: the
-    # product hunts strays inside broad clusters — a high-res leiden has
-    # already split them itself, so crossing it adds little.
+    # standissect-LITE: cross the RNA-side leiden with a UMAP-side clustering
+    # — the direct cartesian product (parent leiden label x umap_cluster
+    # label, concatenated per cell, e.g. "2_u8") becomes its own clustering
+    # scheme, visualized and labeled exactly like the leiden panels. This is
+    # detection only — no main-core/minor-sibling ranking, no grey/colored
+    # split; msp.inspect judges which product cells matter. Parent comes
+    # from the LOWEST resolution: the product hunts strays inside broad
+    # clusters — a high-res leiden has already split them itself.
     standissect_key = leiden_keys[int(np.argmin(resolutions))]
-    print(f"== standissect-lite on {standissect_key} (leiden × umap_cluster)", flush=True)
+    print(f"== standissect-lite on {standissect_key} (leiden x umap_cluster product)", flush=True)
     from standissect_lite import dissect_partition
 
     res = dissect_partition(ad, cluster_col=standissect_key, umap_key="X_umap")
     ad.obs["umap_cluster"] = res.labels["umap_cluster"]
-    ad.obs["original_cluster_split"] = res.labels["subcluster"]
+    ad.obs["standissect_product"] = (
+        ad.obs[standissect_key].astype(str) + "_" + res.labels["umap_cluster"].astype(str)
+    ).astype("category")
     res.fragments.to_csv(os.path.join(outdir, f"fragments_{standissect_key}.csv"), index=False)
+    res.overlap.to_csv(os.path.join(outdir, f"overlap_{standissect_key}.csv"))
 
     ad.uns["msp"] = {
         "batch_col": batch_col,
@@ -270,8 +239,11 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
         save_single_umap(ad, "_ann_coarse", os.path.join(figdir, "umap__ann_coarse.png"),
                          repel=True, repel_fontsize=7, figsize=(14, 14))
 
-    _plot_fragments(ad, standissect_key, figdir,
-                    minors=res.fragments.loc[res.fragments.is_minor_sibling, "subcluster"].tolist())
+    # the product clustering itself: every (parent, umap_cluster) cell as its
+    # own category, labeled and repelled just like the leiden panels — no
+    # main/minor distinction, standissect-lite only detects, msp.inspect judges
+    save_single_umap(ad, "standissect_product", os.path.join(figdir, "standissect_product.png"),
+                     repel=True, repel_fontsize=7)
 
     print("== QC figures/tables", flush=True)
     _qc_outputs(ad, batch_col, primary_key, outdir, figdir)
