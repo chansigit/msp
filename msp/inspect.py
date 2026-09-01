@@ -256,8 +256,7 @@ def _plot_verdicts(ad, figdir):
 
 
 def _file_inventory(outdir):
-    patterns = ["*.csv", "figures/*.png", "standissect/*/diagnosis_all.tsv",
-                "standissect/*/qc_drift_all.tsv", "standissect/*/discard_cells.tsv"]
+    patterns = ["*.csv", "figures/*.png"]
     paths = []
     for pat in patterns:
         paths += sorted(os.path.relpath(p, outdir) for p in glob.glob(os.path.join(outdir, pat)))
@@ -295,10 +294,14 @@ All relevant files (paths relative to the working directory — Read exactly the
 What they are:
 - de_top_genes_*.csv: per-cluster DEG (pct1/pct2 = expressing fraction in/out);
 - cluster_qc_*.csv, per_sample_qc.csv: QC + composition tables;
-- standissect/*/diagnosis_all.tsv, qc_drift_all.tsv: rule-mode tiny/fragmented-subcluster \
-candidates with QC drift evidence — treat as candidates, re-judge them yourself;
+- fragments_*.csv: standissect-lite's cartesian product (leiden × UMAP-side clustering); \
+rows with is_minor_sibling=True are candidate stray fragments of a parent cluster — \
+detection only, judge each one yourself with the five tests (obs["original_cluster_split"] \
+holds the per-cell fragment labels, so subcluster on a parent reproduces them);
+- figures/standissect_fragments.png: the minor siblings on the UMAP (main cores grey);
 - figures/umap_*.png: sample mixing, clusterings at three resolutions, inherited annotation; \
-figures/qc_umap_*.png: QC metrics and inherited keep/flag/drop on the integrated UMAP.
+figures/qc_umap_*.png, figures/qc_violin_*.png: QC metrics on the UMAP / per-cluster violins, \
+plus inherited keep/flag/drop.
 
 Mandatory workflow:
 1. Figures BEFORE conclusions: sample-mixing UMAP, the three resolution UMAPs, qc_umap_metrics, \

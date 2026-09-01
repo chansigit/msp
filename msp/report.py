@@ -70,7 +70,7 @@ _SECTION_LABELS = {
     "per-sample-qc": "Per-sample QC",
     "per-cluster-qc": "Per-cluster QC",
     "deg": "Cluster DEG",
-    "standissect": "standissect-lite",
+    "standissect": "standissect-lite (minor siblings)",
     "inspection": "Inspection Verdicts",
     "qc-umap": "QC (integrated space)",
     "umaps": "Samples & Clusters",
@@ -157,36 +157,32 @@ def _section_deg(outdir: str, top_n: int = 10) -> str:
     return _h2("deg") + "".join(parts) if parts else ""
 
 
-_STANDISSECT_COLS = ("parent_cluster", "subcluster", "n_cells", "frac_of_parent",
-                     "likely_cause", "diagnosis_confidence", "recommended_disposition",
-                     "diagnosis_rationale")
+_FRAGMENT_COLS = ("subcluster", "parent", "umap_label", "n_cells", "frac_of_parent", "rank")
 
 
-def _section_standissect(outdir: str) -> str:
-    hits = sorted(glob.glob(os.path.join(outdir, "standissect", "*", "diagnosis_all.tsv")))
+def _section_standissect(outdir: str, standissect_figs: list[str]) -> str:
+    hits = sorted(glob.glob(os.path.join(outdir, "fragments_*.csv")))
     if not hits:
         return ""
     parts = []
     for path in hits:
-        base = os.path.dirname(path)
-        key = os.path.basename(base)
+        key = os.path.basename(path)[len("fragments_"):-len(".csv")]
         with open(path) as f:
-            rows = list(csv.DictReader(f, delimiter="\t"))
-        dp = os.path.join(base, "discard_cells.tsv")
-        n_discard = max(0, sum(1 for _ in open(dp)) - 1) if os.path.exists(dp) else 0
-        parts.append(f"<h3>{html.escape(key)}</h3>"
-                     '<p class="hint">Rule-mode evidence only — dispositions here are '
-                     f"proposals; nothing is removed by msp. {len(rows)} candidate minor(s), "
-                     f"{n_discard} cells in discard_cells.tsv.</p>")
-        head = "".join(f"<th>{html.escape(c)}</th>" for c in _STANDISSECT_COLS)
+            rows = list(csv.DictReader(f))
+        minors = [r for r in rows if str(r.get("is_minor_sibling", "")).lower() in ("true", "1")]
+        parts.append(f"<h3>{html.escape(key)} × umap_cluster</h3>"
+                     '<p class="hint">Cartesian product of the RNA-side leiden with a '
+                     "UMAP-side clustering; within each parent, fragments are ranked by "
+                     "size — rank 0 is the main core, the rest are minor siblings. "
+                     "Detection only, candidates not verdicts. "
+                     f"{len(minors)} minor sibling(s) among {len(rows)} fragments.</p>")
+        head = "".join(f"<th>{html.escape(c)}</th>" for c in _FRAGMENT_COLS)
         body = "".join(
-            "<tr>" + "".join(f"<td>{html.escape(r.get(c, ''))}</td>" for c in _STANDISSECT_COLS) + "</tr>"
-            for r in rows
+            "<tr>" + "".join(f"<td>{html.escape(r.get(c, ''))}</td>" for c in _FRAGMENT_COLS) + "</tr>"
+            for r in minors
         )
         parts.append(f"<table><tr>{head}</tr>{body}</table>")
-        cmp_png = os.path.join(base, "global_umap_compare.png")
-        if os.path.exists(cmp_png):
-            parts.append(_img(cmp_png))
+    parts += [_img(p) for p in standissect_figs]
     return _h2("standissect") + "".join(parts)
 
 
@@ -273,7 +269,9 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     figs = sorted(glob.glob(os.path.join(figdir, "*.png")))
     qc_figs = [p for p in figs if os.path.basename(p).startswith("qc_")]
     inspect_figs = [p for p in figs if os.path.basename(p).startswith("inspect_")]
-    umap_figs = [p for p in figs if p not in qc_figs and p not in inspect_figs]
+    standissect_figs = [p for p in figs if os.path.basename(p).startswith("standissect_")]
+    umap_figs = [p for p in figs if p not in qc_figs and p not in inspect_figs
+                 and p not in standissect_figs]
 
     title = title or f"msp Integration Report — {os.path.basename(os.path.abspath(outdir))}"
     sections = [
@@ -281,7 +279,7 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
         _section_per_sample(outdir),
         _section_per_cluster(outdir),
         _section_deg(outdir),
-        _section_standissect(outdir),
+        _section_standissect(outdir, standissect_figs),
         _section_inspection(outdir, inspect_figs),
         _section_qc_umap(outdir, qc_figs),
         _section_umaps(umap_figs),

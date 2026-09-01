@@ -19,6 +19,7 @@ import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import scanpy as sc
 from sklearn.decomposition import PCA
@@ -81,6 +82,36 @@ QC_UMAP_METRICS = (
 )
 
 QC_ACTION_PALETTE = {"keep": "#d3d3d3", "flag": "#ff8c00", "drop": "#d62728"}
+
+
+def _plot_fragments(ad, primary_key, figdir, minors=None):
+    """The cartesian-product view (leiden × umap_cluster): main cores in
+    grey, minor siblings coloured and labelled — the raw UMAP-side
+    clustering itself is never displayed, only the crossed fragments.
+    `minors` = the is_minor_sibling fragment names (candidates ≥ the size
+    threshold); sub-threshold dust stays grey like the mains so the figure
+    matches the fragments table."""
+    if "original_cluster_split" not in ad.obs:
+        return
+    os.makedirs(figdir, exist_ok=True)
+    xy = np.asarray(ad.obsm["X_umap"])
+    lab = ad.obs["original_cluster_split"].astype(str).values
+    if minors is None:
+        minors = sorted({v for v in lab if not v.endswith("_0")})
+    fig, ax = plt.subplots(figsize=(9, 8))
+    main_mask = ~np.isin(lab, minors)
+    ax.scatter(xy[main_mask, 0], xy[main_mask, 1], s=2, c="#d9d9d9", linewidths=0)
+    cmap = plt.get_cmap("tab20")
+    for i, m in enumerate(minors):
+        mm = lab == m
+        ax.scatter(xy[mm, 0], xy[mm, 1], s=6, c=[cmap(i % 20)], linewidths=0)
+        ax.text(float(xy[mm, 0].mean()), float(xy[mm, 1].mean()), m, fontsize=7, ha="center",
+                bbox=dict(boxstyle="round,pad=0.15", fc="white", alpha=0.75, lw=0))
+    ax.set_title(f"minor siblings ({primary_key} × umap_cluster); main cores grey")
+    ax.set_xlabel("UMAP1")
+    ax.set_ylabel("UMAP2")
+    fig.savefig(os.path.join(figdir, "standissect_fragments.png"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
@@ -197,24 +228,17 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     de_top = de_df.groupby("group", observed=True).head(top_n_de).reset_index(drop=True)
     de_top.to_csv(os.path.join(outdir, f"de_top_genes_{primary_key}.csv"), index=False)
 
-    print(f"== standissect-lite on {primary_key} (rule mode)", flush=True)
-    from standissect import run_dissect_pipeline
+    # standissect-LITE: detection only — cross the RNA-side leiden with a
+    # UMAP-side clustering (cartesian product), rank fragments per parent,
+    # surface minor siblings as CANDIDATES. Diagnosis/validation belongs to
+    # msp.inspect, not here.
+    print(f"== standissect-lite on {primary_key} (leiden × umap_cluster)", flush=True)
+    from standissect_lite import dissect_partition
 
-    run_dissect_pipeline(
-        ad,
-        cluster_col=primary_key,
-        output_dir=os.path.join(outdir, "standissect"),
-        umap_key="X_umap",
-        sample_col=batch_col,
-        batch_col=batch_col,
-        annotation_col="_ann_coarse" if "_ann_coarse" in ad.obs else None,
-        doublet_score_col="doublet_score" if "doublet_score" in ad.obs else None,
-        mito_col="pct_counts_mt" if "pct_counts_mt" in ad.obs else None,
-        feature_count_col="n_genes_by_counts" if "n_genes_by_counts" in ad.obs else None,
-        umi_count_col="total_counts" if "total_counts" in ad.obs else None,
-        diagnosis_mode="rule",  # candidates only — verdicts belong to msp.inspect
-        random_state=0,
-    )
+    res = dissect_partition(ad, cluster_col=primary_key, umap_key="X_umap")
+    ad.obs["umap_cluster"] = res.labels["umap_cluster"]
+    ad.obs["original_cluster_split"] = res.labels["subcluster"]
+    res.fragments.to_csv(os.path.join(outdir, f"fragments_{primary_key}.csv"), index=False)
 
     ad.uns["msp"] = {
         "batch_col": batch_col,
@@ -233,6 +257,9 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
         plt.savefig(os.path.join(figdir, f"umap_{color.replace('.', '_')}.png"),
                     dpi=150, bbox_inches="tight")
         plt.close("all")
+
+    _plot_fragments(ad, primary_key, figdir,
+                    minors=res.fragments.loc[res.fragments.is_minor_sibling, "subcluster"].tolist())
 
     print("== QC figures/tables", flush=True)
     _qc_outputs(ad, batch_col, primary_key, outdir, figdir)
