@@ -388,7 +388,14 @@ DISSOCIATION_GENES_HS = [
     "TUBB6", "UBC", "USP2", "WAC", "ZC3H12A", "ZFAND5", "ZFP36", "ZFP36L1",
     "ZFP36L2", "ZYX",
 ]
-STRESS_GENE_SET = set(DISSOCIATION_GENES_HS)  # already uppercase
+# DCN is in DISSOCIATION_GENES_HS but is ALSO a real parent-core marker in
+# this dataset (fractal_markers.csv: parent 2, rank 9, logFC 4.6) — a
+# genuine connective-tissue/fibroblast lineage signal here, not dissociation
+# artifact, so it's excluded from the stress match. Checked the whole panel
+# against fractal_markers.csv; nothing else in it turned up as a real core
+# marker (e.g. LMNA/SERPINE1 don't appear there), so only DCN is excluded.
+STRESS_GENE_EXCLUDE = {"DCN"}
+STRESS_GENE_SET = set(DISSOCIATION_GENES_HS) - STRESS_GENE_EXCLUDE  # already uppercase
 STRESS_HIT_THRESHOLD = 3  # a cluster is "stress" if MORE than this many top genes hit
 
 
