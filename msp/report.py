@@ -363,34 +363,81 @@ def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
     return "".join(parts)
 
 
+# "Dissociation stress" gene panel, copied verbatim from osp/qc.py:228-247
+# (DISSOCIATION_GENES_HS) — early-response/stress genes induced by the
+# dissociation protocol itself, not the biology under study. Human symbols;
+# matched case-insensitively (dataset gene names uppercased before lookup)
+# so mouse data (same symbols, titlecase) works too.
+DISSOCIATION_GENES_HS = [
+    "ACTG1", "ANKRD1", "ARID5A", "ATF3", "ATF4", "BAG3", "BHLHE40",
+    "CCNL1", "CCRN4L", "CEBPB", "CEBPD", "CEBPG", "CSRNP1", "CXCL1", "CYR61",
+    "DCN", "DDX3X", "DDX5", "DES", "DNAJA1", "DNAJB1", "DNAJB4", "DUSP1", "DUSP8",
+    "EGR1", "EGR2", "EIF1", "EIF5", "ERF", "ERRFI1", "FAM132B", "FOS", "FOSB",
+    "FOSL2", "GADD45A", "GADD45G", "BRD2", "BTG1", "BTG2", "GCC1", "GEM",
+    "H3F3B", "HIPK3", "HSP90AA1", "HSP90AB1", "HSPA1A", "HSPA1B", "HSPA5",
+    "HSPA8", "HSPB1", "HSPE1", "HSPH1", "ID3", "IDI1", "IER2", "IER3", "IER5",
+    "IFRD1", "IL6", "IRF1", "IRF8", "ITPKC", "JUN", "JUNB", "JUND", "KCNE4",
+    "KLF2", "KLF4", "KLF6", "KLF9", "LITAF", "LMNA", "MAFF", "MAFK", "MCL1",
+    "MIDN", "MIR22HG", "MT1", "MT2", "MYADM", "MYC", "MYD88", "NCKAP5L",
+    "NCOA7", "NFKBIA", "NFKBIZ", "NOP58", "NPPC", "NR4A1", "ODC1", "OSGIN1",
+    "OXNAD1", "PCF11", "PDE4B", "PER1", "PHLDA1", "PNP", "PNRC1", "PPP1CC",
+    "PPP1R15A", "PXDC1", "RAP1B", "RASSF1", "RHOB", "RHOH", "RIPK1", "SAT1",
+    "SBNO2", "SDC4", "SERPINE1", "SKIL", "SLC10A6", "SLC38A2", "SLC41A1",
+    "SOCS3", "SQSTM1", "SRF", "SRSF5", "SRSF7", "STAT3", "TAGLN2", "TIPARP",
+    "TNFAIP3", "TNFAIP6", "TPM3", "TPPP3", "TRA2A", "TRA2B", "TRIB1", "TUBB4B",
+    "TUBB6", "UBC", "USP2", "WAC", "ZC3H12A", "ZFAND5", "ZFP36", "ZFP36L1",
+    "ZFP36L2", "ZYX",
+]
+STRESS_GENE_SET = set(DISSOCIATION_GENES_HS)  # already uppercase
+STRESS_HIT_THRESHOLD = 3  # a cluster is "stress" if MORE than this many top genes hit
+
+
+def _is_stress_gene(symbol: str) -> bool:
+    su = symbol.upper()
+    return su in STRESS_GENE_SET or su.startswith("MT-")
+
+
+def _deg_row(cluster: str, genes: list[tuple[str, float]], middle_td: str = "") -> str:
+    hits = [name for name, _ in genes if _is_stress_gene(name)]
+    is_stress = len(hits) > STRESS_HIT_THRESHOLD
+    cluster_cell = html.escape(cluster)
+    if is_stress:
+        cluster_cell += (' <span style="color:#c0392b;font-weight:bold" title="'
+                         f'{len(hits)}/{len(genes)} top genes are dissociation-stress or '
+                         f'mitochondrial: {html.escape(", ".join(hits))}">[stress cluster]</span>')
+    gene_html = ", ".join(
+        f'<b style="color:#c0392b">{html.escape(name)}</b> ({lfc:.1f})' if _is_stress_gene(name)
+        else f"{html.escape(name)} ({lfc:.1f})"
+        for name, lfc in genes
+    )
+    row_style = ' style="background:#fdecea"' if is_stress else ""
+    return f"<tr{row_style}><td>{cluster_cell}</td>{middle_td}<td style='text-align:left'>{gene_html}</td></tr>"
+
+
 def _deg_global_table(path: str, top_n: int) -> str:
     with open(path) as f:
         rows = list(csv.DictReader(f))
-    by_group: dict[str, list[str]] = {}
+    by_group: dict[str, list[tuple[str, float]]] = {}
     for r in rows:
         g = by_group.setdefault(r["group"], [])
         if len(g) < top_n:
-            g.append(f"{r['names']} ({float(r['logfoldchanges']):.1f})")
-    body = "".join(
-        f"<tr><td>{html.escape(g)}</td><td style='text-align:left'>{html.escape(', '.join(genes))}</td></tr>"
-        for g, genes in by_group.items()
-    )
+            g.append((r["names"], float(r["logfoldchanges"])))
+    body = "".join(_deg_row(g, genes) for g, genes in by_group.items())
     return f"<table><tr><th>cluster</th><th>top genes (logFC)</th></tr>{body}</table>"
 
 
 def _deg_local_table(path: str, top_n: int) -> str:
     with open(path) as f:
         rows = list(csv.DictReader(f))
-    by_group: dict[str, list[str]] = {}
+    by_group: dict[str, list[tuple[str, float]]] = {}
     neighbors_by_group: dict[str, str] = {}
     for r in rows:
         g = by_group.setdefault(r["group"], [])
         neighbors_by_group.setdefault(r["group"], r.get("neighbors", ""))
         if len(g) < top_n:
-            g.append(f"{r['names']} ({float(r['logfoldchanges']):.1f})")
+            g.append((r["names"], float(r["logfoldchanges"])))
     body = "".join(
-        f"<tr><td>{html.escape(g)}</td><td>{html.escape(neighbors_by_group.get(g, ''))}</td>"
-        f"<td style='text-align:left'>{html.escape(', '.join(genes))}</td></tr>"
+        _deg_row(g, genes, middle_td=f"<td>{html.escape(neighbors_by_group.get(g, ''))}</td>")
         for g, genes in by_group.items()
     )
     return f"<table><tr><th>cluster</th><th>neighbors</th><th>top genes (logFC)</th></tr>{body}</table>"
@@ -406,7 +453,11 @@ def _section_deg(outdir: str, top_n: int = 10) -> str:
         "computation-only, no cells are dropped from the data. Global view: cluster vs every "
         "other cluster (one-vs-rest). Local view: cluster vs its 3 nearest neighbors by PAGA "
         "connectivity, pooled into one reference group — a sharper comparison when neighbors "
-        "are transcriptionally close and get washed out by the global one-vs-rest.</p>"]
+        "are transcriptionally close and get washed out by the global one-vs-rest. A cluster is "
+        "marked <b style=\"color:#c0392b\">[stress cluster]</b> (per panel, independently) when "
+        "more than 3 of its displayed top genes are dissociation-stress genes (osp's "
+        "DISSOCIATION_GENES_HS panel) or mitochondrial (MT-*) — flagged only, nothing is removed "
+        "from the data.</p>"]
 
     tabs = []
     for p in global_paths:
