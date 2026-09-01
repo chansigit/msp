@@ -235,14 +235,17 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     # standissect-LITE: detection only — cross the RNA-side leiden with a
     # UMAP-side clustering (cartesian product), rank fragments per parent,
     # surface minor siblings as CANDIDATES. Diagnosis/validation belongs to
-    # msp.inspect, not here.
-    print(f"== standissect-lite on {primary_key} (leiden × umap_cluster)", flush=True)
+    # msp.inspect, not here. Parents come from the LOWEST resolution: the
+    # product hunts strays inside broad clusters — a high-res leiden has
+    # already split them itself, so crossing it adds little.
+    standissect_key = leiden_keys[int(np.argmin(resolutions))]
+    print(f"== standissect-lite on {standissect_key} (leiden × umap_cluster)", flush=True)
     from standissect_lite import dissect_partition
 
-    res = dissect_partition(ad, cluster_col=primary_key, umap_key="X_umap")
+    res = dissect_partition(ad, cluster_col=standissect_key, umap_key="X_umap")
     ad.obs["umap_cluster"] = res.labels["umap_cluster"]
     ad.obs["original_cluster_split"] = res.labels["subcluster"]
-    res.fragments.to_csv(os.path.join(outdir, f"fragments_{primary_key}.csv"), index=False)
+    res.fragments.to_csv(os.path.join(outdir, f"fragments_{standissect_key}.csv"), index=False)
 
     ad.uns["msp"] = {
         "batch_col": batch_col,
@@ -263,7 +266,7 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
             save_single_umap(ad, color, os.path.join(figdir, f"umap_{slug(color)}.png"),
                              legend_loc="on data", legend_fontsize=5)
 
-    _plot_fragments(ad, primary_key, figdir,
+    _plot_fragments(ad, standissect_key, figdir,
                     minors=res.fragments.loc[res.fragments.is_minor_sibling, "subcluster"].tolist())
 
     print("== QC figures/tables", flush=True)
