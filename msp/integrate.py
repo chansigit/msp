@@ -258,9 +258,11 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     print("== figures", flush=True)
     figdir = os.path.join(outdir, "figures")
     os.makedirs(figdir, exist_ok=True)
-    for color in [batch_col] + leiden_keys:
+    save_single_umap(ad, batch_col, os.path.join(figdir, f"umap_{slug(batch_col)}.png"),
+                     legend_fontsize=6)
+    for color in leiden_keys:  # cluster ids on the clusters, no side legend
         save_single_umap(ad, color, os.path.join(figdir, f"umap_{slug(color)}.png"),
-                         legend_fontsize=6)
+                         legend_loc="on data", legend_fontsize=6, legend_fontoutline=2)
     # inherited per-sample annotation — coarse only (the fine labels are far
     # too many across samples to render legibly)
     if "_ann_coarse" in ad.obs:

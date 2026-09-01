@@ -23,6 +23,17 @@ UMAP_FIGSIZE = (5.5, 5.5)
 UMAP_AXES_RECT = (0.14, 0.12, 0.78, 0.78)  # left, bottom, width, height
 UMAP_DPI = 150
 
+# axes box in inches, derived from the figsize/rect above — held CONSTANT
+# across every panel. A side legend never shrinks this box: when a legend
+# needs more room than the default canvas has, the canvas grows to the
+# right instead (so long sample names are never clipped, and every UMAP's
+# axes are pixel-for-pixel the same size regardless of legend length).
+_AXES_W_IN = UMAP_FIGSIZE[0] * UMAP_AXES_RECT[2]
+_AXES_H_IN = UMAP_FIGSIZE[1] * UMAP_AXES_RECT[3]
+_LEFT_IN = UMAP_FIGSIZE[0] * UMAP_AXES_RECT[0]
+_BOTTOM_IN = UMAP_FIGSIZE[1] * UMAP_AXES_RECT[1]
+_RIGHT_PAD_IN = UMAP_FIGSIZE[0] * (1 - UMAP_AXES_RECT[0] - UMAP_AXES_RECT[2])
+
 
 def slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name))
@@ -69,5 +80,20 @@ def save_single_umap(ad, color_col, out_path, **kwargs):
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.set_title(f"UMAP: {ax.get_title()}")
+
+    legend = ax.get_legend()
+    if legend is not None:
+        # measure the legend, then widen the CANVAS (never the axes box) so
+        # nothing is clipped — bbox_to_anchor is axes-relative, so it tracks
+        # the axes automatically once the figure is resized
+        fig.canvas.draw()
+        bbox_in = legend.get_window_extent(fig.canvas.get_renderer()) \
+            .transformed(fig.dpi_scale_trans.inverted())
+        needed_w = _LEFT_IN + _AXES_W_IN + bbox_in.width + 0.25
+        if needed_w > fig.get_figwidth():
+            fig.set_size_inches(needed_w, fig.get_figheight())
+            ax.set_position([_LEFT_IN / needed_w, UMAP_AXES_RECT[1],
+                             _AXES_W_IN / needed_w, UMAP_AXES_RECT[3]])
+
     fig.savefig(out_path, dpi=UMAP_DPI)
     plt.close(fig)
