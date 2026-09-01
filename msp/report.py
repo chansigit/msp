@@ -143,7 +143,7 @@ def _section_sample_decisions(outdir: str) -> str:
     n_incl = sum(1 for r in rows if r["decision"] == "include")
     head = "".join(f"<th>{c}</th>" for c in ("sample", "decision", "n_cells", "reason"))
     body = "".join(
-        f"<tr style=\"{'opacity:.6' if r['decision'] == 'exclude' else ''}\">"
+        f'<tr style="color:{"#1a7f37" if r["decision"] == "include" else "#c0392b"}">'
         + "".join(f"<td>{html.escape(r.get(c, ''))}</td>" for c in ("sample", "decision", "n_cells", "reason"))
         + "</tr>"
         for r in rows
