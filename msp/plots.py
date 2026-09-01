@@ -78,7 +78,9 @@ def _repel_on_data_labels(ad, color_col, ax, fontsize=12, fontweight="bold"):
         cat = str(cat)
         m = (lab == cat).values
         cx, cy = float(xy[m, 0].mean()), float(xy[m, 1].mean())
-        wrapped = "\n".join(textwrap.wrap(cat, width=14)) if len(cat) > 14 else cat
+        wrapped = ("\n".join(textwrap.wrap(cat, width=14, break_long_words=False,
+                                          break_on_hyphens=False))
+                  if len(cat) > 14 else cat)
         texts.append(ax.text(cx, cy, wrapped, fontsize=fontsize, fontweight=fontweight,
                              ha="center", va="center",
                              path_effects=[pe.withStroke(linewidth=3, foreground="white")]))
