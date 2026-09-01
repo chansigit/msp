@@ -68,6 +68,59 @@ def load_and_merge(inputs, batch_col, counts_layer="counts"):
     return merged
 
 
+# QC metrics shown on the integrated UMAP. pct_counts_mt gets a FIXED color
+# ceiling: an autoscaled colorbar once made a median-2.4%-mt dataset look
+# "high mt" (the Liu round-4 illusion) — never let the scale float.
+QC_UMAP_METRICS = (
+    ("pct_counts_mt", 20),
+    ("n_genes_by_counts", None),
+    ("total_counts", None),
+    ("doublet_score", None),
+    ("decontX_contamination", 1.0),
+    ("dissociation_score", None),
+)
+
+QC_ACTION_PALETTE = {"keep": "#d3d3d3", "flag": "#ff8c00", "drop": "#d62728"}
+
+
+def _qc_outputs(ad, batch_col, primary_key, outdir, figdir):
+    """QC evidence for the integrated space: metric UMAPs, the inherited
+    keep/flag/drop overlay, and per-sample / per-cluster QC tables — the
+    raw material for the later per-cluster inspection step."""
+    metrics = [(m, vmax) for m, vmax in QC_UMAP_METRICS if m in ad.obs]
+    if metrics:
+        sc.pl.umap(ad, color=[m for m, _ in metrics], vmax=[v for _, v in metrics],
+                   ncols=3, show=False)
+        plt.savefig(os.path.join(figdir, "qc_umap_metrics.png"), dpi=150, bbox_inches="tight")
+        plt.close("all")
+
+    if "_qc_action" in ad.obs:
+        order = [c for c in ("keep", "flag", "drop") if c in set(ad.obs["_qc_action"].astype(str))]
+        ad.obs["_qc_action"] = pd.Categorical(ad.obs["_qc_action"].astype(str), categories=order)
+        sc.pl.umap(ad, color="_qc_action", palette=[QC_ACTION_PALETTE[c] for c in order],
+                   show=False)
+        plt.savefig(os.path.join(figdir, "qc_umap_qc_action.png"), dpi=150, bbox_inches="tight")
+        plt.close("all")
+
+    def _agg(groupby):
+        g = ad.obs.groupby(groupby, observed=True)
+        out = pd.DataFrame({"n_cells": g.size()})
+        if "_qc_action" in ad.obs:
+            out["pct_flag"] = (g["_qc_action"].apply(lambda s: (s == "flag").mean()) * 100).round(2)
+            out["pct_drop"] = (g["_qc_action"].apply(lambda s: (s == "drop").mean()) * 100).round(2)
+        for m in ("pct_counts_mt", "doublet_score", "decontX_contamination", "n_genes_by_counts"):
+            if m in ad.obs:
+                out[f"median_{m}"] = g[m].median().round(4)
+        return out
+
+    _agg(batch_col).to_csv(os.path.join(outdir, "per_sample_qc.csv"))
+    cl = _agg(primary_key)
+    # how many samples contribute to each cluster — a 1-sample cluster in an
+    # integrated space is itself a QC signal
+    cl["n_samples"] = ad.obs.groupby(primary_key, observed=True)[batch_col].nunique()
+    cl.to_csv(os.path.join(outdir, f"cluster_qc_{primary_key}.csv"))
+
+
 def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
                               resolutions=(0.3, 1.0, 2.0), n_top_genes=2000,
                               n_pcs=50, n_neighbors=15, counts_layer="counts"):
@@ -135,6 +188,10 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
         plt.savefig(os.path.join(figdir, f"umap_{color.replace('.', '_')}.png"),
                     dpi=150, bbox_inches="tight")
         plt.close("all")
+
+    print("== QC figures/tables", flush=True)
+    primary_key = leiden_keys[min(1, len(leiden_keys) - 1)]  # middle resolution
+    _qc_outputs(ad, batch_col, primary_key, outdir, figdir)
 
     summary = {
         "n_cells": int(ad.n_obs),
