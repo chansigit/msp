@@ -363,46 +363,27 @@ def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
     return "".join(parts)
 
 
-# "Dissociation stress" gene panel, copied verbatim from osp/qc.py:228-247
-# (DISSOCIATION_GENES_HS) — early-response/stress genes induced by the
-# dissociation protocol itself, not the biology under study. Human symbols;
-# matched case-insensitively (dataset gene names uppercased before lookup)
-# so mouse data (same symbols, titlecase) works too.
-DISSOCIATION_GENES_HS = [
-    "ACTG1", "ANKRD1", "ARID5A", "ATF3", "ATF4", "BAG3", "BHLHE40",
-    "CCNL1", "CCRN4L", "CEBPB", "CEBPD", "CEBPG", "CSRNP1", "CXCL1", "CYR61",
-    "DCN", "DDX3X", "DDX5", "DES", "DNAJA1", "DNAJB1", "DNAJB4", "DUSP1", "DUSP8",
-    "EGR1", "EGR2", "EIF1", "EIF5", "ERF", "ERRFI1", "FAM132B", "FOS", "FOSB",
-    "FOSL2", "GADD45A", "GADD45G", "BRD2", "BTG1", "BTG2", "GCC1", "GEM",
-    "H3F3B", "HIPK3", "HSP90AA1", "HSP90AB1", "HSPA1A", "HSPA1B", "HSPA5",
-    "HSPA8", "HSPB1", "HSPE1", "HSPH1", "ID3", "IDI1", "IER2", "IER3", "IER5",
-    "IFRD1", "IL6", "IRF1", "IRF8", "ITPKC", "JUN", "JUNB", "JUND", "KCNE4",
-    "KLF2", "KLF4", "KLF6", "KLF9", "LITAF", "LMNA", "MAFF", "MAFK", "MCL1",
-    "MIDN", "MIR22HG", "MT1", "MT2", "MYADM", "MYC", "MYD88", "NCKAP5L",
-    "NCOA7", "NFKBIA", "NFKBIZ", "NOP58", "NPPC", "NR4A1", "ODC1", "OSGIN1",
-    "OXNAD1", "PCF11", "PDE4B", "PER1", "PHLDA1", "PNP", "PNRC1", "PPP1CC",
-    "PPP1R15A", "PXDC1", "RAP1B", "RASSF1", "RHOB", "RHOH", "RIPK1", "SAT1",
-    "SBNO2", "SDC4", "SERPINE1", "SKIL", "SLC10A6", "SLC38A2", "SLC41A1",
-    "SOCS3", "SQSTM1", "SRF", "SRSF5", "SRSF7", "STAT3", "TAGLN2", "TIPARP",
-    "TNFAIP3", "TNFAIP6", "TPM3", "TPPP3", "TRA2A", "TRA2B", "TRIB1", "TUBB4B",
-    "TUBB6", "UBC", "USP2", "WAC", "ZC3H12A", "ZFAND5", "ZFP36", "ZFP36L1",
-    "ZFP36L2", "ZYX",
+# Conservative "dissociation stress" core panel — NOT osp's full
+# DISSOCIATION_GENES_HS (that ~130-gene panel includes ECM/lineage/
+# inflammation genes like DCN, LMNA, SERPINE1 that are real cell-identity
+# markers in plenty of tissues, e.g. this dataset's own connective-tissue
+# clusters — see git history for the false-positive case that motivated
+# narrowing it). Two independent, mechanistically distinct, well-established
+# acute-dissociation-stress axes instead: heat-shock/chaperone response, and
+# AP-1/immediate-early transcription — both firing together is a much more
+# specific signal than one broad gene list. Human symbols; matched
+# case-insensitively (dataset gene names uppercased before lookup) so mouse
+# data (same symbols, titlecase) works too.
+STRESS_GENES_CORE = [
+    # heat shock proteins / chaperones (protein-folding stress response)
+    "HSPA1A", "HSPA1B", "HSPA8", "HSPB1", "HSP90AA1", "HSP90AB1",
+    "HSPH1", "HSPE1", "DNAJA1", "DNAJB1", "DNAJB4",
+    # AP-1 / immediate-early transcription factors (acute stress transcription)
+    "FOS", "FOSB", "JUN", "JUNB", "JUND", "EGR1", "EGR2", "ATF3", "NR4A1",
+    # mechanistically clear, dissociation-associated, not lineage-confounding
+    "PPP1R15A", "ZFP36", "IER2", "IER3", "DUSP1",
 ]
-# DCN is in DISSOCIATION_GENES_HS but is ALSO a real parent-core marker in
-# this dataset (fractal_markers.csv: parent 2, rank 9, logFC 4.6) — a
-# genuine connective-tissue/fibroblast lineage signal here, not dissociation
-# artifact, so it's excluded from the stress match.
-#
-# LMNA/SERPINE1: not confirmed by fractal_markers.csv, but domain judgment —
-# msp_leiden_r1.0 local view cluster 2's top 10 is VIM/TMSB4X/LMNA/LGALS1/
-# CAV1/ANXA2/S100A4/C12orf75/SERPINE1/TNFRSF12A: a coherent myofibroblast-
-# activation/EMT module (TGF-beta response, ECM remodeling, mechanotrans-
-# duction — LMNA routinely goes up under mechanical load, SERPINE1/PAI-1 is
-# a fibrosis/myofibroblast-activation marker), with NONE of the AP-1/
-# immediate-early (FOS/JUN/EGR1) or heat-shock (HSPA*/DNAJ*) genes that
-# actually mark acute dissociation stress. Excluded for that reason.
-STRESS_GENE_EXCLUDE = {"DCN", "LMNA", "SERPINE1"}
-STRESS_GENE_SET = set(DISSOCIATION_GENES_HS) - STRESS_GENE_EXCLUDE  # already uppercase
+STRESS_GENE_SET = set(STRESS_GENES_CORE)  # already uppercase
 STRESS_HIT_THRESHOLD = 3  # a cluster is "stress" if MORE than this many top genes hit
 
 
@@ -469,9 +450,9 @@ def _section_deg(outdir: str, top_n: int = 10) -> str:
         "connectivity, pooled into one reference group — a sharper comparison when neighbors "
         "are transcriptionally close and get washed out by the global one-vs-rest. A cluster is "
         "marked <b style=\"color:#c0392b\">[stress cluster]</b> (per panel, independently) when "
-        "more than 3 of its displayed top genes are dissociation-stress genes (osp's "
-        "DISSOCIATION_GENES_HS panel) or mitochondrial (MT-*) — flagged only, nothing is removed "
-        "from the data.</p>"]
+        "more than 3 of its displayed top genes are in the conservative heat-shock/AP-1 "
+        "dissociation-stress core panel (STRESS_GENES_CORE) or mitochondrial (MT-*) — flagged "
+        "only, nothing is removed from the data.</p>"]
 
     tabs = []
     for p in global_paths:
