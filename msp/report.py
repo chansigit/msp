@@ -72,12 +72,12 @@ nav.toc a:hover { text-decoration: underline; }
 _SECTION_LABELS = {
     "summary": "Summary",
     "per-sample-qc": "Per-sample QC",
+    "umaps": "UMAPs",
     "per-cluster-qc": "Per-cluster QC",
     "deg": "Cluster DEG",
     "standissect": "standissect-lite (minor siblings)",
     "inspection": "Inspection Verdicts",
     "qc-umap": "QC (integrated space)",
-    "umaps": "Samples & Clusters",
 }
 
 
@@ -173,7 +173,7 @@ def _section_deg(outdir: str, top_n: int = 10) -> str:
 _FRAGMENT_COLS = ("subcluster", "parent", "umap_label", "n_cells", "frac_of_parent", "rank")
 
 
-def _section_standissect(outdir: str, standissect_figs: list[str]) -> str:
+def _section_standissect(outdir: str) -> str:
     hits = sorted(glob.glob(os.path.join(outdir, "fragments_*.csv")))
     if not hits:
         return ""
@@ -195,7 +195,6 @@ def _section_standissect(outdir: str, standissect_figs: list[str]) -> str:
             for r in minors
         )
         parts.append(f"<table><tr>{head}</tr>{body}</table>")
-    parts += [_img(p) for p in standissect_figs]
     return _h2("standissect") + "".join(parts)
 
 
@@ -257,10 +256,23 @@ def _section_qc_umap(qc_figs: list[str]) -> str:
             + _grid(other))
 
 
-def _section_umaps(umap_figs: list[str]) -> str:
-    if not umap_figs:
+def _section_umaps(umap_figs: list[str], standissect_figs: list[str]) -> str:
+    if not umap_figs and not standissect_figs:
         return ""
-    return _h2("umaps") + _grid(umap_figs)
+    ann = sorted(p for p in umap_figs if "_ann_" in os.path.basename(p))
+    rest = [p for p in umap_figs if p not in ann]
+    # sample-mixing panel first, then the leiden resolutions
+    leiden = sorted(p for p in rest if "leiden" in os.path.basename(p))
+    samples = [p for p in rest if p not in leiden]
+    parts = [_h2("umaps")]
+    if ann:
+        parts += ["<h3>Inherited annotation (coarse / fine)</h3>", _grid(ann)]
+    if samples or leiden:
+        parts += ["<h3>Samples & leiden clusterings</h3>", _grid(samples + leiden)]
+    if standissect_figs:
+        parts += ["<h3>standissect-lite derived</h3>"]
+        parts += [_img(p) for p in standissect_figs]
+    return "".join(parts)
 
 
 def _number_sections(section_htmls):
@@ -295,12 +307,12 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     sections = [
         _section_summary(outdir),
         _section_per_sample(outdir),
+        _section_umaps(umap_figs, standissect_figs),
         _section_per_cluster(outdir),
         _section_deg(outdir),
-        _section_standissect(outdir, standissect_figs),
+        _section_standissect(outdir),
         _section_inspection(outdir, inspect_figs),
         _section_qc_umap(qc_figs),
-        _section_umaps(umap_figs),
     ]
     sections, toc = _number_sections(sections)
 

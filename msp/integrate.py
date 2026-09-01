@@ -255,10 +255,13 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     print("== figures", flush=True)
     figdir = os.path.join(outdir, "figures")
     os.makedirs(figdir, exist_ok=True)
-    colorings = [batch_col] + leiden_keys + (["_ann_coarse"] if "_ann_coarse" in ad.obs else [])
-    for color in colorings:
+    for color in [batch_col] + leiden_keys:
         save_single_umap(ad, color, os.path.join(figdir, f"umap_{slug(color)}.png"),
                          legend_fontsize=6)
+    for color in ("_ann_coarse", "_ann_fine"):  # inherited per-sample annotation
+        if color in ad.obs:
+            save_single_umap(ad, color, os.path.join(figdir, f"umap_{slug(color)}.png"),
+                             legend_loc="on data", legend_fontsize=5)
 
     _plot_fragments(ad, primary_key, figdir,
                     minors=res.fragments.loc[res.fragments.is_minor_sibling, "subcluster"].tolist())
