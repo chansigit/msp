@@ -51,6 +51,7 @@ import scanpy as sc
 import scipy.sparse as sp
 
 from .report import generate_report
+from .agent_util import run_query
 
 _OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le}
 
@@ -409,7 +410,7 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
                      model, effort, max_turns, remove_mask):
     from claude_agent_sdk import (
         AssistantMessage, ClaudeAgentOptions, ResultMessage, ToolUseBlock,
-        create_sdk_mcp_server, query, tool,
+        create_sdk_mcp_server, tool,
     )
 
     state = {"key": cluster_key, "n_sub": 0}
@@ -526,10 +527,10 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
     )
 
     result_text = None
-    async for message in query(
-        prompt="Inspect this msp integration directory following the workflow in the system "
-               "prompt exactly, and finish by submitting via submit_inspection.",
-        options=options,
+    async for message in run_query(
+        "Inspect this msp integration directory following the workflow in the system "
+        "prompt exactly, and finish by submitting via submit_inspection.",
+        options, label="inspect",
     ):
         if isinstance(message, AssistantMessage):
             for block in message.content:

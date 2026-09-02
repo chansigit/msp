@@ -49,6 +49,7 @@ import scanpy as sc
 
 from .inspect import _cluster_order, _deg_table, _file_inventory, _gene_table, _load_removal_mask
 from .report import generate_report
+from .agent_util import run_query
 
 BASE_KEY = "msp_leiden_r2.0"
 PARENT_KEY = "msp_leiden_r1.0"
@@ -424,7 +425,7 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                      language, model, effort, max_turns):
     from claude_agent_sdk import (
         AssistantMessage, ClaudeAgentOptions, ResultMessage, ToolUseBlock,
-        create_sdk_mcp_server, query, tool,
+        create_sdk_mcp_server, tool,
     )
 
     entries = {}
@@ -535,10 +536,10 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
     )
 
     result_text = None
-    async for message in query(
-        prompt="Annotate this msp integration directory following the workflow in the system prompt "
-               "exactly: one Task per base cluster, submit_cluster for each, then finalize_annotation.",
-        options=options,
+    async for message in run_query(
+        "Annotate this msp integration directory following the workflow in the system prompt "
+        "exactly: one Task per base cluster, submit_cluster for each, then finalize_annotation.",
+        options, label="annotate",
     ):
         if isinstance(message, AssistantMessage):
             for block in message.content:
