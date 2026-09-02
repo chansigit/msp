@@ -521,6 +521,7 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                        "mcp__msp__cluster_context", "mcp__msp__check_genes", "mcp__msp__check_deg",
                        "mcp__msp__submit_cluster", "mcp__msp__finalize_annotation"],
         permission_mode="bypassPermissions",
+        disallowed_tools=["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch"],
         max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
         system_prompt=_system_prompt(outdir, clusters, batch_col, species, prior_cols, language),
         cwd=os.path.abspath(outdir),
