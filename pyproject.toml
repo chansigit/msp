@@ -19,9 +19,10 @@ dependencies = [
     "scanpy",
     "anndata",
     "igraph",
-    "harmonypy>=0.2.0",   # torch-based fork; Z_corr orientation handled in msp.integrate
+    "harmonypy==0.2.0",   # the torch-based release msp was validated on (PyPI 2.0.0 exists, untested; Z_corr orientation handled in msp.integrate)
     "torch",
-    "standissect-lite>=0.2.0",
+    # PyPI only carries standissect-lite 0.1.0; 0.2.0 (needed) lives on GitHub
+    "standissect-lite @ git+https://github.com/chansigit/standissect-lite.git",
     "pandas",
     "numpy",
     "scipy",
