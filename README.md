@@ -149,3 +149,42 @@ inspect drop ∪ agent-removed clusters, archived per cell with sources in
 
 Driven in production by `ecarsi.crosssample`, which decides which samples
 enter integration (agent decision, archived) before calling this package.
+
+## Tuning integration
+
+`python -m msp` exposes the integration knobs; the Python entry point takes
+the same names as keyword arguments (`run_multi_sample_pipeline(...,
+n_top_genes=, n_pcs=, n_neighbors=, resolutions=, harmony_kwargs={...})`).
+
+| knob | default | CLI |
+|---|---|---|
+| HVGs per batch | 2000 | `--n-top-genes` |
+| PCs | 50 | `--n-pcs` |
+| kNN neighbours (on `X_pca_harmony`) | 15 | `--n-neighbors` |
+| leiden resolutions | 0.3 1.0 2.0 | `--resolutions` (1.0 and 2.0 required by inspect/annotate) |
+| harmony | harmonypy defaults | `--harmony KEY=VALUE` (repeatable) |
+
+Harmony is called as `harmonypy.run_harmony(X_pca, obs[[batch_col]],
+batch_col, random_state=0, device=<auto or $MSP_DEVICE>, **harmony_kwargs)`;
+anything not overridden is harmonypy's default:
+
+| harmony parameter | default | meaning |
+|---|---|---|
+| `theta` | 2 (per covariate) | diversity penalty — higher = stronger mixing across batches |
+| `lamb` | 1 | ridge penalty on the correction; `-1` = auto-estimate (R behaviour, uses `alpha`=0.2) |
+| `sigma` | 0.1 | soft k-means width — larger = softer cluster assignment |
+| `nclust` | min(round(N/30), 100) | number of harmony clusters |
+| `tau` | 0 | discounting for small batches (expected cells per cluster) |
+| `block_size` | 0.05 | fraction of cells updated per block |
+| `max_iter_harmony` | 10 | outer iterations |
+| `max_iter_kmeans` | 20 | inner clustering iterations |
+| `epsilon_cluster` / `epsilon_harmony` | 1e-5 / 1e-4 | convergence tolerances |
+
+Example: gentler correction that keeps more within-batch structure and runs longer:
+
+```bash
+python -m msp ... --harmony theta=1 --harmony max_iter_harmony=20
+```
+
+The effective overrides are recorded in `uns["msp"]["harmony"]` of
+`integrated.h5ad` (empty = all defaults).

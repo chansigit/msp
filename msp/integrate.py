@@ -702,7 +702,14 @@ def _leiden_cluster_qc_violins(ad, leiden_keys, resolutions, figdir):
 def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
                               resolutions=(0.3, 1.0, 2.0), n_top_genes=2000,
                               n_pcs=50, n_neighbors=15, counts_layer="counts",
-                              top_n_de=50):
+                              top_n_de=50, harmony_kwargs=None):
+    """harmony_kwargs: passed straight to harmonypy.run_harmony on top of
+    msp's fixed random_state=0/device — theta (diversity penalty, default 2
+    per covariate), lamb (ridge, default 1; -1 = auto-estimate), sigma (soft
+    k-means width, 0.1), nclust (default min(round(N/30), 100)), tau,
+    block_size, max_iter_harmony (10), max_iter_kmeans (20),
+    epsilon_cluster, epsilon_harmony, alpha. Recorded in uns["msp"]["harmony"]."""
+    harmony_kwargs = dict(harmony_kwargs or {})
     os.makedirs(outdir, exist_ok=True)
     ad = load_and_merge(inputs, batch_col, counts_layer=counts_layer)
     n_samples = ad.obs[batch_col].astype(str).nunique()
@@ -736,9 +743,10 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
     auto = ("cuda" if torch.cuda.is_available() else
             "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
             else "cpu")
-    print(f"== harmony on {device or auto}{'' if device else ' (auto-detected)'}", flush=True)
+    print(f"== harmony on {device or auto}{'' if device else ' (auto-detected)'}"
+          + (f", overrides {harmony_kwargs}" if harmony_kwargs else ", harmonypy defaults"), flush=True)
     ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col,
-                               random_state=0, device=device)
+                               random_state=0, device=device, **harmony_kwargs)
     Z = np.asarray(ho.Z_corr)
     if Z.shape[0] != ad.n_obs:
         Z = Z.T
@@ -802,6 +810,12 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
         "inputs": [str(p) for p in inputs],
         "resolutions": list(resolutions),
         "n_top_genes": n_top_genes,
+        "n_pcs": n_comps,
+        "n_neighbors": n_neighbors,
+        # what actually reached harmonypy.run_harmony beyond its defaults
+        # (empty dict = harmonypy defaults: theta=2/covariate, lamb=1,
+        # sigma=0.1, nclust=min(round(N/30),100), max_iter_harmony=10)
+        "harmony": {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in harmony_kwargs.items()},
     }
 
     print("== figures", flush=True)

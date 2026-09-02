@@ -24,6 +24,13 @@ parser.add_argument("--species", default=None, help="stored in uns['msp']; conte
 parser.add_argument("--resolutions", type=float, nargs="+", default=[0.3, 1.0, 2.0],
                     help="leiden resolutions; 1.0 and 2.0 must be present for inspect/annotate")
 parser.add_argument("--n-top-genes", type=int, default=2000)
+parser.add_argument("--n-pcs", type=int, default=50)
+parser.add_argument("--n-neighbors", type=int, default=15)
+parser.add_argument("--harmony", action="append", default=[], metavar="KEY=VALUE",
+                    help="harmonypy.run_harmony override, repeatable: e.g. --harmony theta=1 "
+                         "--harmony lamb=-1 --harmony max_iter_harmony=20 --harmony sigma=0.2 "
+                         "(defaults: theta=2, lamb=1, sigma=0.1, nclust=min(N/30,100), "
+                         "max_iter_harmony=10, max_iter_kmeans=20)")
 parser.add_argument("--inspect", action="store_true",
                     help="after integration, run the per-cluster QC inspection agent (msp.inspect)")
 parser.add_argument("--annotate", action="store_true",
@@ -46,6 +53,27 @@ if args.inspect and not {1.0, 2.0} <= set(args.resolutions):
 out = args.outdir
 
 
+def _parse_kv(items):
+    """KEY=VALUE → {key: number|list|str}; comma-separated values become lists."""
+    def conv(v):
+        for cast in (int, float):
+            try:
+                return cast(v)
+            except ValueError:
+                pass
+        return v
+    out = {}
+    for it in items:
+        if "=" not in it:
+            sys.exit(f"--harmony expects KEY=VALUE, got {it!r}")
+        k, v = it.split("=", 1)
+        out[k.strip()] = [conv(x) for x in v.split(",")] if "," in v else conv(v)
+    return out
+
+
+harmony_kwargs = _parse_kv(args.harmony)
+
+
 def _done(*names):
     return all(os.path.exists(os.path.join(out, n)) for n in names)
 
@@ -54,6 +82,7 @@ if args.force or not _done("integrated.h5ad", "report.html"):
     _, summary = run_multi_sample_pipeline(
         args.inputs, batch_col=args.batch_col, outdir=out,
         species=args.species, resolutions=tuple(args.resolutions), n_top_genes=args.n_top_genes,
+        n_pcs=args.n_pcs, n_neighbors=args.n_neighbors, harmony_kwargs=harmony_kwargs,
     )
     print(summary)
     print(f"report: {generate_report(out)}")
