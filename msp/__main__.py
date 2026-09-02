@@ -13,7 +13,7 @@ import os
 import sys
 
 from .integrate import integrate_adata, run_multi_sample_pipeline
-from .report import generate_report
+from .report import generate_report, write_report_context
 
 parser = argparse.ArgumentParser(prog="msp", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -46,6 +46,9 @@ parser.add_argument("--effort", default=None, choices=["low", "medium", "high", 
                     help="reasoning effort for the agents (models that support it)")
 parser.add_argument("--max-turns", type=int, default=None,
                     help="agent turn budget (defaults: inspect 100, annotate 200)")
+parser.add_argument("--report-context", default=None, metavar="TEXT",
+                    help='where this run sits, for report titles (e.g. "round 2 · fu2022-meniscus"); '
+                         "persisted in <outdir>/report_context.txt so later report refreshes keep it")
 parser.add_argument("--force", action="store_true", help="redo steps whose outputs already exist")
 args = parser.parse_args()
 
@@ -57,6 +60,7 @@ if args.inspect and not {1.0, 2.0} <= set(args.resolutions):
     sys.exit("--inspect/--annotate need leiden resolutions 1.0 and 2.0 (see --resolutions)")
 
 out = args.outdir
+write_report_context(out, args.report_context)
 
 
 def _parse_kv(items):

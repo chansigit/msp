@@ -673,6 +673,37 @@ def _number_sections(section_htmls):
     return numbered_htmls, (f'<nav class="toc">{toc}</nav>' if toc else "")
 
 
+CONTEXT_FILE = "report_context.txt"
+
+
+def report_context(outdir: str) -> str:
+    """Where this run sits (e.g. 'round 2 · fu2022-meniscus'), written by the
+    driver via --report-context into outdir (or its parent, for per-lineage
+    sub-reports); '' when absent. Titles are composed from it so every
+    report page says what it is AND where it belongs."""
+    d = os.path.abspath(outdir)
+    for cand in (d, os.path.dirname(d)):
+        p = os.path.join(cand, CONTEXT_FILE)
+        if os.path.isfile(p):
+            with open(p) as f:
+                return f.read().strip()
+    return ""
+
+
+def write_report_context(outdir: str, text: str | None) -> None:
+    if text:
+        os.makedirs(outdir, exist_ok=True)
+        with open(os.path.join(outdir, CONTEXT_FILE), "w") as f:
+            f.write(text.strip() + "\n")
+
+
+def compose_title(what: str, outdir: str, subject: str | None = None) -> str:
+    """'<subject> — <what> · <context>' with the empty parts dropped."""
+    ctx = report_context(outdir)
+    head = f"{subject} — {what}" if subject else what
+    return f"{head} · {ctx}" if ctx else head
+
+
 def generate_report(outdir: str, out_html: str | None = None, title: str | None = None) -> str:
     out_html = out_html or os.path.join(outdir, "report.html")
     figdir = os.path.join(outdir, "figures")
@@ -690,7 +721,7 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     violins = [p for p in qc_figs if "violin" in os.path.basename(p)]
     qc_figs = [p for p in qc_figs if p not in violins]
 
-    title = title or f"msp Integration Report — {os.path.basename(os.path.abspath(outdir))}"
+    title = title or compose_title("cross-sample integration · inspection · annotation (msp)", outdir)
     sections = [
         _section_sample_summary(outdir),
         _section_umaps(umap_figs, standissect_figs, qc_figs),
