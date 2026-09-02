@@ -1,8 +1,12 @@
+LICENSE
 README.md
 pyproject.toml
 msp/__init__.py
 msp/__main__.py
+msp/annotate.py
+msp/inspect.py
 msp/integrate.py
+msp/plots.py
 msp/report.py
 msp.egg-info/PKG-INFO
 msp.egg-info/SOURCES.txt

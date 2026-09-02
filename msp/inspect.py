@@ -14,9 +14,10 @@ Every integrated cluster goes through five tests (the R11 battery):
   (e) stability   — persists across resolutions; one-resolution splinters
                     are not actionable.
 
-Evidence on disk (de_top_genes, cluster/per-sample QC tables, the
-standissect-lite bundle, figures) plus live MCP tools (check_genes,
-check_qc_scores, check_stability, subcluster). The agent submits a
+Evidence on disk (deg_global_*/deg_local_* at both leiden resolutions,
+cluster/per-sample QC tables, the standissect-lite bundle, figures) plus
+live MCP tools (check_genes, check_qc_scores, check_stability, check_deg,
+subcluster). The agent submits a
 structured proposal; the host validates it, writes
 inspection_proposal.json / inspection_notes.md, maps it onto
 obs["_msp_action"] (keep/flag/drop) in integrated.h5ad, renders the
@@ -25,7 +26,10 @@ verdict UMAP and refreshes report.html.
 Verdicts are PROPOSALS only — msp deletes nothing; execution is a later,
 separate step. Cells flagged/dropped per-sample (obs["_qc_action"]) are in
 here on purpose: their cross-sample clustering is exactly the evidence
-this step weighs.
+this step weighs — check_genes/check_qc_scores/check_stability/subcluster's
+own splitting still see them. Only DEG (check_deg, and subcluster's
+built-in sibling DE) excludes preannotation_removal.csv's cells, matching
+the precomputed deg_global_*/deg_local_* CSVs exactly.
 
 Usage:
     python -m msp.inspect <msp_outdir> [--species human] [--model ...]
@@ -55,10 +59,29 @@ QC_COLS = ("pct_counts_mt", "n_genes_by_counts", "total_counts", "doublet_score"
 
 
 def _detect_primary_key(outdir):
-    paths = sorted(glob.glob(os.path.join(outdir, "de_top_genes_*.csv")))
+    """Cluster Annotations computes DEG for both r1.0 and r2.0 (deg_global_*/
+    deg_local_*.csv); default to r1.0 when both exist (matches the old
+    single-resolution 'primary_key' convention), else whichever is present."""
+    paths = sorted(glob.glob(os.path.join(outdir, "deg_global_*.csv")))
     if not paths:
-        raise FileNotFoundError(f"no de_top_genes_*.csv in {outdir} — run the msp pipeline first")
-    return os.path.basename(paths[0])[len("de_top_genes_"):-len(".csv")]
+        raise FileNotFoundError(f"no deg_global_*.csv in {outdir} — run the msp pipeline first")
+    keys = [os.path.basename(p)[len("deg_global_"):-len(".csv")] for p in paths]
+    return "msp_leiden_r1.0" if "msp_leiden_r1.0" in keys else keys[0]
+
+
+def _load_removal_mask(outdir, ad):
+    """Cells already proposed for removal before Cluster Annotations ran
+    (msp.integrate._build_removal_mask / the Pre-annotation filtering
+    UMAP) — excluded from every live DEG test here too (check_deg,
+    subcluster's built-in sibling DE), matching the precomputed
+    deg_global_*/deg_local_* CSVs exactly. Missing file (older msp output,
+    predates this artifact) → nothing excluded. Boolean numpy array,
+    aligned to ad.obs_names order."""
+    path = os.path.join(outdir, "preannotation_removal.csv")
+    if not os.path.exists(path):
+        return np.zeros(ad.n_obs, dtype=bool)
+    df = pd.read_csv(path).set_index("cell")
+    return df["recommend_removal"].reindex(ad.obs_names).fillna(False).to_numpy()
 
 
 def _cluster_order(labels):
@@ -136,7 +159,47 @@ def _stability_table(ad, cluster, cluster_key, other_keys):
     return "\n".join(lines)
 
 
-def _subcluster_once(ad, key, cluster, resolution, new_key):
+def _deg_table(ad, cluster_key, cluster, reference, top_n, remove_mask):
+    """On-demand wilcoxon DEG for the CURRENT working clustering (any prior
+    subcluster splits included) — the precomputed deg_global_*/deg_local_*
+    CSVs only cover the original r1.0/r2.0 partition and can't see ids the
+    agent creates. reference='rest': one-vs-rest against every other
+    current cluster (matches deg_global_* semantics). reference=comma-list
+    of other cluster ids: pooled reference group (matches deg_local_*
+    semantics, e.g. a subcluster's siblings or PAGA neighbors). remove_mask
+    cells (already recommend_removal — see Pre-annotation filtering) are
+    excluded first, same as the precomputed CSVs."""
+    base = ad[~remove_mask]
+    lab = base.obs[cluster_key].astype(str)
+    if cluster not in set(lab):
+        return f"cluster {cluster!r} has no cells left once recommend_removal cells are excluded"
+    if reference == "rest":
+        sub = base
+    else:
+        ref_groups = [g.strip() for g in reference.split(",") if g.strip()]
+        sub = base[lab.isin([cluster, *ref_groups])].copy()
+    sc.tl.rank_genes_groups(sub, cluster_key, groups=[cluster], reference="rest",
+                            method="wilcoxon", use_raw=True, pts=True)
+    df = sc.get.rank_genes_groups_df(sub, group=cluster)
+    df = df.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
+    # natural scanpy ranking (by test score), not resorted by raw logFC —
+    # sorting by logFC alone surfaces near-zero-expression noise genes with
+    # huge fold change but pct1==pct2==0 and padj==1, same trap as anywhere
+    # else in msp that reads rank_genes_groups_df
+    df = df.head(top_n)
+    ref_desc = "rest" if reference == "rest" else reference
+    lines = [f"DEG for cluster {cluster!r} vs {ref_desc}, top {len(df)}:"]
+    for _, r in df.iterrows():
+        lines.append(f"  {r['names']}: logFC={r['logfoldchanges']:.2f} padj={r['pvals_adj']:.2e} "
+                     f"pct1={r['pct1']:.2f} pct2={r['pct2']:.2f}")
+    return "\n".join(lines)
+
+
+def _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
+    """Split one cluster; sizes reported are the FULL split (removed cells
+    included, so counts stay honest), but the built-in sibling DE excludes
+    remove_mask cells — same DEG-only exclusion as check_deg / the
+    precomputed deg_global_*/deg_local_* CSVs."""
     parent_mask = (ad.obs[key].astype(str) == cluster).values
     sc.tl.leiden(ad, restrict_to=(key, [cluster]), resolution=resolution,
                  key_added=new_key, flavor="igraph", n_iterations=2)
@@ -147,13 +210,17 @@ def _subcluster_once(ad, key, cluster, resolution, new_key):
         return 0, f"cluster {cluster} did not split at resolution {resolution}; try higher"
     sub = ad[parent_mask].copy()
     sub.obs["_sub"] = pd.Categorical(sub_labels.values)
-    sc.tl.rank_genes_groups(sub, "_sub", method="wilcoxon", use_raw=False)
-    top = sc.get.rank_genes_groups_df(sub, group=None).groupby("group", observed=True).head(10)
+    sub_clean = sub[~remove_mask[parent_mask]]
+    top = None
+    if sub_clean.obs["_sub"].nunique(dropna=True) >= 2:
+        sc.tl.rank_genes_groups(sub_clean, "_sub", method="wilcoxon", use_raw=False)
+        top = sc.get.rank_genes_groups_df(sub_clean, group=None).groupby("group", observed=True).head(10)
     sizes = sub_labels.value_counts()
     lines = [f"cluster {cluster} split into {len(subs)} subclusters at resolution {resolution}:"]
     for s in subs:
-        genes = ", ".join(top.loc[top["group"] == s, "names"])
-        lines.append(f"  {s} (n={int(sizes[s])}) top genes vs siblings: {genes}")
+        genes = ", ".join(top.loc[top["group"] == s, "names"]) if top is not None else ""
+        note = "" if genes else " (no DE — too few non-removed cells)"
+        lines.append(f"  {s} (n={int(sizes[s])}) top genes vs siblings: {genes}{note}")
     return len(subs), "\n".join(lines)
 
 
@@ -293,25 +360,41 @@ All relevant files (paths relative to the working directory — Read exactly the
 {_file_inventory(outdir)}
 
 What they are:
-- de_top_genes_*.csv: per-cluster DEG (pct1/pct2 = expressing fraction in/out);
-- cluster_qc_*.csv, per_sample_qc.csv: QC + composition tables;
-- fragments_*.csv: standissect-lite's cartesian product (leiden × UMAP-side clustering); \
-rows with is_minor_sibling=True are candidate stray fragments of a parent cluster — \
-detection only, judge each one yourself with the five tests (obs["original_cluster_split"] \
-holds the per-cell fragment labels, so subcluster on a parent reproduces them);
-- figures/standissect_fragments.png: the minor siblings on the UMAP (main cores grey);
+- deg_global_{{key}}.csv / deg_local_{{key}}.csv, for key in msp_leiden_r1.0 and msp_leiden_r2.0: \
+precomputed DEG at both resolutions (global = one-vs-rest; local = vs the cluster's 3 nearest \
+PAGA neighbors pooled; pct1/pct2 = expressing fraction in/out). These only cover the ORIGINAL \
+clustering, though — once you subcluster, use check_deg for DEG on the refined ids;
+- stress_clusters.csv: (key, cluster) pairs whose deg_global/deg_local top genes already trip the \
+dissociation-stress/mitochondrial signature check — a head start, not a substitute for your own judgment;
+- cluster_qc_*.csv, per_sample_qc.csv, cell_outlier_summary.csv: QC + composition tables (the \
+latter is the same cluster-median-MAD-plus-floor doublet/ambient outlier test as check_qc_scores \
+gives you live, precomputed at both resolutions);
+- fragments_*.csv, minor_sibling_qc.csv: standissect-lite's cartesian product (leiden × UMAP-side \
+clustering) and its per-fragment QC verdict; rows/fragments recommend_removal are candidate stray \
+fragments of a parent cluster — detection only, judge each one yourself with the five tests \
+(obs["standissect_product"] holds the per-cell fragment labels, so subcluster on a parent \
+reproduces them);
+- figures/standissect_product.png: the fragments on the UMAP; figures/umap_preannotation_removal.png: \
+every cell already proposed for removal (standissect fragments ∪ cell-level outliers ∪ inherited \
+osp _qc_action=="drop") BEFORE the precomputed deg_global/deg_local tables were computed — those \
+tables already exclude these cells, so don't re-flag them for the same reasons found here;
 - figures/umap_*.png: sample mixing, clusterings at three resolutions, inherited annotation; \
 figures/qc_umap_*.png, figures/qc_violin_*.png: QC metrics on the UMAP / per-cluster violins, \
 plus inherited keep/flag/drop.
 
 Mandatory workflow:
 1. Figures BEFORE conclusions: sample-mixing UMAP, the three resolution UMAPs, qc_umap_metrics, \
-qc_umap_qc_action.
-2. Read de_top_genes and the QC/composition tables; read the standissect diagnosis + drift tables.
+qc_umap_qc_action, umap_preannotation_removal.
+2. Read deg_global_{cluster_key}.csv / deg_local_{cluster_key}.csv and the QC/composition tables; \
+read the standissect diagnosis + drift tables.
 3. Verify markers with check_genes (batch dozens of genes per call); QC/composition with \
 check_qc_scores (one call, no arguments); stability with check_stability per suspicious cluster.
 4. If a cluster is heterogeneous, split it with subcluster (ids like "5,0") — all tools and the \
-final submission follow the refined clustering automatically.
+final submission follow the refined clustering automatically. subcluster's own reply only DEs \
+the new subclusters against each other (their immediate siblings); for a real global or local \
+view on a subcluster (or on any custom comparison you want — a merged group of cluster ids, a \
+specific pair), call check_deg — the precomputed deg_global_*/deg_local_* CSVs only cover the \
+ORIGINAL clustering and cannot see ids you created.
 5. Finish by calling submit_inspection — conclusions only in the submitted JSON.
 
 Efficiency: parallel Reads in one turn; batch genes; check_qc_scores once; get the JSON right \
@@ -323,7 +406,7 @@ contamination (decontX evidence exists for that)."""
 
 
 async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, language,
-                     model, effort, max_turns):
+                     model, effort, max_turns, remove_mask):
     from claude_agent_sdk import (
         AssistantMessage, ClaudeAgentOptions, ResultMessage, ToolUseBlock,
         create_sdk_mcp_server, query, tool,
@@ -357,6 +440,31 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
         return {"content": [{"type": "text",
                              "text": _stability_table(ad, str(args["cluster"]), state["key"], other_keys)}]}
 
+    @tool("check_deg",
+          "On-demand DEG (wilcoxon) for the CURRENT working clustering, including any subcluster "
+          "splits already made — use this once a cluster you're investigating has an id the "
+          "precomputed deg_global_*/deg_local_* CSVs never saw. reference='rest' (default) is "
+          "one-vs-rest against every other current cluster, same semantics as deg_global_*. Pass "
+          "a comma-separated list of other cluster ids as reference instead for a pooled-group "
+          "comparison (e.g. a subcluster vs its siblings, or vs specific PAGA neighbors), same "
+          "semantics as deg_local_*.", {"cluster": str, "reference": str, "top_n": int})
+    async def check_deg(args):
+        c = str(args["cluster"])
+        if c not in current_clusters():
+            return {"content": [{"type": "text", "text": f"unknown cluster {c!r}; current: {current_clusters()}"}],
+                    "is_error": True}
+        reference = str(args.get("reference") or "rest").strip() or "rest"
+        if reference != "rest":
+            ref_groups = [g.strip() for g in reference.split(",") if g.strip()]
+            unknown = [g for g in ref_groups if g not in current_clusters()]
+            if unknown:
+                return {"content": [{"type": "text",
+                                     "text": f"unknown reference cluster(s) {unknown}; current: {current_clusters()}"}],
+                        "is_error": True}
+        top_n = int(args.get("top_n") or 20)
+        text = _deg_table(ad, state["key"], c, reference, top_n, remove_mask)
+        return {"content": [{"type": "text", "text": text}]}
+
     @tool("subcluster",
           "Split one heterogeneous cluster with leiden restrict_to at the given resolution "
           '(0.3-1.0 typical). New ids look like "5,0"; all tools and the final submission '
@@ -367,7 +475,7 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
             return {"content": [{"type": "text", "text": f"unknown cluster {c!r}; current: {current_clusters()}"}],
                     "is_error": True}
         new_key = f"inspect_sub{state['n_sub'] + 1}"
-        n, text = _subcluster_once(ad, state["key"], c, float(args["resolution"]), new_key)
+        n, text = _subcluster_once(ad, state["key"], c, float(args["resolution"]), new_key, remove_mask)
         if n >= 2:
             state["n_sub"] += 1
             state["key"] = new_key
@@ -398,13 +506,13 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
 
     server = create_sdk_mcp_server(name="msp", version="1.0.0",
                                    tools=[check_genes, check_qc_scores, check_stability,
-                                          subcluster, submit_inspection])
+                                          check_deg, subcluster, submit_inspection])
     options = ClaudeAgentOptions(
         mcp_servers={"msp": server},
         allowed_tools=["Read", "Glob", "Grep",
                        "mcp__msp__check_genes", "mcp__msp__check_qc_scores",
-                       "mcp__msp__check_stability", "mcp__msp__subcluster",
-                       "mcp__msp__submit_inspection"],
+                       "mcp__msp__check_stability", "mcp__msp__check_deg",
+                       "mcp__msp__subcluster", "mcp__msp__submit_inspection"],
         permission_mode="bypassPermissions",
         max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
         system_prompt=_system_prompt(outdir, cluster_key,
@@ -458,8 +566,12 @@ def inspect_clusters(outdir, species=None, language="English", cluster_key=None,
                   if k.startswith("msp_leiden_r") and k != cluster_key]
     species = species or (msp_meta.get("species") or None)
 
+    remove_mask = _load_removal_mask(outdir, ad)
+    print(f"== {int(remove_mask.sum())}/{ad.n_obs} cells already recommend_removal "
+          "(pre-annotation filtering) — excluded from check_deg / subcluster DE", flush=True)
+
     proposal = asyncio.run(_run_agent(ad, outdir, cluster_key, other_keys, batch_col,
-                                      species, language, model, effort, max_turns))
+                                      species, language, model, effort, max_turns, remove_mask))
     _apply_proposal(ad, proposal["cluster_key"], proposal)
     _plot_verdicts(ad, os.path.join(outdir, "figures"))
     tmp = os.path.join(outdir, "integrated.tmp.h5ad")

@@ -1,13 +1,41 @@
-[project]
-name = "msp"
-version = "0.1.0"
-description = "Multi-sample scRNA-seq integration pipeline (harmony) over osp per-sample outputs"
-requires-python = ">=3.10"
-dependencies = ["scanpy", "harmonypy", "anndata", "pandas", "numpy", "scikit-learn", "scipy", "seaborn"]
-
 [build-system]
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "msp"
+version = "0.2.0"
+description = "Multi-sample-pipeline: harmony integration of osp per-sample outputs, cluster QC inspection and cell-type annotation agents, self-contained HTML report"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "chansigit", email = "chansigit@gmail.com" }]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "scanpy",
+    "anndata",
+    "igraph",
+    "harmonypy>=0.2.0",   # torch-based fork; Z_corr orientation handled in msp.integrate
+    "torch",
+    "standissect-lite>=0.2.0",
+    "pandas",
+    "numpy",
+    "scipy",
+    "scikit-learn",
+    "matplotlib",
+    "seaborn",
+    "adjustText",
+]
+
+[project.optional-dependencies]
+agent = ["claude-agent-sdk"]
+
+[project.urls]
+Homepage = "https://github.com/chansigit/msp"
 
 [tool.setuptools]
 packages = ["msp"]

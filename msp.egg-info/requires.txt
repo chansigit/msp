@@ -1,6 +1,16 @@
 scanpy
-harmonypy
 anndata
+igraph
+harmonypy>=0.2.0
+torch
+standissect-lite>=0.2.0
 pandas
 numpy
+scipy
 scikit-learn
+matplotlib
+seaborn
+adjustText
+
+[agent]
+claude-agent-sdk
