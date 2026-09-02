@@ -16,9 +16,9 @@ osp per-sample ──▶ integrate ──▶ inspect ──▶ annotate
 ## Install
 
 ```bash
-pip install git+https://github.com/chansigit/msp.git
+pip install msp-sc                     # PyPI name; `import msp`
 # with the agent steps (needs claude-agent-sdk + Claude Code CLI credentials):
-pip install "msp[agent] @ git+https://github.com/chansigit/msp.git"
+pip install "msp-sc[agent]"            # + claude-agent-sdk for inspect / annotate
 ```
 
 Dependencies of note: `harmonypy>=0.2.0` (the torch-based fork — set

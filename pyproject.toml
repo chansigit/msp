@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "msp"
+name = "msp-sc"   # PyPI distribution name (plain "msp" is taken); the import name stays `msp`
 version = "0.2.0"
 description = "Multi-sample-pipeline: harmony integration of osp per-sample outputs, cluster QC inspection and cell-type annotation agents, self-contained HTML report"
 readme = "README.md"
@@ -21,8 +21,7 @@ dependencies = [
     "igraph",
     "harmonypy==0.2.0",   # the torch-based release msp was validated on (PyPI 2.0.0 exists, untested; Z_corr orientation handled in msp.integrate)
     "torch",
-    # PyPI only carries standissect-lite 0.1.0; 0.2.0 (needed) lives on GitHub
-    "standissect-lite @ git+https://github.com/chansigit/standissect-lite.git",
+    "standissect-lite>=0.2.0",
     "pandas",
     "numpy",
     "scipy",
