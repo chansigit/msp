@@ -35,6 +35,9 @@ python -m msp A/clustered.h5ad B/clustered.h5ad --batch-col project --outdir msp
 python -m msp A/clustered.h5ad B/clustered.h5ad --batch-col project --outdir msp_out \
     --species human --annotate --model claude-sonnet-5
 
+# re-integrate one merged h5ad (e.g. a previous round's survivors) instead of per-sample inputs
+python -m msp --from-h5ad prev_round/annotated_zmip.h5ad --batch-col project --outdir msp_out2 --annotate --model claude-sonnet-5
+
 # individual steps
 python -m msp.inspect  msp_out --model claude-sonnet-5   # QC verdicts
 python -m msp.annotate msp_out --model claude-sonnet-5   # identity + merges + removal (after inspect)
