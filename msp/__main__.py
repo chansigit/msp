@@ -12,12 +12,16 @@ import argparse
 import os
 import sys
 
-from .integrate import run_multi_sample_pipeline
+from .integrate import integrate_adata, run_multi_sample_pipeline
 from .report import generate_report
 
 parser = argparse.ArgumentParser(prog="msp", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("inputs", nargs="+", help="per-sample clustered.h5ad files (osp outputs)")
+parser.add_argument("inputs", nargs="*", help="per-sample clustered.h5ad files (osp outputs)")
+parser.add_argument("--from-h5ad", default=None, metavar="H5AD",
+                    help="instead of per-sample inputs: one already-merged h5ad with layers['counts'] "
+                         "(e.g. a previous round's annotated_zmip.h5ad) — re-integrated from scratch via "
+                         "integrate_adata; prior obs columns ride along as annotation evidence")
 parser.add_argument("--batch-col", required=True, help="obs column naming the sample/batch")
 parser.add_argument("--outdir", required=True)
 parser.add_argument("--species", default=None, help="stored in uns['msp']; context for the agents")
@@ -45,6 +49,8 @@ parser.add_argument("--max-turns", type=int, default=None,
 parser.add_argument("--force", action="store_true", help="redo steps whose outputs already exist")
 args = parser.parse_args()
 
+if bool(args.inputs) == bool(args.from_h5ad):
+    sys.exit("give either per-sample inputs or --from-h5ad, not both / neither")
 if args.annotate:
     args.inspect = True
 if args.inspect and not {1.0, 2.0} <= set(args.resolutions):
@@ -79,11 +85,15 @@ def _done(*names):
 
 
 if args.force or not _done("integrated.h5ad", "report.html"):
-    _, summary = run_multi_sample_pipeline(
-        args.inputs, batch_col=args.batch_col, outdir=out,
-        species=args.species, resolutions=tuple(args.resolutions), n_top_genes=args.n_top_genes,
-        n_pcs=args.n_pcs, n_neighbors=args.n_neighbors, harmony_kwargs=harmony_kwargs,
-    )
+    kw = dict(species=args.species, resolutions=tuple(args.resolutions), n_top_genes=args.n_top_genes,
+              n_pcs=args.n_pcs, n_neighbors=args.n_neighbors, harmony_kwargs=harmony_kwargs)
+    if args.from_h5ad:
+        import scanpy as sc
+
+        ad = sc.read_h5ad(args.from_h5ad)
+        _, summary = integrate_adata(ad, args.batch_col, out, inputs=[args.from_h5ad], **kw)
+    else:
+        _, summary = run_multi_sample_pipeline(args.inputs, batch_col=args.batch_col, outdir=out, **kw)
     print(summary)
     print(f"report: {generate_report(out)}")
 else:
