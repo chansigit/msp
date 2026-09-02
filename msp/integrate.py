@@ -703,17 +703,47 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
                               resolutions=(0.3, 1.0, 2.0), n_top_genes=2000,
                               n_pcs=50, n_neighbors=15, counts_layer="counts",
                               top_n_de=50, harmony_kwargs=None):
-    """harmony_kwargs: passed straight to harmonypy.run_harmony on top of
-    msp's fixed random_state=0/device — theta (diversity penalty, default 2
-    per covariate), lamb (ridge, default 1; -1 = auto-estimate), sigma (soft
-    k-means width, 0.1), nclust (default min(round(N/30), 100)), tau,
-    block_size, max_iter_harmony (10), max_iter_kmeans (20),
-    epsilon_cluster, epsilon_harmony, alpha. Recorded in uns["msp"]["harmony"]."""
-    harmony_kwargs = dict(harmony_kwargs or {})
+    """Load osp per-sample outputs, merge, and run integrate_adata on the
+    result — see there for the parameters. Returns (ad, summary)."""
     os.makedirs(outdir, exist_ok=True)
     ad = load_and_merge(inputs, batch_col, counts_layer=counts_layer)
+    return integrate_adata(ad, batch_col, outdir, species=species, resolutions=resolutions,
+                           n_top_genes=n_top_genes, n_pcs=n_pcs, n_neighbors=n_neighbors,
+                           counts_layer=counts_layer, top_n_de=top_n_de,
+                           harmony_kwargs=harmony_kwargs, inputs=inputs)
+
+
+def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 2.0),
+                    n_top_genes=2000, n_pcs=50, n_neighbors=15, counts_layer="counts",
+                    top_n_de=50, harmony_kwargs=None, inputs=(), meta_extra=None):
+    """The integration core on an in-memory AnnData: X is reset from
+    layers[counts_layer] (so any prior normalization/embedding on the object
+    is discarded), then normalize → HVG per batch → PCA → harmony → neighbors
+    → leiden at each resolution → UMAP → standissect-lite → QC/DEG artifacts
+    → integrated.h5ad + figures in outdir. Used by run_multi_sample_pipeline
+    on merged osp outputs and by zmip on one lineage subset of annotated.h5ad
+    (same artifacts, same report).
+
+    harmony_kwargs: passed straight to harmonypy.run_harmony on top of msp's
+    fixed random_state=0/device — theta (diversity penalty, default 2 per
+    covariate), lamb (ridge, default 1; -1 = auto-estimate), sigma (soft
+    k-means width, 0.1), nclust (default min(round(N/30), 100)), tau,
+    block_size, max_iter_harmony (10), max_iter_kmeans (20),
+    epsilon_cluster, epsilon_harmony, alpha. Recorded in uns["msp"]["harmony"].
+    meta_extra: extra keys merged into uns["msp"] (zmip records its lineage)."""
+    harmony_kwargs = dict(harmony_kwargs or {})
+    os.makedirs(outdir, exist_ok=True)
+    if counts_layer not in ad.layers:
+        raise ValueError(f"missing layers[{counts_layer!r}] — raw counts are required")
+    ad.X = ad.layers[counts_layer].copy()
+    for k in list(ad.obsm.keys()):
+        del ad.obsm[k]
+    for k in list(ad.obsp.keys()):
+        del ad.obsp[k]
+    ad.uns.clear()
+    ad.raw = None
     n_samples = ad.obs[batch_col].astype(str).nunique()
-    print(f"== merged: {ad.shape}, {n_samples} samples (batch={batch_col!r})", flush=True)
+    print(f"== integrating: {ad.shape}, {n_samples} samples (batch={batch_col!r})", flush=True)
 
     print("== normalize/log1p", flush=True)
     sc.pp.normalize_total(ad, target_sum=1e4)
@@ -816,6 +846,7 @@ def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
         # (empty dict = harmonypy defaults: theta=2/covariate, lamb=1,
         # sigma=0.1, nclust=min(round(N/30),100), max_iter_harmony=10)
         "harmony": {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in harmony_kwargs.items()},
+        **(meta_extra or {}),
     }
 
     print("== figures", flush=True)
