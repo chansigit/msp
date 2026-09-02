@@ -377,7 +377,11 @@ the same identity), set merge_target to that cluster's id; otherwise null. Merge
 clusters given the same fine label MUST also be merged (or given distinct fine labels), and a merged \
 group must share one coarse and one fine label — finalize_annotation checks this and tells you what to fix.
 Coarse labels group fine labels: one fine label belongs to exactly one coarse label across the dataset. \
-Keep the vocabulary consistent across clusters (same population → literally the same string).
+Keep the vocabulary consistent across clusters (same population → literally the same string). If prior \
+label columns named r<NN>_zmip_ann_coarse / r<NN>_msp_ann_coarse exist, they are the PREVIOUS ROUND of this \
+same pipeline on these same cells: reuse their coarse vocabulary verbatim for the same populations (a lineage \
+called 'Fibroblast' last round stays 'Fibroblast', not 'Stromal fibroblast'), and change a label only where \
+the evidence contradicts it — label churn between rounds is noise, not progress.
 
 All relevant files (paths relative to the working directory — Read exactly these, no guessing):
 {_file_inventory(outdir)}
