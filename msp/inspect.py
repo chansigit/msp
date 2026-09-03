@@ -332,10 +332,14 @@ def _file_inventory(outdir):
     return "\n".join(f"- {p}" for p in paths)
 
 
-def _system_prompt(outdir, cluster_key, clusters, batch_col, species, language):
+def _system_prompt(outdir, cluster_key, clusters, batch_col, species, language, n_batches=None):
     context = (f"Context — species: {species}." if species else
                "No species context was provided — infer cautiously and say so.")
     context += f" Sample/batch column: {batch_col!r}."
+    if n_batches is not None and n_batches < 2:
+        context += (" THIS DATASET HAS A SINGLE SAMPLE (harmony was skipped): test (c) composition carries no "
+                    "information — n_samples=1 and share=1.00 are expected for every cluster, never evidence of "
+                    "a batch artifact, and the verdict artifact-batch is unavailable; decide on (a), (b), (d), (e).")
     return f"""You are a single-cell RNA-seq integration QC expert. The working directory is an \
 msp (multi-sample pipeline) integration output. Task: put EVERY integrated cluster \
 ({cluster_key}, {len(clusters)} clusters: {clusters}) through the five-test battery and submit \
@@ -519,7 +523,8 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
         max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
         system_prompt=_system_prompt(outdir, cluster_key,
                                      _cluster_order(ad.obs[cluster_key].astype(str)),
-                                     batch_col, species, language),
+                                     batch_col, species, language,
+                                     n_batches=int(ad.obs[batch_col].nunique())),
         cwd=os.path.abspath(outdir),
         max_turns=max_turns,
         **({"model": model} if model else {}),

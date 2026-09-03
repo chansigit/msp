@@ -350,10 +350,14 @@ def _plot(ad_full, ad_kept, figdir):
 
 # ---------------------------------------------------------------- agent
 
-def _system_prompt(outdir, clusters, batch_col, species, prior_cols, language):
+def _system_prompt(outdir, clusters, batch_col, species, prior_cols, language, n_batches=None):
     context = (f"Context — species: {species}." if species else
                "No species context was provided — infer cautiously and say so.")
     context += f" Sample/batch column: {batch_col!r}."
+    if n_batches is not None and n_batches < 2:
+        context += (" THIS DATASET HAS A SINGLE SAMPLE (harmony was skipped): the per-cluster sample lines are "
+                    "trivially 1/1 present, share 1.00 — never use sample composition as evidence for or against "
+                    "an identity, a merge or a removal; rely on markers, QC axes, PAGA neighbourhood and priors.")
     priors = (", ".join(prior_cols) if prior_cols else "none detected")
     return f"""You are a single-cell RNA-seq cell-type annotation expert. The working directory is an \
 msp (multi-sample pipeline) integration output that has already been through per-cluster QC \
@@ -528,7 +532,8 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
         permission_mode="bypassPermissions",
         disallowed_tools=["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch"],
         max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
-        system_prompt=_system_prompt(outdir, clusters, batch_col, species, prior_cols, language),
+        system_prompt=_system_prompt(outdir, clusters, batch_col, species, prior_cols, language,
+                                     n_batches=int(ad.obs[batch_col].nunique())),
         cwd=os.path.abspath(outdir),
         max_turns=max_turns,
         **({"model": model} if model else {}),

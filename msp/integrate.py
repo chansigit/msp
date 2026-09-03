@@ -773,13 +773,22 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
     auto = ("cuda" if torch.cuda.is_available() else
             "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
             else "cpu")
-    print(f"== harmony on {device or auto}{'' if device else ' (auto-detected)'}"
-          + (f", overrides {harmony_kwargs}" if harmony_kwargs else ", harmonypy defaults"), flush=True)
-    ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col,
-                               random_state=0, device=device, **harmony_kwargs)
-    Z = np.asarray(ho.Z_corr)
-    if Z.shape[0] != ad.n_obs:
-        Z = Z.T
+    if n_samples < 2:
+        # nothing to correct across: one sample / one batch level. The rest of
+        # the chain (neighbors, leiden, UMAP, QC tables, agents) runs unchanged
+        # on plain PCA so single-sample datasets go through the same steps
+        print("== harmony skipped: single batch — X_pca_harmony = X_pca", flush=True)
+        Z = np.array(ad.obsm["X_pca"], copy=True)
+        harmony_record = "skipped: single batch"
+    else:
+        print(f"== harmony on {device or auto}{'' if device else ' (auto-detected)'}"
+              + (f", overrides {harmony_kwargs}" if harmony_kwargs else ", harmonypy defaults"), flush=True)
+        ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col,
+                                   random_state=0, device=device, **harmony_kwargs)
+        Z = np.asarray(ho.Z_corr)
+        if Z.shape[0] != ad.n_obs:
+            Z = Z.T
+        harmony_record = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in harmony_kwargs.items()}
     if Z.shape != (ad.n_obs, n_comps):
         raise ValueError(f"harmony returned shape {Z.shape}, expected ({ad.n_obs}, {n_comps})")
     ad.obsm["X_pca_harmony"] = Z
@@ -845,7 +854,8 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
         # what actually reached harmonypy.run_harmony beyond its defaults
         # (empty dict = harmonypy defaults: theta=2/covariate, lamb=1,
         # sigma=0.1, nclust=min(round(N/30),100), max_iter_harmony=10)
-        "harmony": {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in harmony_kwargs.items()},
+        "harmony": harmony_record,   # kwargs beyond harmonypy defaults, or "skipped: single batch"
+        "n_batches": int(n_samples),
         **(meta_extra or {}),
     }
 
