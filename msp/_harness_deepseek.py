@@ -139,6 +139,11 @@ def _run_sync(*, dsh_bin: str, cwd: str, dsh_home: str, provider: str, model: st
         patches=(patch_path,),
         dsh_bin=dsh_bin,
         env={"DSH_SYSTEM_PROMPT": system_prompt} if system_prompt else {},
+        # default 30s has flaked on the composed profile (mcp-client + pi-ai
+        # insert on top of sdk-minimal has more to boot than the bare
+        # profile); retry_transient covers a genuine timeout too, but a
+        # longer budget means fewer retries in the common case.
+        initialize_timeout_seconds=90.0,
     ) as harness:
         return harness.run(prompt, session_id=session_id)
 
