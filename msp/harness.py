@@ -58,7 +58,7 @@ LIMIT_PATTERN = re.compile(
 TRANSIENT_PATTERN = re.compile(
     r"control request timeout|broken pipe|connection reset|econnreset|epipe|"
     r"process exited unexpectedly|failed to start|connection closed|stdout closed|"
-    r"transportclosed",
+    r"transportclosed|initialize timed out|timed out waiting|returned an error result",
     re.IGNORECASE,
 )
 MAX_TRANSIENT_ATTEMPTS = 5
@@ -137,6 +137,24 @@ class AgentIncompleteError(RuntimeError):
 
 def backend_name() -> str:
     return os.environ.get("HARNESS", "claude")
+
+
+_DEFAULT_MODEL = {
+    "claude": "claude-sonnet-5",
+    # HARNESS=deepseek's default provider is Doubao via dsh's pi-ai adapter
+    # (see _harness_deepseek); DSH_PROVIDER=deepseek-official switches to a
+    # real DeepSeek model, in which case override MODEL too.
+    "deepseek": "doubao-seed-2-1-turbo-260628",
+}
+
+
+def default_model() -> str:
+    """A model id a standalone call (no caller-supplied model=...) can fall
+    back to — MODEL env, else the HARNESS-appropriate default. Callers that
+    already receive a resolved model string (e.g. from ecarsi) never need
+    this; it exists so this package's own CLI works un-orchestrated."""
+    backend = backend_name()
+    return os.environ.get("MODEL", _DEFAULT_MODEL.get(backend, _DEFAULT_MODEL["claude"]))
 
 
 async def run_agent(
