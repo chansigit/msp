@@ -93,8 +93,9 @@ python -m msp A/clustered.h5ad B/clustered.h5ad \
 
 `--annotate` includes inspection. To request inspection alone, use `--inspect`.
 The `--harness` option selects the agent runtime; `--model` selects its model.
-Claude and DeepSeek Harness runtimes are also supported, with their own
-installation and authentication requirements.
+Claude and DeepSeek Harness runtimes are also supported. For runtime-specific
+installation, authentication, and configuration, see the
+[Agent Harness Bridge guide](https://github.com/chansigit/agent-harness-bridge#configuration).
 
 ## Find and understand your results
 
