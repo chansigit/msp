@@ -53,6 +53,7 @@ import scipy.sparse as sp
 
 from .harness import default_model
 from .report import generate_report
+from .steps import begin_step, complete_step, require_upstream_ready
 
 _OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le}
 
@@ -82,7 +83,8 @@ def _load_removal_mask(outdir, ad):
     path = os.path.join(outdir, "preannotation_removal.csv")
     if not os.path.exists(path):
         return np.zeros(ad.n_obs, dtype=bool)
-    df = pd.read_csv(path).set_index("cell")
+    # Cell IDs are opaque strings: preserve leading zeros and literal "NA" IDs.
+    df = pd.read_csv(path, dtype={"cell": str}, keep_default_na=False).set_index("cell")
     return df["recommend_removal"].reindex(ad.obs_names).fillna(False).to_numpy()
 
 
@@ -129,7 +131,7 @@ def _qc_table(ad, cluster_key, batch_col):
         row = [int(m.sum()), int(sub[batch_col].nunique()),
                f"{sub[batch_col].value_counts(normalize=True).iloc[0]:.2f}"]
         if "_qc_action" in ad.obs:
-            act = sub["_qc_action"].astype(str)
+            act = sub["_qc_action"].dropna().astype(str)
             row += [f"{(act == 'flag').mean():.2f}", f"{(act == 'drop').mean():.2f}"]
         row += [f"{sub[col].median():.3g}|{sub[col].quantile(0.9):.3g}" for col in cols]
         rows[c] = row
@@ -140,7 +142,7 @@ def _qc_table(ad, cluster_key, batch_col):
     df = pd.DataFrame(rows, index=index).T
     df.index.name = cluster_key
     return ("per-cluster QC (median|p90) and composition "
-            "(frac_* inherited from per-sample annotation):\n" + df.to_string())
+            "(frac_* among cells with inherited QC; nan means unavailable):\n" + df.to_string())
 
 
 def _stability_table(ad, cluster, cluster_key, other_keys):
@@ -163,11 +165,14 @@ def _stability_table(ad, cluster, cluster_key, other_keys):
 
 def _load_paga_neighbors(outdir, key):
     """{cluster: [top-3 PAGA neighbours]} as integrate wrote them (paga_neighbors_<key>.csv);
-    {} when the file is absent (older output, or a key integrate never saw)."""
+    {} when absent or empty (including headerless files from older outputs)."""
     path = os.path.join(outdir, f"paga_neighbors_{key}.csv")
     if not os.path.exists(path):
         return {}
-    df = pd.read_csv(path, dtype=str)
+    try:
+        df = pd.read_csv(path, dtype=str)
+    except pd.errors.EmptyDataError:
+        return {}
     nb = {}
     for c, g in df.groupby("cluster", sort=False):
         nb[str(c)] = list(g.sort_values("rank", key=lambda s: s.astype(int))["neighbor"].astype(str))
@@ -238,17 +243,40 @@ def _format_deg(cluster, ref_desc, df, n_total=None, filters=""):
     return head + "\n  " + (body if len(df) else "(none)")
 
 
-def _parse_reference(reference):
+def _parse_reference(reference, clusters=None):
+    """Parse the existing string API without splitting an exact subcluster ID.
+
+    CSV quoting disambiguates pooled IDs containing commas: '"5,0","5,1"'.
+    Without a cluster vocabulary, retain the legacy comma-list interpretation.
+    """
+    import csv
+
     reference = str(reference or "rest").strip() or "rest"
     if reference == "rest":
         return "rest"
-    return tuple(sorted({g.strip() for g in reference.split(",") if g.strip()}))
+    known = None if clusters is None else {str(c) for c in clusters}
+    if known is not None and reference in known:
+        return (reference,)
+    if known is not None and '"' not in reference:
+        parts = [p.strip() for p in reference.split(",")]
+        if any(",".join(parts[i:j]) in known
+               for i in range(len(parts)) for j in range(i + 2, len(parts) + 1)):
+            raise ValueError('ambiguous reference; CSV-quote each ID, e.g. \'"5,0","5,1"\'')
+    try:
+        groups = tuple(sorted({g.strip() for g in next(csv.reader(
+            [reference], skipinitialspace=True, strict=True)) if g.strip()}))
+    except csv.Error as exc:
+        raise ValueError(f"invalid reference CSV: {exc}") from exc
+    if not groups or (known is not None and any(g not in known for g in groups)):
+        raise ValueError('unknown reference cluster(s); use current IDs and CSV-quote IDs containing '
+                         'commas, e.g. \'"5,0","5,1"\'')
+    return groups
 
 
 def _deg_table(ad, cluster_key, cluster, reference, top_n, remove_mask):
     """One-shot check_deg text (no cache) — kept for callers outside the
     agent loops; the agents go through DegCache."""
-    ref = _parse_reference(reference)
+    ref = _parse_reference(reference, ad.obs[cluster_key].astype(str).unique())
     df = _deg_frame(ad, cluster_key, cluster, ref, remove_mask)
     if df is None:
         return f"cluster {cluster!r} has no cells left once recommend_removal cells are excluded"
@@ -385,8 +413,13 @@ class DegTables:
         rows = self.conn.execute(sql, params).fetchall()
         n_total = len(rows)
         if cluster:  # per view, the best top_n of the rows that pass
-            per_view = {}
-            rows = [r for r in rows if per_view.setdefault(r[1], []).append(r) or len(per_view[r[1]]) <= top_n]
+            per_view, selected = {}, []
+            for row in rows:
+                count = per_view.get(row[1], 0)
+                if count < top_n:
+                    selected.append(row)
+                    per_view[row[1]] = count + 1
+            rows = selected
         else:
             rows = rows[:top_n]
         if not rows:
@@ -465,8 +498,8 @@ class DegCache:
     one-vs-rest wilcoxon on 59k cells costs ~35 s, so a 40-cluster annotate
     session used to spend 5-10 min recomputing tables it could have read.
     Numbers are identical either way (same test, same exclusion, same
-    use_raw, same ranking); only top_n beyond the tabulated 50 rows falls
-    back to computing."""
+    use_raw, same ranking). If too few cached rows pass the requested filters,
+    compute the full table before claiming that fewer genes are available."""
 
     def __init__(self, ad, outdir, remove_mask, label="check_deg"):
         self.ad, self.outdir, self.mask, self.label = ad, outdir, np.asarray(remove_mask, dtype=bool), label
@@ -500,7 +533,7 @@ class DegCache:
         return self._csv_rows(key, "local", cluster)
 
     def table(self, key, cluster, reference, top_n, min_logfc=None, max_padj=None, min_pct1=None, max_pct2=None):
-        ref = _parse_reference(reference)
+        ref = _parse_reference(reference, self.ad.obs[key].astype(str).unique())
         mk = (key, cluster, ref)
         hit = self._memo.get(mk)
         if hit is not None and (hit[1] or top_n <= len(hit[0])):
@@ -522,8 +555,18 @@ class DegCache:
         ref_desc = "rest" if ref == "rest" else ",".join(ref)
         print(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: {source}", flush=True)
         kept = _filter_deg(df, min_logfc, max_padj, min_pct1, max_pct2)
-        return _format_deg(cluster, ref_desc, kept.head(top_n), len(kept),
+        if not self._memo[mk][1] and len(kept) < top_n:
+            df = _deg_frame(self.ad, key, cluster, ref, self.mask)
+            if df is None:
+                return f"cluster {cluster!r} has no cells left once recommend_removal cells are excluded"
+            self._memo[mk] = (df, True)
+            self.n_computed += 1
+            kept = _filter_deg(df, min_logfc, max_padj, min_pct1, max_pct2)
+            print(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: computed after filtering", flush=True)
+        complete = self._memo[mk][1]
+        text = _format_deg(cluster, ref_desc, kept.head(top_n), len(kept) if complete else None,
                            _filter_desc(min_logfc, max_padj, min_pct1, max_pct2))
+        return text if complete else text + "\n(cached ranked prefix; more genes may pass)"
 
 
 def _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
@@ -597,10 +640,18 @@ def _validate_proposal(proposal, clusters, obs):
             problems.append(f'verdict must be one of {_VERDICTS}: {e}')
         if e["action"] not in ("keep", "flag", "drop"):
             problems.append(f'action must be keep|flag|drop: {e}')
+        if e["confidence"] not in ("high", "medium", "low"):
+            problems.append(f'confidence must be high|medium|low: {e}')
         if not isinstance(e["tests"], dict) or not all(
-                k in e["tests"] for k in ("markers", "qc", "composition", "geometry", "stability")):
-            problems.append(f'tests must cover markers/qc/composition/geometry/stability: {e}')
+                isinstance(e["tests"].get(k), str) and e["tests"][k].strip()
+                for k in ("markers", "qc", "composition", "geometry", "stability")):
+            problems.append(f'tests must provide non-empty text for markers/qc/composition/geometry/stability '
+                            f'(explain unavailable evidence explicitly): {e}')
+        if not isinstance(e["rationale"], str) or not e["rationale"].strip():
+            problems.append(f'rationale must be non-empty text: {e}')
         cluster = str(e.get("cluster"))
+        if cluster not in clusters:
+            problems.append(f"unknown cluster entry: {cluster!r}")
         if cluster in seen:
             problems.append(f"duplicate cluster entry: {cluster!r}")
         seen.add(cluster)
@@ -619,16 +670,21 @@ def _validate_proposal(proposal, clusters, obs):
         if str(a.get("cluster")) not in clusters:
             problems.append(f"cell_action cluster {a.get('cluster')!r} is not a current cluster id: {a}")
         metric = a.get("metric")
-        if metric not in obs.columns or not pd.api.types.is_numeric_dtype(obs[metric]):
+        if not isinstance(metric, str) or metric not in obs.columns or not pd.api.types.is_numeric_dtype(obs[metric]):
             problems.append(f'cell_action "metric" must be a numeric obs column: {a}')
-        if a.get("op") not in _OPS:
+        if not isinstance(a.get("op"), str) or a["op"] not in _OPS:
             problems.append(f'cell_action "op" must be one of {sorted(_OPS)}: {a}')
         try:
-            float(a.get("value"))
-        except (TypeError, ValueError):
-            problems.append(f'cell_action "value" must be numeric: {a}')
+            if isinstance(a.get("value"), bool) or not np.isfinite(float(a.get("value"))):
+                raise ValueError("not a finite number")
+        except (TypeError, ValueError, OverflowError):
+            problems.append(f'cell_action "value" must be finite and numeric: {a}')
         if a.get("action") not in ("drop", "flag"):
             problems.append(f'cell_action "action" must be drop|flag: {a}')
+        if a.get("reason") not in ("doublet", "ambient", "debris", "low-quality", "other"):
+            problems.append(f'cell_action "reason" must be doublet|ambient|debris|low-quality|other: {a}')
+        if not isinstance(a.get("note"), str) or not a["note"].strip():
+            problems.append(f'cell_action "note" must be non-empty text: {a}')
     return problems
 
 
@@ -801,13 +857,12 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
             return {"content": [{"type": "text", "text": f"unknown cluster {c!r}; current: {current_clusters()}"}],
                     "is_error": True}
         reference = str(args.get("reference") or "rest").strip() or "rest"
-        if reference != "rest":
-            ref_groups = [g.strip() for g in reference.split(",") if g.strip()]
-            unknown = [g for g in ref_groups if g not in current_clusters()]
-            if unknown:
-                return {"content": [{"type": "text",
-                                     "text": f"unknown reference cluster(s) {unknown}; current: {current_clusters()}"}],
-                        "is_error": True}
+        try:
+            ref = _parse_reference(reference, current_clusters())
+            if ref != "rest" and c in ref:
+                raise ValueError("reference must exclude the target cluster")
+        except ValueError as exc:
+            return {"content": [{"type": "text", "text": str(exc)}], "is_error": True}
         return {"content": [{"type": "text", "text": deg.table(
             state["key"], c, reference, int(args.get("top_n") or 20), args.get("min_logfc"), args.get("max_padj"),
             args.get("min_pct1"), args.get("max_pct2"))}]}
@@ -828,7 +883,7 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
     async def submit_inspection(args):
         try:
             proposal = json.loads(args["proposal_json"])
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, TypeError) as e:
             return {"content": [{"type": "text", "text": f"JSON parse error, fix and resubmit: {e}"}],
                     "is_error": True}
         problems = _validate_proposal(proposal, current_clusters(), ad.obs)
@@ -861,7 +916,8 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
                  "precomputed deg_global_*/deg_local_* CSVs never saw. reference='rest' (default) is "
                  "one-vs-rest against every other current cluster, same semantics as deg_global_*. Pass "
                  "a comma-separated list of other cluster ids as reference instead for a pooled-group "
-                 "comparison (e.g. a subcluster vs its siblings, or vs specific PAGA neighbors), same "
+                 'comparison. A single exact ID such as 5,1 is accepted; CSV-quote pooled subcluster IDs '
+                 '(e.g. "5,0","5,1"). Such pooled comparisons use the same '
                  "semantics as deg_local_*. Thresholds (0/empty = off): min_logfc, max_padj, min_pct1, "
                  "max_pct2 — ask for exactly the gene list you need (e.g. min_logfc=1, max_padj=1e-10). "
                  "Results are cached per (cluster, reference); one-vs-rest on the base clustering is answered "
@@ -903,6 +959,7 @@ def inspect_clusters(outdir, species=None, language="English", cluster_key=None,
     proposal onto obs["_msp_action"]/obs["_msp_verdict"] in integrated.h5ad,
     renders the verdict UMAP, refreshes report.html. Returns the proposal.
     """
+    require_upstream_ready(outdir, "inspect")
     ad = sc.read_h5ad(os.path.join(outdir, "integrated.h5ad"))
     cluster_key = cluster_key or _detect_primary_key(outdir)
     msp_meta = ad.uns.get("msp", {})
@@ -917,6 +974,11 @@ def inspect_clusters(outdir, species=None, language="English", cluster_key=None,
     print(f"== {int(remove_mask.sum())}/{ad.n_obs} cells already recommend_removal "
           "(pre-annotation filtering) — excluded from check_deg / subcluster DE", flush=True)
 
+    begin_step(outdir, "inspect")
+    # Do not present the previous inspection's verdicts as fresh evidence.
+    for key in ("_msp_action", "_msp_verdict"):
+        if key in ad.obs:
+            del ad.obs[key]
     proposal = asyncio.run(_run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, language,
                                       model or default_model(), effort, max_turns, remove_mask))
     _apply_proposal(ad, proposal["cluster_key"], proposal)
@@ -924,6 +986,7 @@ def inspect_clusters(outdir, species=None, language="English", cluster_key=None,
     tmp = os.path.join(outdir, "integrated.tmp.h5ad")
     ad.write_h5ad(tmp)
     os.replace(tmp, os.path.join(outdir, "integrated.h5ad"))
+    complete_step(outdir, "inspect")
     print(f"== report refreshed: {generate_report(outdir)}", flush=True)
     return proposal
 

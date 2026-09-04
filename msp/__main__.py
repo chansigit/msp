@@ -3,9 +3,10 @@ UMAP → QC/DEG tables → HTML report), end to end.
 
 With --inspect, the per-cluster QC inspection agent (msp.inspect) runs
 afterwards; with --annotate, the cell-type annotation agent (msp.annotate)
-runs after that (both need the optional agent dependencies). Each step is
-skipped when its contract file already exists, so re-running the same
-command resumes where it stopped; --force redoes everything.
+runs after that (both need the optional agent dependencies). Completed
+steps resume from their contract files; interrupted steps remain pending.
+Rerunning a step invalidates its downstream results; --force reruns the
+requested steps. Report rendering does not trigger computation.
 """
 
 import argparse
@@ -14,6 +15,7 @@ import sys
 
 from .integrate import integrate_adata, run_multi_sample_pipeline
 from .report import generate_report, write_report_context
+from .steps import step_pending
 
 parser = argparse.ArgumentParser(prog="msp", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -99,9 +101,24 @@ def _integration_matches():
     if not os.path.exists(path):
         return False
     try:
+        import numpy as np
         import scanpy as sc
 
-        meta = sc.read_h5ad(path, backed="r").uns.get("msp", {})
+        def plain(value):
+            # H5AD stores lists as arrays, including lists inside Harmony options.
+            if isinstance(value, dict):
+                return {k: plain(v) for k, v in value.items()}
+            if isinstance(value, (np.ndarray, np.generic)):
+                return plain(value.tolist())
+            if isinstance(value, (list, tuple)):
+                return [plain(v) for v in value]
+            return value
+
+        integrated = sc.read_h5ad(path, backed="r")
+        try:
+            meta = plain(integrated.uns.get("msp", {}))
+        finally:
+            integrated.file.close()
         expected_harmony = ("skipped: single batch"
                             if meta.get("n_batches") == 1 else harmony_kwargs)
         expected = {
@@ -114,12 +131,13 @@ def _integration_matches():
             "harmony": expected_harmony,
             "inputs": [str(p) for p in (args.inputs or [args.from_h5ad])],
         }
-        return all(meta.get(k) == v for k, v in expected.items())
-    except Exception:
+        return all(meta.get(k) == plain(v) for k, v in expected.items())
+    except Exception as exc:
+        print(f"[resume] could not verify integration metadata: {exc}", file=sys.stderr)
         return False
 
 
-if args.force or not _done("integrated.h5ad", "report.html") or not _integration_matches():
+if args.force or step_pending(out, "integrate") or not _done("integrated.h5ad") or not _integration_matches():
     kw = dict(species=args.species, resolutions=tuple(args.resolutions), n_top_genes=args.n_top_genes,
               n_pcs=args.n_pcs, n_neighbors=args.n_neighbors, harmony_kwargs=harmony_kwargs)
     if args.from_h5ad:
@@ -130,9 +148,11 @@ if args.force or not _done("integrated.h5ad", "report.html") or not _integration
     else:
         _, summary = run_multi_sample_pipeline(args.inputs, batch_col=args.batch_col, outdir=out, **kw)
     print(summary)
-    print(f"report: {generate_report(out)}")
 else:
-    print(f"[resume] integration already done in {out} (integrated.h5ad + report.html) — skipping")
+    print(f"[resume] integration already done in {out} (integrated.h5ad) — skipping")
+
+# Rendering never determines whether an expensive computation must be repeated.
+print(f"report: {generate_report(out)}")
 
 if args.inspect:
     from .harness import backend_name, default_model
@@ -143,13 +163,17 @@ agent_kw = dict(species=args.species, language=args.language, model=args.model, 
 
 if args.inspect:
     inspection_applied = False
-    if _done("integrated.h5ad", "inspection_proposal.json", "report.html",
-             "figures/inspect_umap_action.png"):
+    if not step_pending(out, "inspect") and _done(
+        "integrated.h5ad", "inspection_proposal.json", "figures/inspect_umap_action.png"
+    ):
         try:
             import scanpy as sc
 
             inspected = sc.read_h5ad(os.path.join(out, "integrated.h5ad"), backed="r")
-            inspection_applied = "_msp_action" in inspected.obs and "_msp_verdict" in inspected.obs
+            try:
+                inspection_applied = "_msp_action" in inspected.obs and "_msp_verdict" in inspected.obs
+            finally:
+                inspected.file.close()
         except Exception:
             inspection_applied = False
     if args.force or not inspection_applied:
@@ -160,7 +184,7 @@ if args.inspect:
         print(f"[resume] inspection_proposal.json exists in {out} — skipping inspect")
 
 if args.annotate:
-    if args.force or not _done("annotation_proposal.json", "annotated.h5ad"):
+    if args.force or step_pending(out, "annotate") or not _done("annotation_proposal.json", "annotated.h5ad"):
         from .annotate import annotate_clusters
 
         annotate_clusters(out, max_turns=args.max_turns or 200, **agent_kw)

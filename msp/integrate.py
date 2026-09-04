@@ -4,7 +4,8 @@ Pipeline (conventions mirror osp where they apply): raw counts →
 normalize_total(1e4) → log1p → HVG per batch (flavor="seurat",
 batch_key) → scale(max 10) on HVG → PCA (arpack, seed 0) → harmony on the
 batch key → neighbors on X_pca_harmony → leiden at several resolutions →
-UMAP. No PAGA, no DEG, no cell removal — msp proposes, later steps decide.
+UMAP → fragment/QC evidence → PAGA and global/local DEG. No cells are removed;
+msp proposes candidates for later steps.
 
 Inherited per-sample columns (QC metrics, _ann_*, _qc_action, doublet
 calls) ride along in obs. Sample-local leiden labels are prefixed with the
@@ -31,6 +32,7 @@ from scipy.cluster.hierarchy import dendrogram, linkage
 from sklearn.decomposition import PCA
 
 from .plots import UMAP_DPI, save_single_umap, slug
+from .steps import begin_step, complete_step
 
 
 def load_and_merge(inputs, batch_col, counts_layer="counts"):
@@ -67,7 +69,14 @@ def load_and_merge(inputs, batch_col, counts_layer="counts"):
         a.layers = {counts_layer: counts}
         adatas.append(a)
 
-    merged = ad.concat(adatas, join="inner", merge="same")
+    # Gene axes were checked above, so an outer join only widens obs metadata.
+    # Missing QC/labels remain missing, never invented negative calls or zeros.
+    merged = ad.concat(adatas, join="outer", merge="same")
+    for col in merged.obs:
+        values = merged.obs[col]
+        if values.dtype == object and values.dropna().map(lambda v: isinstance(v, (bool, np.bool_))).all():
+            # Nullable booleans stored as object cannot be serialized by H5AD.
+            merged.obs[col] = pd.Categorical(values, categories=[False, True])
     if merged.obs_names.duplicated().any():
         n = int(merged.obs_names.duplicated().sum())
         raise ValueError(f"{n} duplicated barcodes across samples — inputs must be disjoint cells")
@@ -111,7 +120,13 @@ def _mwu_greater(sib_vals, core_vals):
     skewed samples minor siblings usually are."""
     from scipy.stats import mannwhitneyu
 
-    if len(sib_vals) < MIN_N_FOR_TEST:
+    # Partial sample metadata must not turn an otherwise valid comparison into
+    # a NaN p-value. Require enough measured values on both sides of the test.
+    sib_vals = np.asarray(sib_vals, dtype=float)
+    core_vals = np.asarray(core_vals, dtype=float)
+    sib_vals = sib_vals[np.isfinite(sib_vals)]
+    core_vals = core_vals[np.isfinite(core_vals)]
+    if min(len(sib_vals), len(core_vals)) < MIN_N_FOR_TEST:
         return None
     _, p = mannwhitneyu(sib_vals, core_vals, alternative="greater")
     return bool(p < 0.05)
@@ -228,14 +243,15 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir, leiden_keys=(), reso
         # prefix) groups it with the OSP-inherited panels, not the
         # integrated-space QC metrics
         save_single_umap(ad, "_qc_action", os.path.join(figdir, "umap__qc_action.png"),
-                         palette=[QC_ACTION_PALETTE[c] for c in order], legend_loc="best")
+                         palette=[QC_ACTION_PALETTE[c] for c in order], legend_loc="best",
+                         na_color="#808080")  # distinct from keep, including in Scanpy's color categories
 
     def _agg(groupby):
         g = ad.obs.groupby(groupby, observed=True)
         out = pd.DataFrame({"n_cells": g.size()})
         if "_qc_action" in ad.obs:
-            out["pct_flag"] = (g["_qc_action"].apply(lambda s: (s == "flag").mean()) * 100).round(2)
-            out["pct_drop"] = (g["_qc_action"].apply(lambda s: (s == "drop").mean()) * 100).round(2)
+            out["pct_flag"] = (g["_qc_action"].apply(lambda s: (s.dropna() == "flag").mean()) * 100).round(2)
+            out["pct_drop"] = (g["_qc_action"].apply(lambda s: (s.dropna() == "drop").mean()) * 100).round(2)
         for m in ("pct_counts_mt", "doublet_score", "decontX_contamination", "n_genes_by_counts"):
             if m in ad.obs:
                 out[f"median_{m}"] = g[m].median().round(4)
@@ -306,12 +322,11 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     de_df.to_csv(os.path.join(outdir, "de_parent_core_vs_core.csv"), index=False)
 
     ribo = set(ad.var_names[ad.var["ribo"]]) if "ribo" in ad.var else set()
-    markers, marker_rows, gene_parent = [], [], {}
+    marker_rows, gene_parent = [], {}
     for parent, g in de_df.groupby("group", observed=True):
         g = g[(g["pvals_adj"] < 0.05) & (g["logfoldchanges"] > 0) & (~g["names"].isin(ribo))]
         g = g.sort_values("logfoldchanges", ascending=False).head(top_n)
         for rank, row in enumerate(g.itertuples(), start=1):
-            markers.append(row.names)
             gene_parent.setdefault(row.names, parent)  # first parent wins if a gene repeats
             marker_rows.append({"parent": parent, "gene": row.names, "rank": rank,
                                  "logfoldchange": round(row.logfoldchanges, 3),
@@ -565,7 +580,9 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
             for rank, nb in enumerate(picked, start=1):
                 neighbor_rows.append({"cluster": c, "neighbor": nb, "rank": rank,
                                       "connectivity": round(float(conn[i, cats.index(nb)]), 4)})
-        pd.DataFrame(neighbor_rows).to_csv(os.path.join(outdir, f"paga_neighbors_{key}.csv"), index=False)
+        # Keep the existing columns even when this graph has no positive edges.
+        pd.DataFrame(neighbor_rows, columns=["cluster", "neighbor", "rank", "connectivity"]).to_csv(
+            os.path.join(outdir, f"paga_neighbors_{key}.csv"), index=False)
 
         # wilcoxon needs >=2 cells per group to run at all, but a cluster that
         # tiny (can survive this far when it's PAGA-connected enough not to get
@@ -589,6 +606,9 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
                                 pts=True, key_added=slot)
         gdf = sc.get.rank_genes_groups_df(ad_excl, group=None, key=slot)
         del ad_excl.uns[slot]
+        # Scanpy omits group when only one group qualifies for testing.
+        if "group" not in gdf and len(item["valid"]) == 1:
+            gdf.insert(0, "group", item["valid"][0])
         return gdf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
 
     def run_local(item, c):
@@ -808,6 +828,11 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
     os.makedirs(outdir, exist_ok=True)
     if counts_layer not in ad.layers:
         raise ValueError(f"missing layers[{counts_layer!r}] — raw counts are required")
+    begin_step(outdir, "integrate")
+    # Prior inspection decisions and old resolutions do not describe this run.
+    for key in list(ad.obs.columns):
+        if key in ("_msp_action", "_msp_verdict") or key.startswith(("inspect_sub", "msp_leiden_r")):
+            del ad.obs[key]
     ad.X = ad.layers[counts_layer].copy()
     for k in list(ad.obsm.keys()):
         del ad.obsm[k]
@@ -972,5 +997,6 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
     tmp = os.path.join(outdir, "integrated.tmp.h5ad")
     ad.write_h5ad(tmp)  # never in place: tmp + rename
     os.replace(tmp, os.path.join(outdir, "integrated.h5ad"))
+    complete_step(outdir, "integrate")
     print(f"== wrote {os.path.join(outdir, 'integrated.h5ad')}", flush=True)
     return ad, summary

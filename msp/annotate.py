@@ -54,6 +54,7 @@ from .inspect import (  # _load_paga_neighbors re-exported for zmip
 )
 from .harness import AgentIncompleteError, default_model
 from .report import generate_report
+from .steps import begin_step, complete_step, require_upstream_ready
 
 BASE_KEY = "msp_leiden_r2.0"
 PARENT_KEY = "msp_leiden_r1.0"
@@ -135,8 +136,9 @@ def _cluster_context(ad, cluster, batch_col, prior_cols, paga, pre_agent_removed
     for col, name in (("_msp_verdict", "inspect verdict"), ("_msp_action", "inspect action"),
                       ("_qc_action", "osp per-sample qc action")):
         if col in ad.obs:
-            cc = sub[col].astype(str).value_counts(normalize=True)
-            lines.append(f"  {name} composition: " + ", ".join(f"{i}:{v:.2f}" for i, v in cc.items()))
+            cc = sub[col].dropna().astype(str).value_counts(normalize=True)
+            lines.append(f"  {name} composition (observed cells; {sub[col].isna().sum()} missing): "
+                         + (", ".join(f"{i}:{v:.2f}" for i, v in cc.items()) or "unavailable"))
     if prior_cols:
         lines.append("  prior label compositions (reference only, NOT ground truth; top 5 per column):")
         for c in prior_cols:
@@ -199,8 +201,12 @@ def _validate_cluster(e, clusters):
         elif mt == cid:
             problems.append("merge_target cannot be the cluster itself")
     ev = e["evidence"]
-    if not isinstance(ev, dict) or not all(k in ev for k in ("distinctness", "markers", "merge")):
-        problems.append("evidence must be an object with distinctness / markers / merge")
+    if not isinstance(ev, dict) or not all(
+            isinstance(ev.get(k), str) and ev[k].strip() for k in ("distinctness", "markers", "merge")):
+        problems.append("evidence must provide non-empty text for distinctness / markers / merge; "
+                        "explain unavailable evidence explicitly")
+    if not isinstance(e["rationale"], str) or not e["rationale"].strip():
+        problems.append("rationale must be non-empty text")
     return problems
 
 
@@ -234,6 +240,14 @@ def _validate_final(entries, clusters):
     """Cross-cluster consistency, the deterministic replacement for a
     harmonization agent. Every violation names the clusters to fix."""
     problems = []
+    if not isinstance(entries, dict):
+        return ["entries must be an object keyed by cluster ID"]
+    for c, e in entries.items():
+        problems.extend(f"cluster {c}: {p}" for p in _validate_cluster(e, clusters))
+        if c not in clusters or (isinstance(e, dict) and str(e.get("cluster_id")) != c):
+            problems.append(f"entry key {c!r} must match a current cluster_id")
+    if problems:
+        return problems
     missing = [c for c in clusters if c not in entries]
     if missing:
         problems.append(f"no submission yet for clusters {missing} — submit_cluster each of them first")
@@ -325,6 +339,15 @@ def _plot(ad_full, ad_kept, figdir):
     for col, fname in (("msp_ann_coarse", "annotation_umap_coarse.png"),
                        ("msp_ann_fine", "annotation_umap_fine.png")):
         ad_kept.obs[col] = ad_kept.obs[col].cat.remove_unused_categories()
+        if ad_kept.n_obs == 0:
+            # Preserve the usual figure files and full-run coordinate scale.
+            fig, ax = umap_axes(ad_full)
+            ax.text(0.5, 0.5, "No cells retained after annotation", ha="center", va="center",
+                    transform=ax.transAxes)
+            ax.set_title(f"UMAP: {col} (0 cells)")
+            fig.savefig(os.path.join(figdir, fname), dpi=UMAP_DPI)
+            plt.close(fig)
+            continue
         pal = _palette(ad_kept, col)
         if pal:
             ad_kept.uns[f"{col}_colors"] = pal
@@ -458,17 +481,19 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
         return {"content": [{"type": "text", "text": _gene_table(ad, genes, BASE_KEY)}]}
 
     async def check_deg(args):
+        from .inspect import _parse_reference
+
         c = str(args["cluster"])
         if c not in clusters:
             return {"content": [{"type": "text", "text": f"unknown cluster {c!r}; base clusters: {clusters}"}],
                     "is_error": True}
         reference = str(args.get("reference") or "rest").strip() or "rest"
-        if reference != "rest":
-            unknown = [g.strip() for g in reference.split(",") if g.strip() and g.strip() not in clusters]
-            if unknown:
-                return {"content": [{"type": "text",
-                                     "text": f"unknown reference cluster(s) {unknown}; base clusters: {clusters}"}],
-                        "is_error": True}
+        try:
+            ref = _parse_reference(reference, clusters)
+            if ref != "rest" and c in ref:
+                raise ValueError("reference must exclude the target cluster")
+        except ValueError as exc:
+            return {"content": [{"type": "text", "text": str(exc)}], "is_error": True}
         return {"content": [{"type": "text", "text": deg.table(
             BASE_KEY, c, reference, int(args.get("top_n") or 20), args.get("min_logfc"), args.get("max_padj"),
             args.get("min_pct1"), args.get("max_pct2"))}]}
@@ -476,7 +501,7 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
     async def submit_cluster(args):
         try:
             e = json.loads(args["cluster_json"])
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, TypeError) as exc:
             return {"content": [{"type": "text", "text": f"JSON parse error, fix and resubmit: {exc}"}],
                     "is_error": True}
         problems = _validate_cluster(e, clusters)
@@ -571,6 +596,7 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     added), the annotation UMAPs, and refreshes report.html. integrated.h5ad
     is not modified. Returns the proposal.
     """
+    require_upstream_ready(outdir, "annotate")
     ad = sc.read_h5ad(os.path.join(outdir, "integrated.h5ad"))
     for k in (BASE_KEY, PARENT_KEY):
         if k not in ad.obs:
@@ -596,6 +622,7 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     print(f"== prior label columns detected: {prior_cols}", flush=True)
     paga = _load_paga_neighbors(outdir, BASE_KEY)
 
+    begin_step(outdir, "annotate")
     proposal = asyncio.run(_run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                                       pre_agent_removed, language, model or default_model(), effort, max_turns))
 
@@ -608,6 +635,7 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     tmp = os.path.join(outdir, "annotated.tmp.h5ad")
     kept.write_h5ad(tmp)
     os.replace(tmp, os.path.join(outdir, "annotated.h5ad"))
+    complete_step(outdir, "annotate")
     print(f"== report refreshed: {generate_report(outdir)}", flush=True)
     return proposal
 

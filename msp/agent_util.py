@@ -1,4 +1,8 @@
-"""Shared agent-call helper for every claude-agent-sdk session in msp / zmip.
+"""Legacy Claude SDK helper retained for compatibility with external callers.
+
+MSP's active agents use msp.harness and the shared agent-harness-bridge.
+New callers should use that interface; this module is no longer part of the
+MSP/ZMIP execution path. Its retry behavior is preserved for legacy imports.
 
 The CLI itself retries transient API errors (429 / overloaded / 5xx) with
 backoff, but a subscription usage window that is used up ("Claude usage

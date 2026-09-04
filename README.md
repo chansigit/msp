@@ -63,10 +63,25 @@ HARNESS=openai python -m msp.annotate msp_out --model doubao-seed-2-1-turbo-2606
 python -m msp.report   msp_out                           # rebuild report.html only
 ```
 
-Re-running the same `python -m msp` command resumes: a step is skipped when
-its contract files already exist (`integrated.h5ad`+`report.html`,
-`inspection_proposal.json`, `annotation_proposal.json`+`annotated.h5ad`);
-`--force` redoes everything.
+Re-running the same `python -m msp` command resumes completed steps when their
+contract files exist and integration metadata matches. `--force` redoes the
+requested steps. Recomputing integration invalidates inspection and annotation;
+rerunning inspection invalidates annotation. These rules also apply to the
+individual Python entry points.
+
+Before a step starts writing, its previous outputs and downstream outputs move
+to `.msp-history/<step>-<unique-id>/`. Caller-provided `sample_decisions.csv`,
+`report_context.txt`, and unrelated files stay in place. Internal pending markers
+in `.msp-state/` survive failures: partial files cannot satisfy resume, and a
+downstream step refuses to run until its interrupted upstream step succeeds.
+Archives are retained, not automatically restored or deleted. Use one writer per
+output directory.
+
+Report rendering is independent of computation. A missing or failed report can
+be rebuilt without repeating integration or agent calls; rebuilding it neither
+clears pending markers nor marks steps complete. Reports omit incomplete steps
+and state which steps still need to finish. Existing output directories without
+pending markers retain the legacy file-based resume checks.
 
 ```python
 from msp import run_multi_sample_pipeline, generate_report
@@ -163,14 +178,43 @@ inspect drop ∪ agent-removed clusters, archived per cell with sources in
   doublet calls) ride along; sample-local leiden labels are prefixed with
   the sample value (`H12inner:3`). Per-sample embeddings/uns/layers are
   dropped — only raw counts travel; everything integrated is recomputed.
+  Columns present in only some samples are retained with missing values in
+  the others. QC summary flag/drop percentages use cells with recorded QC
+  actions; an entirely unavailable action column produces missing percentages.
+  The conservative minor-fragment majority-drop rule still requires recorded
+  drop calls for more than half of all cells in that fragment.
 - Doublet detection is NOT rerun: it belongs to the per-sample stage.
 - `checkpoint`-style writes: h5ad files are written to `*.tmp.h5ad` and
   renamed, never in place.
 - All heavy computation lives in `msp.integrate`; `msp.report` only renders
   artifacts already on disk, so `python -m msp.report` is always safe.
+- `check_deg` uses complete results when too few cached genes pass the requested
+  filters. A single subcluster reference such as `5,1` is an exact ID; pooled
+  references containing commas use CSV quoting, e.g. `"5,0","5,1"`, within the
+  existing string argument. Ambiguous references return a correction message.
+- Inspection tests and annotation evidence require non-empty explanations.
+  Unavailable evidence must be explained explicitly; invalid submissions return
+  errors to the agent for correction. Inspection verdicts, evidence, cell rules,
+  and notes are included in the HTML report.
+- Removing every cell is a valid annotation result: `annotated.h5ad` has zero
+  rows, the removal archive retains every cell and its sources, and the usual
+  UMAP files show an empty-result message or the full removal map.
 
 Driven in production by `ecarsi.crosssample`, which decides which samples
 enter integration (agent decision, archived) before calling this package.
+
+## Local regression checks
+
+Install `pytest` in the runtime environment and run:
+
+```bash
+LC_ALL=C LANG=C PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests
+```
+
+The suite covers H5AD metadata/count preservation, DEG retrieval, malformed
+submissions and correction, merge/removal safeguards, interrupted steps, report
+recovery, and empty annotation outputs. Model calls use local test substitutes;
+these checks do not validate a live model or its biological conclusions.
 
 ## Tuning integration
 

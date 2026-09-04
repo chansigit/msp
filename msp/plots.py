@@ -34,10 +34,7 @@ UMAP_DPI = 150
 # right instead (so long sample names are never clipped, and every UMAP's
 # axes are pixel-for-pixel the same size regardless of legend length).
 _AXES_W_IN = UMAP_FIGSIZE[0] * UMAP_AXES_RECT[2]
-_AXES_H_IN = UMAP_FIGSIZE[1] * UMAP_AXES_RECT[3]
 _LEFT_IN = UMAP_FIGSIZE[0] * UMAP_AXES_RECT[0]
-_BOTTOM_IN = UMAP_FIGSIZE[1] * UMAP_AXES_RECT[1]
-_RIGHT_PAD_IN = UMAP_FIGSIZE[0] * (1 - UMAP_AXES_RECT[0] - UMAP_AXES_RECT[2])
 
 
 def slug(name: str) -> str:

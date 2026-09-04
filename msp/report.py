@@ -34,6 +34,8 @@ import json
 import os
 import re
 
+from .steps import STEPS, step_pending
+
 CSS = """
 body { font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 2rem auto; max-width: 1400px; color: #1a1a1a; padding: 0 1rem; }
 h1 { border-bottom: 2px solid #333; padding-bottom: .3rem; margin-bottom: .3rem; }
@@ -138,6 +140,7 @@ _SECTION_LABELS = {
     "per-cluster-qc": "Per-cluster QC (standissect clusters)",
     "leiden-qc": "Leiden Cluster QC",
     "deg": "Cluster Annotations",
+    "inspection": "Integration QC Inspection",
     "annotation": "Cell Type Annotation",
 }
 
@@ -171,7 +174,7 @@ def _tabs(group_id: str, items: list[tuple[str, str]]) -> str:
         panels.append(f'<div class="tab-panel" id="{tid}-panel">{content}</div>')
         rules.append(f"#{tid}:checked ~ .tab-panels #{tid}-panel")
     style = f"<style>{', '.join(rules)} {{ display: block; }}</style>"
-    return (f'<div class="tabset">'
+    return ('<div class="tabset">'
             + "".join(x for pair in zip(inputs, labels) for x in pair)
             + f'<div class="tab-panels">{"".join(panels)}</div></div>{style}')
 
@@ -526,6 +529,45 @@ def _section_deg(outdir: str, top_n: int = 10, preannotation_figs: list[str] | N
     return _h2("deg") + "".join(parts)
 
 
+def _section_inspection(outdir: str, inspection_figs: list[str]) -> str:
+    """Show the proposed actions together with their evidence and cell rules."""
+    path = os.path.join(outdir, "inspection_proposal.json")
+    if not os.path.exists(path):
+        return ""
+    with open(path) as f:
+        prop = json.load(f)
+
+    def table(entries, columns):
+        head = "".join(f"<th>{html.escape(c)}</th>" for c in columns)
+        body = "".join("<tr>" + "".join(
+            f"<td>{html.escape(str(e[c]) if e.get(c) is not None else '')}</td>"
+            for c in columns) + "</tr>" for e in entries)
+        return f"<table><tr>{head}</tr>{body}</table>"
+
+    parts = ['<p class="hint">Inspection proposes keep, flag, or drop actions; it does not remove cells. '
+             'Annotation applies removals and records their sources.</p>',
+             '<div class="trio">' + "".join(_img(p) for p in inspection_figs) + "</div>",
+             "<h3>Per-cluster verdicts and actions</h3>",
+             table(prop.get("clusters", []), ("cluster", "verdict", "action", "confidence", "rationale"))]
+    evidence = []
+    for entry in prop.get("clusters", []):
+        tests = entry.get("tests")
+        evidence.append({**(tests if isinstance(tests, dict) else {}), "cluster": entry.get("cluster")})
+    parts += ["<h3>Five-test evidence</h3>",
+              table(evidence, ("cluster", "markers", "qc", "composition", "geometry", "stability"))]
+    if prop.get("cell_actions"):
+        parts += ["<h3>Cell-level action rules</h3>", table(prop["cell_actions"],
+                  ("cluster", "metric", "op", "value", "action", "reason", "note"))]
+    if prop.get("overall"):
+        parts.append(f"<p><b>Overall:</b> {html.escape(str(prop['overall']))}</p>")
+    notes = os.path.join(outdir, "inspection_notes.md")
+    if os.path.exists(notes):
+        with open(notes) as f:
+            parts.append('<details><summary>Inspection notes</summary>'
+                         f'<pre class="notes">{html.escape(f.read())}</pre></details>')
+    return _h2("inspection") + "".join(parts)
+
+
 def _section_annotation(outdir: str, annotation_figs: list[str]) -> str:
     """msp.annotate's deliverable: coarse/fine UMAPs of the cells that
     survived removal, the removal UMAP, one row per base cluster, merged
@@ -714,6 +756,7 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     preannotation_figs = [p for p in figs if os.path.basename(p) == "umap_preannotation_removal.png"]
     leiden_violin_figs = [p for p in figs if os.path.basename(p).startswith("leiden_qc_violin_")]
     annotation_figs = [p for p in figs if os.path.basename(p).startswith("annotation_")]
+    inspection_figs = [p for p in figs if os.path.basename(p).startswith("inspect_")]
     umap_figs = [p for p in figs if p not in qc_figs and not os.path.basename(p).startswith("inspect_")
                  and p not in standissect_figs and p not in fractal_figs and p not in preannotation_figs
                  and p not in leiden_violin_figs and p not in annotation_figs]
@@ -722,18 +765,27 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     qc_figs = [p for p in qc_figs if p not in violins]
 
     title = title or compose_title("cross-sample integration · inspection · annotation (msp)", outdir)
-    sections = [
-        _section_sample_summary(outdir),
-        _section_umaps(umap_figs, standissect_figs, qc_figs),
-        _section_per_cluster(outdir, violins, fractal_figs),
-        _section_leiden_qc(outdir, leiden_violin_figs),
-        _section_deg(outdir, preannotation_figs=preannotation_figs),
-        _section_annotation(outdir, annotation_figs),
-    ]
+    pending = [step for step in STEPS if step_pending(outdir, step)]
+    sections = []
+    if "integrate" not in pending:
+        sections = [
+            _section_sample_summary(outdir),
+            _section_umaps(umap_figs, standissect_figs, qc_figs),
+            _section_per_cluster(outdir, violins, fractal_figs),
+            _section_leiden_qc(outdir, leiden_violin_figs),
+            _section_deg(outdir, preannotation_figs=preannotation_figs),
+        ]
+        if "inspect" not in pending:
+            sections.append(_section_inspection(outdir, inspection_figs))
+        if "annotate" not in pending:
+            sections.append(_section_annotation(outdir, annotation_figs))
     sections, toc = _number_sections(sections)
 
     header = (f"<h1>{html.escape(title)}</h1>"
               f'<p class="meta">source dir: {html.escape(os.path.abspath(outdir))}</p>')
+    if pending:
+        header += ('<p class="hint">Incomplete steps: ' + ", ".join(pending)
+                   + ". Only completed upstream results are shown.</p>")
     body = f'{header}<div class="layout">{toc}<div class="content">{"".join(sections)}</div></div>'
     html_doc = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 f"<title>{html.escape(title)}</title><style>{CSS}</style></head>"

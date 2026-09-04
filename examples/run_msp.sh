@@ -6,11 +6,15 @@
 set -euo pipefail
 
 osp_root=${1:?osp_root}; outdir=${2:?outdir}; batch_col=${3:?batch_col}
-species=${4:-}; model=${5:-claude-sonnet-5}
+species=${4:-}; model=${5:-}
 
 mapfile -t inputs < <(ls "$osp_root"/*/clustered.h5ad)
 [[ ${#inputs[@]} -ge 2 ]] || { echo "need at least two clustered.h5ad under $osp_root" >&2; exit 1; }
 
+# Leave model selection to the chosen harness unless the caller overrides it.
+options=(--annotate)
+[[ -z "$species" ]] || options+=(--species "$species")
+[[ -z "$model" ]] || options+=(--model "$model")
 python -m msp "${inputs[@]}" --batch-col "$batch_col" --outdir "$outdir" \
-    ${species:+--species "$species"} --annotate --model "$model" "${@:6}"
+    "${options[@]}" "${@:6}"
 echo "report: $outdir/report.html"
