@@ -93,7 +93,33 @@ def _done(*names):
     return all(os.path.exists(os.path.join(out, n)) for n in names)
 
 
-if args.force or not _done("integrated.h5ad", "report.html"):
+def _integration_matches():
+    """Refuse to resume an integration produced with different core inputs."""
+    path = os.path.join(out, "integrated.h5ad")
+    if not os.path.exists(path):
+        return False
+    try:
+        import scanpy as sc
+
+        meta = sc.read_h5ad(path, backed="r").uns.get("msp", {})
+        expected_harmony = ("skipped: single batch"
+                            if meta.get("n_batches") == 1 else harmony_kwargs)
+        expected = {
+            "batch_col": args.batch_col,
+            "species": args.species or "",
+            "resolutions": list(args.resolutions),
+            "n_top_genes": args.n_top_genes,
+            "n_pcs_requested": args.n_pcs,
+            "n_neighbors": args.n_neighbors,
+            "harmony": expected_harmony,
+            "inputs": [str(p) for p in (args.inputs or [args.from_h5ad])],
+        }
+        return all(meta.get(k) == v for k, v in expected.items())
+    except Exception:
+        return False
+
+
+if args.force or not _done("integrated.h5ad", "report.html") or not _integration_matches():
     kw = dict(species=args.species, resolutions=tuple(args.resolutions), n_top_genes=args.n_top_genes,
               n_pcs=args.n_pcs, n_neighbors=args.n_neighbors, harmony_kwargs=harmony_kwargs)
     if args.from_h5ad:
@@ -116,7 +142,17 @@ if args.inspect:
 agent_kw = dict(species=args.species, language=args.language, model=args.model, effort=args.effort)
 
 if args.inspect:
-    if args.force or not _done("inspection_proposal.json"):
+    inspection_applied = False
+    if _done("integrated.h5ad", "inspection_proposal.json", "report.html",
+             "figures/inspect_umap_action.png"):
+        try:
+            import scanpy as sc
+
+            inspected = sc.read_h5ad(os.path.join(out, "integrated.h5ad"), backed="r")
+            inspection_applied = "_msp_action" in inspected.obs and "_msp_verdict" in inspected.obs
+        except Exception:
+            inspection_applied = False
+    if args.force or not inspection_applied:
         from .inspect import inspect_clusters
 
         inspect_clusters(out, max_turns=args.max_turns or 100, **agent_kw)

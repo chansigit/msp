@@ -578,11 +578,17 @@ _VERDICTS = ("real", "artifact-doublet", "artifact-lowquality", "artifact-batch"
 
 def _validate_proposal(proposal, clusters, obs):
     problems = []
+    if not isinstance(proposal, dict):
+        return [f'proposal must be a JSON object, got {type(proposal).__name__}']
     entries = proposal.get("clusters")
     if not isinstance(entries, list) or not entries:
         problems.append('missing "clusters" list')
         entries = []
+    seen = set()
     for e in entries:
+        if not isinstance(e, dict):
+            problems.append(f"cluster entry must be an object: {e!r}")
+            continue
         missing = [k for k in ("cluster", "verdict", "action", "confidence", "tests", "rationale") if k not in e]
         if missing:
             problems.append(f"cluster entry missing {missing}: {e}")
@@ -591,13 +597,25 @@ def _validate_proposal(proposal, clusters, obs):
             problems.append(f'verdict must be one of {_VERDICTS}: {e}')
         if e["action"] not in ("keep", "flag", "drop"):
             problems.append(f'action must be keep|flag|drop: {e}')
-        if not all(k in e["tests"] for k in ("markers", "qc", "composition", "geometry", "stability")):
+        if not isinstance(e["tests"], dict) or not all(
+                k in e["tests"] for k in ("markers", "qc", "composition", "geometry", "stability")):
             problems.append(f'tests must cover markers/qc/composition/geometry/stability: {e}')
-    covered = {str(e.get("cluster")) for e in entries}
+        cluster = str(e.get("cluster"))
+        if cluster in seen:
+            problems.append(f"duplicate cluster entry: {cluster!r}")
+        seen.add(cluster)
+    covered = {str(e.get("cluster")) for e in entries if isinstance(e, dict)}
     missed = [c for c in clusters if c not in covered]
     if missed:
         problems.append(f"clusters without a verdict: {missed}")
-    for a in proposal.get("cell_actions", []):
+    cell_actions = proposal.get("cell_actions", [])
+    if not isinstance(cell_actions, list):
+        problems.append('"cell_actions" must be a list when present')
+        cell_actions = []
+    for a in cell_actions:
+        if not isinstance(a, dict):
+            problems.append(f"cell_action must be an object: {a!r}")
+            continue
         if str(a.get("cluster")) not in clusters:
             problems.append(f"cell_action cluster {a.get('cluster')!r} is not a current cluster id: {a}")
         metric = a.get("metric")

@@ -15,6 +15,7 @@ integrated clusterings get their own msp_leiden_r* keys.
 from __future__ import annotations
 
 import csv
+import math
 import os
 import re
 
@@ -787,6 +788,22 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
     block_size, max_iter_harmony (10), max_iter_kmeans (20),
     epsilon_cluster, epsilon_harmony, alpha. Recorded in uns["msp"]["harmony"].
     meta_extra: extra keys merged into uns["msp"] (zmip records its lineage)."""
+    if batch_col not in ad.obs:
+        raise ValueError(f"missing obs[{batch_col!r}] — batch_col must name an obs column")
+    if not resolutions:
+        raise ValueError("resolutions must contain at least one positive value")
+    if any(not math.isfinite(float(r)) or float(r) <= 0 for r in resolutions):
+        raise ValueError(f"resolutions must be finite and positive, got {resolutions!r}")
+    if len(set(float(r) for r in resolutions)) != len(resolutions):
+        raise ValueError(f"resolutions must be unique, got {resolutions!r}")
+    if n_top_genes <= 0 or n_pcs <= 0 or n_neighbors <= 0:
+        raise ValueError("n_top_genes, n_pcs, and n_neighbors must be positive")
+    if ad.n_obs < 3:
+        raise ValueError(f"at least 3 cells are required for integration, found {ad.n_obs}")
+    if ad.n_vars < 2:
+        raise ValueError(f"at least 2 genes are required for PCA, found {ad.n_vars}")
+    if n_neighbors >= ad.n_obs:
+        raise ValueError(f"n_neighbors must be smaller than n_obs ({ad.n_obs}), got {n_neighbors}")
     harmony_kwargs = dict(harmony_kwargs or {})
     os.makedirs(outdir, exist_ok=True)
     if counts_layer not in ad.layers:
@@ -812,6 +829,8 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
     hvg = ad[:, ad.var.highly_variable].copy()
     sc.pp.scale(hvg, max_value=10)
     n_comps = min(n_pcs, hvg.n_vars - 1, ad.n_obs - 1)
+    if n_comps < 1:
+        raise ValueError(f"not enough variable genes/cells for PCA: {hvg.shape}, n_comps={n_comps}")
     print(f"== PCA ({n_comps} comps on {hvg.n_vars} HVGs)", flush=True)
     ad.obsm["X_pca"] = PCA(n_components=n_comps, svd_solver="arpack", random_state=0).fit_transform(hvg.X)
     del hvg
@@ -905,6 +924,7 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
         "inputs": [str(p) for p in inputs],
         "resolutions": list(resolutions),
         "n_top_genes": n_top_genes,
+        "n_pcs_requested": n_pcs,
         "n_pcs": n_comps,
         "n_neighbors": n_neighbors,
         # what actually reached harmonypy.run_harmony beyond its defaults

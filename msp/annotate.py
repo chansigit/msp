@@ -171,6 +171,8 @@ _CLUSTER_SCHEMA_DOC = """{
 
 def _validate_cluster(e, clusters):
     problems = []
+    if not isinstance(e, dict):
+        return [f"cluster entry must be an object: {e!r}"]
     for k in ("cluster_id", "coarse_label", "fine_label", "merge_target", "action", "confidence",
               "evidence", "rationale"):
         if k not in e:

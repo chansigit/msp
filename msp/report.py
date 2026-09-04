@@ -738,8 +738,13 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     html_doc = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 f"<title>{html.escape(title)}</title><style>{CSS}</style></head>"
                 f"<body>{body}{TOC_PIN_SCRIPT}</body></html>")
-    with open(out_html, "w") as fh:
+    # Write beside the final report and replace it only after the complete HTML
+    # document has been serialized; resume must never mistake a truncated file
+    # for a finished report.
+    tmp_html = out_html + ".tmp"
+    with open(tmp_html, "w") as fh:
         fh.write(html_doc)
+    os.replace(tmp_html, out_html)
     return out_html
 
 
