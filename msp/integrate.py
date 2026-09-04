@@ -292,6 +292,13 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
         core_ad.obs["standissect_product"].astype(str).map(parent_of_core).astype(str).astype("category")
     )
 
+    if core_ad.obs["parent"].nunique() < 2:
+        # one-vs-other-parent DE needs >=2 parents; a lineage that standissect
+        # never split beyond its root has only one, and rank_genes_groups_df
+        # drops the "group" column for a single-group input (KeyError downstream)
+        print("== only one parent-core cluster — skipping parent-core DEG/heatmap", flush=True)
+        return
+
     print("== parent-core DEG (one vs other parent cores)", flush=True)
     sc.tl.rank_genes_groups(core_ad, "parent", method="wilcoxon", use_raw=True, pts=True)
     de_df = sc.get.rank_genes_groups_df(core_ad, group=None)
