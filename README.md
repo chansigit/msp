@@ -1,256 +1,146 @@
-# msp — multi-sample-pipeline
+# MSP — Multi-sample Pipeline
 
-Integrates the per-sample outputs of [osp](https://github.com/chansigit/osp)
-(one `clustered.h5ad` per 10x run) into one harmony-corrected space, then
-runs two optional agent steps on the result: a per-cluster QC
-**inspection** (proposals only) and a cell-type **annotation** (coarse/fine
-labels, explicit merges, real removal). Every step writes a self-contained
-`report.html` (all figures base64-embedded) that the next step reads.
+**Bring single-cell samples together, review their quality, and annotate cell types.**
 
+MSP combines processed single-cell RNA-seq samples into a shared analysis. It
+corrects for differences between samples with Harmony, groups similar cells,
+and produces a report you can open in your browser. Optional AI agents then
+review cluster quality and assign cell-type labels, recording the evidence
+behind their decisions.
+
+Use MSP when you have analyzed samples individually and want to understand
+which cell populations they share, which groups need closer inspection, and
+how to label them consistently across samples.
+
+## From samples to annotated cells
+
+```mermaid
+flowchart LR
+    A[Per-sample data] --> B[Integrate samples]
+    B --> C[Inspect cluster quality]
+    C --> D[Annotate cell types]
 ```
-osp per-sample ──▶ integrate ──▶ inspect ──▶ annotate
-                   propose-only   propose-only   removes cells
-                   integrated.h5ad              annotated.h5ad
-```
+
+| Step | What it does | What happens to the cells |
+| --- | --- | --- |
+| **Integrate** | Builds a shared representation, clusters cells, and summarizes quality and marker genes. | All input cells are retained. |
+| **Inspect** · optional AI step | Reviews markers, quality measurements, sample composition, cluster geometry, and stability. | Records keep, flag, or drop proposals; retains all cells. |
+| **Annotate** · optional AI step | Assigns broad cell types and finer subtypes, records cluster merges, and applies removal decisions. | Writes retained cells to a separate annotated dataset. |
+
+The report brings together sample summaries, cell maps (UMAPs), quality
+measurements, marker genes, inspection evidence, and cell-type annotations as
+those steps complete. Figures are embedded in the HTML, so you can share the
+report as a single file.
+
+## Prepare your data
+
+The usual input is one `.h5ad` file per sample, such as the `clustered.h5ad`
+files produced by [OSP — One-sample Pipeline](https://github.com/chansigit/osp).
+H5AD is the AnnData format commonly used with Scanpy.
+
+Each file needs:
+
+- **Raw counts** in `layers["counts"]`.
+- **A sample column** in `obs`, with one sample identifier per file. You choose
+  its name with `--batch-col`.
+- **The same genes in the same order** across files.
+- **Unique cell IDs** across all input files.
+
+Existing quality measurements and cell-type labels are retained as evidence.
+Columns available in only some samples remain missing in the others. MSP can
+also start from one combined file using `--from-h5ad`.
 
 ## Install
 
+Use Python 3.10 or newer in a separate environment. Install the current
+GitHub version with the optional AI dependencies:
+
 ```bash
-pip install msp-sc                     # PyPI name; `import msp`
-# with the agent steps (Claude, dsh, and OpenAI Agents SDK backends):
-pip install "msp-sc[agent]"
+python -m pip install "msp-sc[agent] @ git+https://github.com/chansigit/msp.git"
 ```
 
-The runtime implementation comes from the independent
-`agent-harness-bridge` package; `msp.harness` remains a compatibility import.
-MSP continues to own its prompts, biological tools and submit validation.
+For integration only, omit `[agent]`. The package is named `msp-sc`; its Python
+import and command module are `msp`. Dependencies include `harmonypy==0.2.0`,
+the version currently pinned by the project. Integration requires no model
+credentials.
 
-The default backend is OpenAI Agents SDK with
-`doubao-seed-2-1-turbo-260628`; provide `ARK_API_KEY`. It uses Ark's
-Responses API and server-side `previous_response_id` chaining by default.
-Set `HARNESS=deepseek` for dsh or `HARNESS=claude` for claude_agent_sdk. Set
-`OPENAI_AGENTS_API=chat_completions` only for text-only compatibility, or
-`OPENAI_AGENTS_SERVER_STATE=0` when complete local-history replay is required.
-If an image-heavy session reaches Ark's context limit, the backend retains
-host-side Tasks and accepted submissions and continues in a fresh model
-session (at most `OPENAI_AGENTS_MAX_CONTEXT_RESETS`, default 2).
+## Run your first analysis
 
-Dependencies of note: `harmonypy>=0.2.0` (the torch-based fork — set
-`MSP_DEVICE=cpu|cuda|mps` to override device auto-detection) and
-`standissect-lite` (minor-sibling fragment detection inside clusters).
+Replace the example paths with your sample files and `sample_id` with the name
+of their sample column.
 
-## Quick usage
+**Integrate samples and generate a report:**
 
 ```bash
-# integration + report
-python -m msp A/clustered.h5ad B/clustered.h5ad --batch-col project --outdir msp_out --species human
+python -m msp A/clustered.h5ad B/clustered.h5ad \
+    --batch-col sample_id --species human --outdir msp_out
+```
 
-# the whole chain (integration → inspection agent → annotation agent)
-python -m msp A/clustered.h5ad B/clustered.h5ad --batch-col project --outdir msp_out \
-    --species human --annotate --harness openai --model doubao-seed-2-1-turbo-260628
+Open `msp_out/report.html` in a browser to review the result.
 
-# quality-oriented, higher-cost Doubao option; validate it on your workload
-python -m msp ... --batch-col project --outdir msp_out --annotate \
-    --harness openai --model doubao-seed-2-1-pro-260628
+**Include AI inspection and cell-type annotation:**
 
-# re-integrate one merged h5ad (e.g. a previous round's survivors) instead of per-sample inputs
-python -m msp --from-h5ad prev_round/annotated_zmip.h5ad --batch-col project --outdir msp_out2 \
+The default configuration uses the OpenAI Agents SDK to access a Doubao model
+through Volcengine Ark. It requires an **Ark API key** and model access in that
+account. Model calls may incur provider charges.
+
+```bash
+export ARK_API_KEY="your-ark-api-key"
+python -m msp A/clustered.h5ad B/clustered.h5ad \
+    --batch-col sample_id --species human --outdir msp_out \
     --annotate --harness openai --model doubao-seed-2-1-turbo-260628
-
-# individual agent steps select the harness through its environment variable
-HARNESS=openai python -m msp.inspect  msp_out --model doubao-seed-2-1-turbo-260628
-HARNESS=openai python -m msp.annotate msp_out --model doubao-seed-2-1-turbo-260628
-python -m msp.report   msp_out                           # rebuild report.html only
 ```
 
-Re-running the same `python -m msp` command resumes completed steps when their
-contract files exist and integration metadata matches. `--force` redoes the
-requested steps. Recomputing integration invalidates inspection and annotation;
-rerunning inspection invalidates annotation. These rules also apply to the
-individual Python entry points.
+`--annotate` includes inspection. To request inspection alone, use `--inspect`.
+The `--harness` option selects the agent runtime; `--model` selects its model.
+Claude and DeepSeek Harness runtimes are also supported, with their own
+installation and authentication requirements.
 
-Before a step starts writing, its previous outputs and downstream outputs move
-to `.msp-history/<step>-<unique-id>/`. Caller-provided `sample_decisions.csv`,
-`report_context.txt`, and unrelated files stay in place. Internal pending markers
-in `.msp-state/` survive failures: partial files cannot satisfy resume, and a
-downstream step refuses to run until its interrupted upstream step succeeds.
-Archives are retained, not automatically restored or deleted. Use one writer per
-output directory.
+## Find and understand your results
 
-Report rendering is independent of computation. A missing or failed report can
-be rebuilt without repeating integration or agent calls; rebuilding it neither
-clears pending markers nor marks steps complete. Reports omit incomplete steps
-and state which steps still need to finish. Existing output directories without
-pending markers retain the legacy file-based resume checks.
+| File | Use it to… |
+| --- | --- |
+| `report.html` | Review the analysis, including inspection evidence and annotation decisions when available. |
+| `integrated.h5ad` | Continue working with all input cells in the integrated space; inspection adds its proposed actions here. |
+| `annotated.h5ad` | Analyze retained cells with broad and fine cell-type labels after annotation. |
+| `annotation_removed.csv` | See every removed cell and the sources of its removal decision. |
+| `inspection_proposal.json`, `annotation_proposal.json` | Read the structured cluster decisions. |
+| `inspection_notes.md`, `annotation_notes.md` | Read agent session notes when provided by the runtime. |
+| `figures/` | Reuse individual plots. |
 
-```python
-from msp import run_multi_sample_pipeline, generate_report
-run_multi_sample_pipeline(["A/clustered.h5ad", "B/clustered.h5ad"], batch_col="project", outdir="msp_out")
-generate_report("msp_out")
+**Annotation applies removals from all three sources:** integration's removal
+candidates, inspection's drop proposals, and clusters the annotation agent
+marks for removal. It preserves `integrated.h5ad` and writes survivors to
+`annotated.h5ad`. If every cell is removed, the annotated file has zero cells
+and the removal record still accounts for them all.
 
-from msp.inspect import inspect_clusters     # optional agent steps
-from msp.annotate import annotate_clusters
-```
+Review the evidence before using labels or removal decisions downstream.
+MSP checks submission completeness and consistency; these checks do not
+establish that a biological interpretation is correct.
 
-## The three steps
+## Continue an analysis
 
-### 1. integrate (`msp.integrate`, propose-only)
+Repeat the same command to resume completed steps. When an upstream step is
+rerun, its downstream results must be regenerated; previous outputs are kept
+under `.msp-history/`. Use one running process per output directory.
 
-concat (hard checks: identical gene axis, one batch value per file,
-globally unique barcodes, no cell lost) → normalize from raw
-`layers["counts"]` → per-batch HVG → scale/PCA on the merged cells → harmony
-→ neighbors on `X_pca_harmony` → leiden at each resolution (`msp_leiden_r*`,
-default 0.3/1.0/2.0) → UMAP → standissect-lite fragments on the coarsest
-resolution → QC/DEG artifacts → `integrated.h5ad` + `report.html`.
+Use `--force` to recompute the requested steps. Use it, or choose a new output
+directory, if you replace an input file at the same path or want to rerun with
+a different model: resume does not detect those changes automatically.
 
-Removal *candidates* are computed but never applied:
-
-- `minor_sibling_qc.csv` — standissect fragments failing QC against their parent;
-- `cell_outliers.csv` — per-cluster doublet/ambient outliers (cell flagged only
-  when it clears BOTH gates: cluster median + 3×MAD **and** an absolute floor
-  of 0.5; OR across metrics and across r1.0/r2.0);
-- osp's own per-sample `_qc_action == "drop"` cells;
-- their union is `preannotation_removal.csv` and the "Pre-annotation
-  filtering" UMAP. The precomputed DEG tables (`deg_global_*` one-vs-rest,
-  `deg_local_*` vs the 3 nearest PAGA neighbours, at r1.0 and r2.0) exclude
-  these cells; `stress_clusters.csv` flags clusters whose top genes are a
-  dissociation-stress/mitochondrial signature.
-
-### 2. inspect (`msp.inspect`, propose-only)
-
-One agent session puts every r1.0 cluster through the five-test battery
-(markers / QC axis / composition / geometry / stability) with live tools
-(`check_genes`, `check_qc_scores`, `check_stability`, `check_deg`,
-`subcluster`). Output: `inspection_proposal.json`, `inspection_notes.md`,
-`obs["_msp_action"]` (keep/flag/drop) and `obs["_msp_verdict"]` written
-into `integrated.h5ad`, the verdict UMAP. Live DEG excludes the
-pre-annotation removal set, matching the precomputed tables.
-
-### 3. annotate (`msp.annotate`, removes cells)
-
-One agent session annotates every **r2.0** cluster. Coverage is enforced
-twice: the agent keeps one Claude Code Task per cluster
-(TaskCreate/TaskUpdate/TaskList), and the host refuses `finalize_annotation`
-until every cluster has a validated `submit_cluster`. Per cluster the agent
-answers a fixed reasoning chain — (1) distinct entity or splinter of its
-r1.0 parent/siblings, (2) coarse + fine label, or noise/low-quality →
-remove, (3) merge target or keep separate — using `cluster_context`
-(parent/siblings/PAGA neighbours/sample composition/QC/inspect verdict/prior
-label compositions), `check_genes` and `check_deg`. Prior label columns
-(osp's `_ann_coarse`/`_ann_fine`, the authors' own cell-type columns) are
-detected, not assumed, and shown as reference evidence only.
-
-Merge decisions are made in one session and validated deterministically on
-the host (union-find over `merge_target`; a merged group shares one
-coarse/fine label; one fine label belongs to one coarse label; equal fine
-labels must be merged explicitly; nothing merges into a removed cluster) —
-no separate harmonization pass.
-
-Removal is real at this step: removed = `preannotation_removal.csv` ∪
-inspect drop ∪ agent-removed clusters, archived per cell with sources in
-`annotation_removed.csv`. `annotated.h5ad` keeps the survivors with
-`msp_ann_cluster` (merged id, e.g. `1+2+4`), `msp_ann_coarse`,
-`msp_ann_fine`, `msp_ann_action`; `integrated.h5ad` is left untouched.
-
-## Output directory
-
-| file | written by | what |
-|---|---|---|
-| `integrated.h5ad` | integrate (+inspect adds `_msp_*`) | all cells, harmony space, `msp_leiden_r*`, `standissect_product` |
-| `report.html` | every step | self-contained report: Sample Summary · UMAPs · Per-cluster QC (standissect) · Leiden Cluster QC · Cluster Annotations (DEG) · Cell Type Annotation |
-| `integration_summary.csv`, `per_sample_qc.csv`, `sample_decisions.csv`* | integrate | sample-level tables (*optional, written by the caller) |
-| `cluster_qc_*.csv`, `cell_outliers.csv`, `cell_outlier_summary.csv` | integrate | per-cluster / per-cell QC |
-| `fragments_*.csv`, `overlap_*.csv`, `minor_sibling_qc.csv`, `fractal_markers.csv` | integrate | standissect-lite bundle |
-| `deg_global_*.csv`, `deg_local_*.csv`, `paga_neighbors_*.csv`, `stress_clusters.csv` | integrate | DEG at r1.0/r2.0 |
-| `preannotation_removal.csv` | integrate | union of removal candidates (cell, recommend_removal) |
-| `inspection_proposal.json`, `inspection_notes.md` | inspect | five-test verdicts per cluster |
-| `annotation_proposal.json`, `annotation_notes.md` | annotate | per-cluster labels, merges, evidence, merged groups |
-| `annotation_removed.csv` | annotate | every removed cell with its sources |
-| `annotated.h5ad` | annotate | survivors with `msp_ann_*` columns |
-| `figures/*.png` | all | one signal per file, fixed UMAP geometry |
-
-## Conventions
-
-- **Propose, never remove** until `annotate`: `integrate` and `inspect` add
-  columns and CSVs, never drop cells; computation-only exclusions (DEG) are
-  documented where they happen.
-- Inherited per-sample obs columns (QC metrics, `_ann_*`, `_qc_action`,
-  doublet calls) ride along; sample-local leiden labels are prefixed with
-  the sample value (`H12inner:3`). Per-sample embeddings/uns/layers are
-  dropped — only raw counts travel; everything integrated is recomputed.
-  Columns present in only some samples are retained with missing values in
-  the others. QC summary flag/drop percentages use cells with recorded QC
-  actions; an entirely unavailable action column produces missing percentages.
-  The conservative minor-fragment majority-drop rule still requires recorded
-  drop calls for more than half of all cells in that fragment.
-- Doublet detection is NOT rerun: it belongs to the per-sample stage.
-- `checkpoint`-style writes: h5ad files are written to `*.tmp.h5ad` and
-  renamed, never in place.
-- All heavy computation lives in `msp.integrate`; `msp.report` only renders
-  artifacts already on disk, so `python -m msp.report` is always safe.
-- `check_deg` uses complete results when too few cached genes pass the requested
-  filters. A single subcluster reference such as `5,1` is an exact ID; pooled
-  references containing commas use CSV quoting, e.g. `"5,0","5,1"`, within the
-  existing string argument. Ambiguous references return a correction message.
-- Inspection tests and annotation evidence require non-empty explanations.
-  Unavailable evidence must be explained explicitly; invalid submissions return
-  errors to the agent for correction. Inspection verdicts, evidence, cell rules,
-  and notes are included in the HTML report.
-- Removing every cell is a valid annotation result: `annotated.h5ad` has zero
-  rows, the removal archive retains every cell and its sources, and the usual
-  UMAP files show an empty-result message or the full removal map.
-
-Driven in production by `ecarsi.crosssample`, which decides which samples
-enter integration (agent decision, archived) before calling this package.
-
-## Local regression checks
-
-Install `pytest` in the runtime environment and run:
+To rebuild the report without rerunning computation or agents:
 
 ```bash
-LC_ALL=C LANG=C PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests
+python -m msp.report msp_out
 ```
 
-The suite covers H5AD metadata/count preservation, DEG retrieval, malformed
-submissions and correction, merge/removal safeguards, interrupted steps, report
-recovery, and empty annotation outputs. Model calls use local test substitutes;
-these checks do not validate a live model or its biological conclusions.
+## More information
 
-## Tuning integration
+- Run `python -m msp --help` for command options.
+- See [the folder-based example](examples/run_msp.sh) for processing a directory
+  of OSP sample outputs.
+- A basic user guide and an advanced developer guide are planned as separate
+  documents; this README is the starting point.
+- Report problems or discuss usage in [GitHub Issues](https://github.com/chansigit/msp/issues).
 
-`python -m msp` exposes the integration knobs; the Python entry point takes
-the same names as keyword arguments (`run_multi_sample_pipeline(...,
-n_top_genes=, n_pcs=, n_neighbors=, resolutions=, harmony_kwargs={...})`).
-
-| knob | default | CLI |
-|---|---|---|
-| HVGs per batch | 2000 | `--n-top-genes` |
-| PCs | 50 | `--n-pcs` |
-| kNN neighbours (on `X_pca_harmony`) | 15 | `--n-neighbors` |
-| leiden resolutions | 0.3 1.0 2.0 | `--resolutions` (1.0 and 2.0 required by inspect/annotate) |
-| harmony | harmonypy defaults | `--harmony KEY=VALUE` (repeatable) |
-
-Harmony is called as `harmonypy.run_harmony(X_pca, obs[[batch_col]],
-batch_col, random_state=0, device=<auto or $MSP_DEVICE>, **harmony_kwargs)`;
-anything not overridden is harmonypy's default:
-
-| harmony parameter | default | meaning |
-|---|---|---|
-| `theta` | 2 (per covariate) | diversity penalty — higher = stronger mixing across batches |
-| `lamb` | 1 | ridge penalty on the correction; `-1` = auto-estimate (R behaviour, uses `alpha`=0.2) |
-| `sigma` | 0.1 | soft k-means width — larger = softer cluster assignment |
-| `nclust` | min(round(N/30), 100) | number of harmony clusters |
-| `tau` | 0 | discounting for small batches (expected cells per cluster) |
-| `block_size` | 0.05 | fraction of cells updated per block |
-| `max_iter_harmony` | 10 | outer iterations |
-| `max_iter_kmeans` | 20 | inner clustering iterations |
-| `epsilon_cluster` / `epsilon_harmony` | 1e-5 / 1e-4 | convergence tolerances |
-
-Example: gentler correction that keeps more within-batch structure and runs longer:
-
-```bash
-python -m msp ... --harmony theta=1 --harmony max_iter_harmony=20
-```
-
-The effective overrides are recorded in `uns["msp"]["harmony"]` of
-`integrated.h5ad` (empty = all defaults).
+MSP is available under the [MIT License](LICENSE).
