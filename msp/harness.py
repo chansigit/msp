@@ -63,7 +63,8 @@ LIMIT_PATTERN = re.compile(
 TRANSIENT_PATTERN = re.compile(
     r"control request timeout|broken pipe|connection reset|econnreset|epipe|"
     r"process exited unexpectedly|failed to start|connection closed|stdout closed|"
-    r"transportclosed|initialize timed out|timed out waiting",
+    r"transportclosed|initialize timed out|timed out waiting|mcp tools never listed|"
+    r"initial connection or tool synchronization failed",
     re.IGNORECASE,
 )
 # ("returned an error result" used to be here for the old bundled CLI's

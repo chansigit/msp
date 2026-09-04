@@ -38,6 +38,8 @@ Env:
                       the dsh runtime when it is hit. max_turns is enforced
                       here too, by counting assistant/message events.
   DSH_TRACE_EVENTS    =1 prints every dsh session event type as it streams.
+  DSH_KEEP_SESSIONS   =1 keeps every run's dsh session.jsonl in cwd (a run that
+                      ends without a submit keeps it regardless).
   DSH_BIN            path to the built `dsh` CLI entrypoint (apps/cli/lib/bin.js
                       from a source build — see the eca-rsi harness-deepseek
                       branch notes; the PyPI-published native runtime wheel
@@ -75,6 +77,22 @@ for _name in ("mcp", "mcp.server", "mcp.server.streamable_http", "mcp.server.str
 
 from .harness import AgentIncompleteError, AgentRunResult, AgentTimeout, ToolSpec
 
+# sse-starlette (the SSE layer under mcp's streamable-http transport) keeps a
+# PROCESS-GLOBAL `AppStatus.should_exit`; its per-loop watcher copies uvicorn's
+# `server.should_exit` into it, so the graceful teardown of the FIRST
+# run_agent() server in a process flips it for good and every SSE response of
+# every later server in that process ends the moment it starts ("ASGI callable
+# returned without completing response") — dsh's mcp-client then cannot attach
+# and the model runs on with no tools (msp inspect → annotate in one process,
+# 2026-09-03). We close streams ourselves (dsh exits, server task cancelled),
+# so the automatic drain is disabled and the flag reset before each server.
+try:
+    from sse_starlette.sse import AppStatus as _SseAppStatus
+
+    _SseAppStatus.disable_automatic_graceful_drain()
+except Exception:  # pragma: no cover - older/newer sse-starlette without the knob
+    _SseAppStatus = None
+
 _BUILTIN_DISABLE_IDS = ("persistent-bash", "terminal-bash", "persistent-pwsh",
                          "terminal-pwsh", "str-replace-editor")
 
@@ -90,6 +108,23 @@ def _default_dsh_bin() -> str | None:
         if os.path.isfile(cand):
             return cand
     return None
+
+
+def _keep_session_log(dsh_home: str, cwd: str, label: str) -> None:
+    """Copy the run's dsh session transcript (every model step and tool call)
+    out of the disposable dsh home into cwd, for post-mortems of runs that
+    ended without a submit — the transcript is the only record of what the
+    model actually did in dsh (our trace only sees our own tools)."""
+    import glob
+    import shutil
+
+    for src in glob.glob(os.path.join(dsh_home, "sessions", "*", "*", "session.jsonl")):
+        dst = os.path.join(cwd, f"dsh_session_{label.replace(' ', '_').replace('/', '_')}.jsonl")
+        try:
+            shutil.copy(src, dst)
+            print(f"== [{label}] dsh session transcript kept at {dst}", flush=True)
+        except OSError as e:
+            print(f"== [{label}] could not keep dsh session transcript: {e}", flush=True)
 
 
 def _free_port() -> int:
@@ -185,7 +220,14 @@ def _render_patch(mcp_url: str, allowed_builtin: tuple[str, ...], provider: str,
     insert: list[dict] = [{
         "id": "ecarsi-tools",
         "name": "@deepseek-ai/dsh-mcp-client",
-        "config": {"serverName": "ecarsi", "transport": "streamable-http", "url": mcp_url},
+        # failOnStartupError: dsh's default is to log the failed MCP attach,
+        # keep reconnecting in the background (10 attempts, ~2.5 min) and let
+        # the model run on with only its builtin tools meanwhile — which is
+        # how a run with no submit tool wandered the filesystem for hours
+        # (2026-09-03). Failing the session at load turns that into an error
+        # the SDK surfaces immediately, which retry_transient retries.
+        "config": {"serverName": "ecarsi", "transport": "streamable-http", "url": mcp_url,
+                   "failOnStartupError": True},
     }]
     rows: list[dict] = [{"id": "sandbox-policy", "config": {"mode": "read-only"}}]
     if provider != "deepseek-official":
@@ -214,9 +256,13 @@ class _TurnsExceeded(RuntimeError):
     pass
 
 
+MCP_LIST_GRACE_SECONDS = 90.0  # dsh must have asked our server for tools/list by then
+
+
 def _run_sync(*, dsh_bin: str, cwd: str, dsh_home: str, provider: str, model: str | None,
               effort: str | None, system_prompt: str | None, prompt: str, session_id: str,
-              patch_path: str, label: str, max_turns: int, wall_seconds: float | None):
+              patch_path: str, label: str, max_turns: int, wall_seconds: float | None,
+              listed: threading.Event, http_trace: dict):
     """One dsh run, bounded two ways dsh itself doesn't offer: a turn cap
     (assistant/message events, the model's turns, counted as they stream —
     the same quantity Claude's max_turns bounds) and a wall-clock budget
@@ -227,6 +273,7 @@ def _run_sync(*, dsh_bin: str, cwd: str, dsh_home: str, provider: str, model: st
     trace = os.environ.get("DSH_TRACE_EVENTS", "") not in ("", "0")
     turns = 0
     timed_out = threading.Event()
+    no_tools = threading.Event()
 
     def on_notification(n):
         nonlocal turns
@@ -257,29 +304,54 @@ def _run_sync(*, dsh_bin: str, cwd: str, dsh_home: str, provider: str, model: st
         # longer budget means fewer retries in the common case.
         initialize_timeout_seconds=90.0,
     ) as harness:
-        watchdog = None
+        timers = []
         if wall_seconds is not None:
             def _kill():
                 timed_out.set()
                 print(f"== [{label}] wall-clock budget of {wall_seconds / 60:g} min hit — closing dsh runtime",
                       flush=True)
                 harness.close()
-            watchdog = threading.Timer(wall_seconds, _kill)
-            watchdog.daemon = True
-            watchdog.start()
+            timers.append(threading.Timer(wall_seconds, _kill))
+
+        def _check_listed():
+            # a dsh whose mcp-client failed to attach runs on with only its
+            # builtin editor/bash: the model then wanders the filesystem for
+            # hours and can never submit (seen 2026-09-03: 71 str_replace_editor
+            # views of an unrelated directory). Kill it early, retry as transient.
+            if not listed.is_set():
+                no_tools.set()
+                print(f"== [{label}] dsh never requested tools/list from our MCP server within "
+                      f"{MCP_LIST_GRACE_SECONDS:g} s — closing dsh runtime", flush=True)
+                harness.close()
+        timers.append(threading.Timer(MCP_LIST_GRACE_SECONDS, _check_listed))
+        for t in timers:
+            t.daemon = True
+            t.start()
+
+        def _stderr_tail(n=25):
+            lines = list(getattr(harness.client, "_stderr_lines", []))[-n:]
+            return "\n".join(lines)
+
         try:
             result = harness.run(prompt, session_id=session_id, on_notification=on_notification)
         except Exception as e:
             if timed_out.is_set():
                 raise AgentTimeout(f"[{label}] agent run exceeded the wall-clock budget of "
                                    f"{wall_seconds / 60:g} min (AGENT_WALL_MIN)") from None
+            if no_tools.is_set():
+                print(f"== [{label}] http requests seen by our MCP server: {dict(http_trace)}\n"
+                      f"== [{label}] dsh stderr tail:\n{_stderr_tail()}", flush=True)
+                raise RuntimeError(f"[{label}] mcp tools never listed by dsh (mcp-client failed to attach)") from None
             if isinstance(e, _TurnsExceeded):
                 raise AgentIncompleteError(f"{e} without a successful submit call") from None
             raise
         finally:
-            if watchdog is not None:
-                watchdog.cancel()
-        print(f"== [{label}] dsh run: {turns} model turn(s)", flush=True)
+            for t in timers:
+                t.cancel()
+        print(f"== [{label}] dsh run: {turns} model turn(s); http requests seen by our MCP server "
+              f"(method path: [requests, responses started]): {dict(http_trace)}", flush=True)
+        if not listed.is_set():
+            print(f"== [{label}] dsh stderr tail:\n{_stderr_tail()}", flush=True)
         return result
 
 
@@ -319,13 +391,38 @@ async def run_agent(
                             name=spec.name, description=spec.description)
     mcp_url = f"http://127.0.0.1:{port}{mcp_server.settings.streamable_http_path}"
 
+    listed = threading.Event()  # set once dsh's mcp-client asks for tools/list
+    _orig_list_tools = mcp_server._tool_manager.list_tools
+
+    def _list_tools_hook(*a, **kw):
+        listed.set()
+        return _orig_list_tools(*a, **kw)
+    mcp_server._tool_manager.list_tools = _list_tools_hook  # type: ignore[method-assign]
+
+    http_trace: dict = {}  # "METHOD path" -> [requests, responses completed]
+    inner_app = mcp_server.streamable_http_app()
+
+    async def app(scope, receive, send):
+        if scope["type"] != "http":
+            return await inner_app(scope, receive, send)
+        key = f"{scope['method']} {scope['path']}"
+        rec = http_trace.setdefault(key, [0, 0])
+        rec[0] += 1
+
+        async def _send(msg):
+            if msg["type"] == "http.response.start":
+                rec[1] += 1
+            await send(msg)
+        await inner_app(scope, receive, _send)
+
     # run uvicorn ourselves instead of FastMCP.run_streamable_http_async() so
     # teardown is a graceful should_exit (no lifespan CancelledError traceback
     # on every call) and its log level is ours to set
     import uvicorn
 
-    server = uvicorn.Server(uvicorn.Config(mcp_server.streamable_http_app(), host="127.0.0.1", port=port,
-                                           log_level="warning", lifespan="on"))
+    if _SseAppStatus is not None:
+        _SseAppStatus.should_exit = False
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="on"))
     server_task = asyncio.create_task(server.serve())
     try:
         for _ in range(50):  # wait for uvicorn to actually bind before dsh tries to connect
@@ -345,12 +442,21 @@ async def run_agent(
             # dsh has no pipe-buffer knob (max_buffer_size is Claude-only);
             # max_turns and the wall-clock budget are enforced in _run_sync
             _ = max_buffer_size
-            result = await asyncio.to_thread(
-                _run_sync, dsh_bin=dsh_bin, cwd=cwd, dsh_home=dsh_home, provider=provider,
-                model=model, effort=effort, system_prompt=system_prompt, prompt=prompt,
-                session_id=f"{label}-{os.getpid()}", patch_path=patch_path, label=label,
-                max_turns=max_turns, wall_seconds=wall_seconds,
-            )
+            keep = os.environ.get("DSH_KEEP_SESSIONS", "") not in ("", "0")
+            try:
+                result = await asyncio.to_thread(
+                    _run_sync, dsh_bin=dsh_bin, cwd=cwd, dsh_home=dsh_home, provider=provider,
+                    model=model, effort=effort, system_prompt=system_prompt, prompt=prompt,
+                    session_id=f"{label}-{os.getpid()}", patch_path=patch_path, label=label,
+                    max_turns=max_turns, wall_seconds=wall_seconds, listed=listed, http_trace=http_trace,
+                )
+                keep = keep or "value" not in submitted_holder
+            except BaseException:
+                keep = True
+                raise
+            finally:
+                if keep:
+                    _keep_session_log(dsh_home, cwd, label)
     finally:
         server.should_exit = True
         try:
