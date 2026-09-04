@@ -6,6 +6,45 @@ from __future__ import annotations
 
 from .harness import AgentIncompleteError, AgentRunResult, ToolSpec
 
+# Oldest claude-agent-sdk this backend accepts. 0.2.139 bundles Claude Code
+# 2.1.233, which rejects the default model on any image Read ("API Error: 400
+# Claude Code 2.1.233 does not support this model; version 2.1.251 or newer is
+# required") and surfaces it as the useless "returned an error result: success";
+# 0.2.152 (CLI 2.1.259) is the first version verified clean here, so that is
+# the floor — an older install fails loudly at the first agent call instead of
+# five retries deep into a multi-hour job.
+MIN_CLAUDE_AGENT_SDK = (0, 2, 152)
+
+
+def _version_tuple(v: str) -> tuple[int, ...]:
+    out = []
+    for part in v.split("."):
+        digits = "".join(ch for ch in part if ch.isdigit())
+        if not digits:
+            break
+        out.append(int(digits))
+    return tuple(out)
+
+
+def check_claude_agent_sdk_version() -> str:
+    """Raise RuntimeError if the installed claude-agent-sdk is older than
+    MIN_CLAUDE_AGENT_SDK; return the installed version string otherwise."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        installed = version("claude-agent-sdk")
+    except PackageNotFoundError:
+        raise RuntimeError("HARNESS=claude needs the claude-agent-sdk package (pip install claude-agent-sdk)") from None
+    floor = ".".join(map(str, MIN_CLAUDE_AGENT_SDK))
+    if _version_tuple(installed) < MIN_CLAUDE_AGENT_SDK:
+        raise RuntimeError(
+            f"claude-agent-sdk {installed} is too old for this pipeline (minimum {floor}): its bundled "
+            f"Claude Code CLI rejects the default model on image reads. Upgrade: "
+            f"pip install -U 'claude-agent-sdk>={floor}'"
+        )
+    return installed
+
+
 _BUILTIN = {
     "read": ["Read"], "glob": ["Glob"], "grep": ["Grep"],
     # Claude Code's session task list (a progress checklist the model keeps
@@ -29,9 +68,10 @@ async def run_agent(
     label: str,
     max_buffer_size: int | None,
 ) -> AgentRunResult:
+    check_claude_agent_sdk_version()
     from claude_agent_sdk import (
-        AssistantMessage, ClaudeAgentOptions, ResultMessage, ToolUseBlock,
-        create_sdk_mcp_server, query, tool,
+        AssistantMessage, ClaudeAgentOptions, ResultMessage, ToolResultBlock, ToolUseBlock,
+        UserMessage, create_sdk_mcp_server, query, tool,
     )
 
     server_name = "ecarsi_tools"
@@ -72,12 +112,23 @@ async def run_agent(
 
     result_text = None
     cost_usd = None
+    pending: dict[str, str] = {}  # tool_use_id → tool name, so a failed result can be attributed
     async for message in query(prompt=prompt, options=options):
         if isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, ToolUseBlock):
                     arg_hint = str(next(iter(block.input.values()), ""))[:80]
                     print(f"== [{label}] agent: {block.name}({arg_hint})", flush=True)
+                    pending[block.id] = block.name
+        elif isinstance(message, UserMessage) and isinstance(message.content, list):
+            # tool RESULTS come back as user-turn blocks; a silently failing
+            # builtin (e.g. a Task* tool the CLI doesn't know) would otherwise
+            # leave no trace in our logs — surface every error result
+            for block in message.content:
+                if isinstance(block, ToolResultBlock) and block.is_error:
+                    text = block.content if isinstance(block.content, str) else str(block.content)
+                    print(f"== [{label}] tool error in {pending.get(block.tool_use_id, '?')}: "
+                          f"{text[:200]!r}", flush=True)
         elif isinstance(message, ResultMessage):
             result_text = message.result
             cost_usd = message.total_cost_usd
