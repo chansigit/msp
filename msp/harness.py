@@ -10,14 +10,13 @@ the actual answer is produced/validated — the model never needs filesystem
 write access to get its answer out) and hands it to `run_agent()`. Which SDK
 actually drives the model is an env-var choice, not a call-site choice:
 
-    HARNESS=deepseek    (default since 2026-09-03 — Claude Code quota is the
-                         scarce resource) DeepSeek Harness (dsh) via its
-                         Python SDK, driving Doubao by default, tools
-                         bridged over an in-process streamable-http MCP
-                         server (see below)
+    HARNESS=openai      (default since 2026-09-04) OpenAI Agents SDK with
+                         the Doubao Ark endpoint, direct in-process
+                         function tools
+    HARNESS=deepseek    DeepSeek Harness (dsh) via its Python SDK, driving
+                         Doubao by default, tools bridged over an in-process
+                         streamable-http MCP server (see below)
     HARNESS=claude      claude_agent_sdk, in-process MCP tools
-    HARNESS=openai      OpenAI Agents SDK with the Doubao Ark endpoint,
-                         direct in-process function tools
 The tool `handler` return shape (`{"content": [{"type": "text", ...}],
 "is_error": bool}`) is already the real MCP `CallToolResult` wire shape —
 Claude Agent SDK's in-process server is itself an MCP server — so the same
@@ -165,7 +164,7 @@ class AgentIncompleteError(RuntimeError):
     """The run ended without the submit tool ever firing."""
 
 
-DEFAULT_BACKEND = "deepseek"
+DEFAULT_BACKEND = "openai"
 
 
 def backend_name() -> str:

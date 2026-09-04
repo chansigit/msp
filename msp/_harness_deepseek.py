@@ -276,8 +276,8 @@ def _write_raw_attachment_plugin(dsh_home: str, dsh_bin: str) -> tuple[str, str]
 
 
 def _default_dsh_bin() -> str | None:
-    """The source build this cluster uses when DSH_BIN is unset (HARNESS=
-    deepseek is the default, so a bare `eca-rsi run` must find dsh)."""
+    """The source build this cluster uses when DSH_BIN is unset, so an
+    explicit HARNESS=deepseek remains usable without a DSH_BIN override."""
     root = os.environ.get("SCRATCH")
     if root:
         cand = os.path.join(root, "tools", "deepseek-harness-src", "apps", "cli", "lib", "bin.js")

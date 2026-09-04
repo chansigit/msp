@@ -21,9 +21,10 @@ pip install msp-sc                     # PyPI name; `import msp`
 pip install "msp-sc[agent]"
 ```
 
-The default backend remains `HARNESS=deepseek`. For the direct Python path,
-export `HARNESS=openai` and `ARK_API_KEY`; it uses Ark's Responses API and
-server-side `previous_response_id` chaining by default. Set
+The default backend is OpenAI Agents SDK with
+`doubao-seed-2-1-turbo-260628`; provide `ARK_API_KEY`. It uses Ark's
+Responses API and server-side `previous_response_id` chaining by default.
+Set `HARNESS=deepseek` for dsh or `HARNESS=claude` for claude_agent_sdk. Set
 `OPENAI_AGENTS_API=chat_completions` only for text-only compatibility, or
 `OPENAI_AGENTS_SERVER_STATE=0` when complete local-history replay is required.
 If an image-heavy session reaches Ark's context limit, the backend retains

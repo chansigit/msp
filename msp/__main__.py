@@ -42,7 +42,7 @@ parser.add_argument("--annotate", action="store_true",
                          "implies --inspect")
 parser.add_argument("--language", default="English", help='agent prose language (default "English")')
 parser.add_argument("--harness", choices=["deepseek", "openai", "claude"], default=None,
-                    help="agent runtime backend (default: HARNESS env, then deepseek)")
+                    help="agent runtime backend (default: HARNESS env, then openai)")
 parser.add_argument("--model", default=None, help='model id for the selected HARNESS backend')
 parser.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"],
                     help="reasoning effort for the agents (models that support it)")
