@@ -264,11 +264,13 @@ min_logfc=1, max_padj=1e-10, max_pct2=0.3 returns just the specific positive mar
 (default 20). At least one of cluster/gene is required. For an arbitrary a-vs-b comparison use check_deg \
 (same thresholds)."""
 
-_DEG_SQL_DOC = """Read-only SQL (one SELECT, ≤200 rows returned) over the same precomputed DEG tables, for \
-questions deg_lookup's filters can't express. Table deg(key TEXT, view TEXT 'global'|'local', cluster \
-TEXT, rank INTEGER 1=best, gene TEXT, logfc REAL, padj REAL, pct1 REAL, pct2 REAL, neighbors TEXT \
-'a|b|c' for local rows). Example: SELECT cluster, gene, logfc FROM deg WHERE key='msp_leiden_r2.0' AND \
-view='global' AND gene IN ('CD3D','MS4A1') ORDER BY cluster, rank"""
+_DEG_SQL_DOC = """Read-only SQL (one SELECT, ≤200 rows returned) over the working directory's tables: deg(key \
+TEXT, view TEXT 'global'|'local', cluster TEXT, rank INTEGER 1=best, gene TEXT, logfc REAL, padj REAL, \
+pct1 REAL, pct2 REAL, neighbors TEXT 'a|b|c' for local rows) = every precomputed DEG table, plus one table \
+per other CSV in the directory named by its file stem (cluster_qc_msp_leiden_r1_0, paga_neighbors_..., \
+stress_clusters, cell_outlier_summary, ...; non-alphanumeric characters in names/columns become '_'). \
+Send the query 'schema' to list tables and columns. Example: SELECT cluster, gene, logfc FROM deg WHERE \
+key='msp_leiden_r2.0' AND view='global' AND gene IN ('CD3D','MS4A1') ORDER BY cluster, rank"""
 
 
 class DegTables:
@@ -313,8 +315,27 @@ class DegTables:
         self.conn.executemany("INSERT INTO deg VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
         self.conn.execute("CREATE INDEX ix_ckv ON deg(key, view, cluster, rank)")
         self.conn.execute("CREATE INDEX ix_gene ON deg(gene)")
-        self.conn.commit()
         self.n_rows = len(rows)
+        # every other CSV in the directory (QC tables, paga_neighbors_*, stress_clusters,
+        # fragments, ...) as its own table named by file stem — the agents reach for
+        # them in SQL as soon as they see one table exists, and several are large
+        self.extra_tables: dict[str, tuple[int, list[str]]] = {}  # name -> (rows, columns)
+        for path in sorted(_glob.glob(os.path.join(outdir, "*.csv"))):
+            stem = os.path.basename(path)[:-len(".csv")]
+            if stem.startswith("deg_"):
+                continue
+            name = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in stem)
+            try:
+                df = pd.read_csv(path)
+            except Exception:
+                continue
+            if df.empty or df.shape[1] == 0:
+                continue
+            df.columns = ["".join(ch if ch.isalnum() or ch == "_" else "_" for ch in str(c)) or f"c{i}"
+                          for i, c in enumerate(df.columns)]
+            df.to_sql(name, self.conn, index=False, if_exists="replace")
+            self.extra_tables[name] = (len(df), list(df.columns))
+        self.conn.commit()
 
         def _authorizer(action, *_):
             return sqlite3.SQLITE_OK if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ,
@@ -380,14 +401,23 @@ class DegTables:
                 + " (tables hold each cluster's top-50 per view; for other references or deeper lists use check_deg):")
         return self._fmt_rows(rows, head)
 
+    def schema_text(self):
+        """One line per table for the tool description / a schema query."""
+        lines = [f"deg ({self.n_rows} rows): key, view, cluster, rank, gene, logfc, padj, pct1, pct2, neighbors"]
+        for name, (n, cols) in self.extra_tables.items():  # (PRAGMA is blocked by the read-only authorizer)
+            lines.append(f"{name} ({n} rows): " + ", ".join(cols))
+        return "\n".join(lines)
+
     def clusters(self, key):
         return [r[0] for r in self.conn.execute(
             "SELECT DISTINCT cluster FROM deg WHERE key = ? ORDER BY CAST(cluster AS REAL), cluster", [key])]
 
     def sql(self, query, max_rows=200):
         q = str(query or "").strip().rstrip(";").strip()
+        if q.lower() in ("schema", "tables", ".tables", "show tables"):
+            return self.schema_text()
         if not q.lower().startswith(("select", "with")):
-            return "only a single SELECT is allowed"
+            return "only a single SELECT is allowed (or 'schema' to list tables and columns)"
         if ";" in q:
             return "one statement only"
         try:
