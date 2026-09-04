@@ -16,6 +16,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dependencies = [
+    "agent-harness-bridge==0.1.0",
     "scanpy",
     "anndata",
     "igraph",
@@ -32,7 +33,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-agent = ["claude-agent-sdk", "openai-agents==0.22.0", "mcp>=1.19,<2"]
+agent = ["agent-harness-bridge[all]==0.1.0"]
 
 [project.urls]
 Homepage = "https://github.com/chansigit/msp"

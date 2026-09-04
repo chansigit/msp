@@ -21,6 +21,10 @@ pip install msp-sc                     # PyPI name; `import msp`
 pip install "msp-sc[agent]"
 ```
 
+The runtime implementation comes from the independent
+`agent-harness-bridge` package; `msp.harness` remains a compatibility import.
+MSP continues to own its prompts, biological tools and submit validation.
+
 The default backend is OpenAI Agents SDK with
 `doubao-seed-2-1-turbo-260628`; provide `ARK_API_KEY`. It uses Ark's
 Responses API and server-side `previous_response_id` chaining by default.
