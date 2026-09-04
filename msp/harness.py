@@ -173,9 +173,11 @@ async def run_agent(
 ) -> AgentRunResult:
     """Run one agent turn to completion; raise AgentIncompleteError if
     `submit_tool` never fired. `allowed_builtin` is the read-only filesystem
-    exploration surface ("read", "glob", "grep" — the only values used
-    anywhere in this codebase today); the model never gets write access
-    under either backend."""
+    exploration surface ("read", "glob", "grep") plus "tasks" — a session
+    task list the model keeps as its own progress checklist (Claude Code's
+    TaskCreate/TaskUpdate/TaskList/TaskGet; the DeepSeek backend serves
+    same-named in-memory tools so prompts stay identical). The model never
+    gets write access under either backend."""
     backend = backend_name()
     if backend == "claude":
         from ._harness_claude import run_agent as _run

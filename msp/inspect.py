@@ -1,6 +1,7 @@
 """
-msp.inspect — per-cluster inspection of an msp integration directory with a
-Claude agent (claude-agent-sdk), mirroring osp.annotate's architecture.
+msp.inspect — per-cluster inspection of an msp integration directory with an
+agent (msp.harness: HARNESS=claude|deepseek), mirroring osp.annotate's
+architecture.
 
 Every integrated cluster goes through five tests (the R11 battery):
 
@@ -50,8 +51,8 @@ import pandas as pd
 import scanpy as sc
 import scipy.sparse as sp
 
+from .harness import default_model
 from .report import generate_report
-from .agent_util import run_query
 
 _OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le}
 
@@ -412,47 +413,26 @@ contamination (decontX evidence exists for that)."""
 
 async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, language,
                      model, effort, max_turns, remove_mask):
-    from claude_agent_sdk import (
-        AssistantMessage, ClaudeAgentOptions, ResultMessage, ToolUseBlock,
-        create_sdk_mcp_server, tool,
-    )
+    from .harness import ToolSpec, run_agent
 
     state = {"key": cluster_key, "n_sub": 0}
-    holder = {}
 
     def current_clusters():
         return _cluster_order(ad.obs[state["key"]].astype(str))
 
-    @tool("check_genes",
-          "Per-cluster mean expression and expressing-cell fraction for the given genes "
-          "(case-insensitive). Use to verify markers.", {"genes": list})
     async def check_genes(args):
         genes = args["genes"]
         if isinstance(genes, str):
             genes = [g for g in genes.replace(",", " ").split() if g]
         return {"content": [{"type": "text", "text": _gene_table(ad, genes, state["key"])}]}
 
-    @tool("check_qc_scores",
-          "Per-cluster QC (median|p90) + composition (n_samples, dominant-sample share, "
-          "inherited flag/drop fractions). No arguments.", {})
     async def check_qc_scores(args):
         return {"content": [{"type": "text", "text": _qc_table(ad, state["key"], batch_col)}]}
 
-    @tool("check_stability",
-          "How one cluster decomposes across the other clustering resolutions — test (e). "
-          "A one-resolution splinter dissolves elsewhere.", {"cluster": str})
     async def check_stability(args):
         return {"content": [{"type": "text",
                              "text": _stability_table(ad, str(args["cluster"]), state["key"], other_keys)}]}
 
-    @tool("check_deg",
-          "On-demand DEG (wilcoxon) for the CURRENT working clustering, including any subcluster "
-          "splits already made — use this once a cluster you're investigating has an id the "
-          "precomputed deg_global_*/deg_local_* CSVs never saw. reference='rest' (default) is "
-          "one-vs-rest against every other current cluster, same semantics as deg_global_*. Pass "
-          "a comma-separated list of other cluster ids as reference instead for a pooled-group "
-          "comparison (e.g. a subcluster vs its siblings, or vs specific PAGA neighbors), same "
-          "semantics as deg_local_*.", {"cluster": str, "reference": str, "top_n": int})
     async def check_deg(args):
         c = str(args["cluster"])
         if c not in current_clusters():
@@ -470,10 +450,6 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
         text = _deg_table(ad, state["key"], c, reference, top_n, remove_mask)
         return {"content": [{"type": "text", "text": text}]}
 
-    @tool("subcluster",
-          "Split one heterogeneous cluster with leiden restrict_to at the given resolution "
-          '(0.3-1.0 typical). New ids look like "5,0"; all tools and the final submission '
-          "follow the refined clustering.", {"cluster": str, "resolution": float})
     async def subcluster(args):
         c = str(args["cluster"])
         if c not in current_clusters():
@@ -487,10 +463,6 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
             text += "\n(working clustering refined; all tools and the submission now use the new ids)"
         return {"content": [{"type": "text", "text": text}]}
 
-    @tool("submit_inspection",
-          "Submit the final verdicts (mandatory; the run completes only after validation "
-          "passes). proposal_json is a JSON string with this schema:\n" + _PROPOSAL_SCHEMA_DOC,
-          {"proposal_json": str})
     async def submit_inspection(args):
         try:
             proposal = json.loads(args["proposal_json"])
@@ -503,56 +475,54 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
                                  "text": "validation failed, fix and resubmit:\n- " + "\n- ".join(problems)}],
                     "is_error": True}
         proposal["cluster_key"] = state["key"]
-        holder["proposal"] = proposal
         path = os.path.join(outdir, "inspection_proposal.json")
         with open(path, "w") as fh:
             json.dump(proposal, fh, ensure_ascii=False, indent=2)
-        return {"content": [{"type": "text", "text": f"saved to {path}"}]}
+        return {"content": [{"type": "text", "text": f"saved to {path}"}], "_submitted": proposal}
 
-    server = create_sdk_mcp_server(name="msp", version="1.0.0",
-                                   tools=[check_genes, check_qc_scores, check_stability,
-                                          check_deg, subcluster, submit_inspection])
-    options = ClaudeAgentOptions(
-        mcp_servers={"msp": server},
-        allowed_tools=["Read", "Glob", "Grep",
-                       "mcp__msp__check_genes", "mcp__msp__check_qc_scores",
-                       "mcp__msp__check_stability", "mcp__msp__check_deg",
-                       "mcp__msp__subcluster", "mcp__msp__submit_inspection"],
-        permission_mode="bypassPermissions",
-        disallowed_tools=["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch"],
-        max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
+    tools = [
+        ToolSpec("check_genes",
+                 "Per-cluster mean expression and expressing-cell fraction for the given genes "
+                 "(case-insensitive). Use to verify markers.", {"genes": list}, check_genes),
+        ToolSpec("check_qc_scores",
+                 "Per-cluster QC (median|p90) + composition (n_samples, dominant-sample share, "
+                 "inherited flag/drop fractions). No arguments.", {}, check_qc_scores),
+        ToolSpec("check_stability",
+                 "How one cluster decomposes across the other clustering resolutions — test (e). "
+                 "A one-resolution splinter dissolves elsewhere.", {"cluster": str}, check_stability),
+        ToolSpec("check_deg",
+                 "On-demand DEG (wilcoxon) for the CURRENT working clustering, including any subcluster "
+                 "splits already made — use this once a cluster you're investigating has an id the "
+                 "precomputed deg_global_*/deg_local_* CSVs never saw. reference='rest' (default) is "
+                 "one-vs-rest against every other current cluster, same semantics as deg_global_*. Pass "
+                 "a comma-separated list of other cluster ids as reference instead for a pooled-group "
+                 "comparison (e.g. a subcluster vs its siblings, or vs specific PAGA neighbors), same "
+                 "semantics as deg_local_*.", {"cluster": str, "reference": str, "top_n": int}, check_deg),
+        ToolSpec("subcluster",
+                 "Split one heterogeneous cluster with leiden restrict_to at the given resolution "
+                 '(0.3-1.0 typical). New ids look like "5,0"; all tools and the final submission '
+                 "follow the refined clustering.", {"cluster": str, "resolution": float}, subcluster),
+        ToolSpec("submit_inspection",
+                 "Submit the final verdicts (mandatory; the run completes only after validation "
+                 "passes). proposal_json is a JSON string with this schema:\n" + _PROPOSAL_SCHEMA_DOC,
+                 {"proposal_json": str}, submit_inspection),
+    ]
+    result = await run_agent(
+        tools=tools, submit_tool="submit_inspection",
+        prompt="Inspect this msp integration directory following the workflow in the system "
+               "prompt exactly, and finish by submitting via submit_inspection.",
         system_prompt=_system_prompt(outdir, cluster_key,
                                      _cluster_order(ad.obs[cluster_key].astype(str)),
                                      batch_col, species, language,
                                      n_batches=int(ad.obs[batch_col].nunique())),
-        cwd=os.path.abspath(outdir),
-        max_turns=max_turns,
-        **({"model": model} if model else {}),
-        **({"effort": effort} if effort else {}),
+        cwd=os.path.abspath(outdir), model=model, effort=effort, max_turns=max_turns,
+        allowed_builtin=("read", "glob", "grep"), label="inspect",
+        max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
     )
-
-    result_text = None
-    async for message in run_query(
-        "Inspect this msp integration directory following the workflow in the system "
-        "prompt exactly, and finish by submitting via submit_inspection.",
-        options, label="inspect",
-    ):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, ToolUseBlock):
-                    arg_hint = str(next(iter(block.input.values()), ""))[:80]
-                    print(f"== agent: {block.name}({arg_hint})", flush=True)
-        elif isinstance(message, ResultMessage):
-            result_text = message.result
-            if message.total_cost_usd:
-                print(f"== agent cost: ${message.total_cost_usd:.2f}", flush=True)
-
-    if "proposal" not in holder:
-        raise RuntimeError(f"agent finished without a successful submit_inspection call. Final reply:\n{result_text}")
-    if result_text:
+    if result.transcript_text:
         with open(os.path.join(outdir, "inspection_notes.md"), "w") as fh:
-            fh.write(result_text)
-    return holder["proposal"]
+            fh.write(result.transcript_text)
+    return result.submitted
 
 
 def inspect_clusters(outdir, species=None, language="English", cluster_key=None,
@@ -577,8 +547,8 @@ def inspect_clusters(outdir, species=None, language="English", cluster_key=None,
     print(f"== {int(remove_mask.sum())}/{ad.n_obs} cells already recommend_removal "
           "(pre-annotation filtering) — excluded from check_deg / subcluster DE", flush=True)
 
-    proposal = asyncio.run(_run_agent(ad, outdir, cluster_key, other_keys, batch_col,
-                                      species, language, model, effort, max_turns, remove_mask))
+    proposal = asyncio.run(_run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, language,
+                                      model or default_model(), effort, max_turns, remove_mask))
     _apply_proposal(ad, proposal["cluster_key"], proposal)
     _plot_verdicts(ad, os.path.join(outdir, "figures"))
     tmp = os.path.join(outdir, "integrated.tmp.h5ad")

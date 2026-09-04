@@ -60,8 +60,11 @@ import tempfile
 
 import yaml
 
-logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)  # silence its own noisy
-# lifespan-cancellation traceback when we tear the per-call MCP server down
+for _name in ("mcp", "mcp.server", "mcp.server.streamable_http", "mcp.server.streamable_http_manager",
+              "mcp.server.lowlevel.server"):
+    logging.getLogger(_name).setLevel(logging.WARNING)  # per-request INFO lines are pure noise here
+# (uvicorn's own loggers are configured at server start, so they are quieted
+# through uvicorn.Config(log_level=...) in run_agent, not here)
 
 from .harness import AgentIncompleteError, AgentRunResult, ToolSpec
 
@@ -77,13 +80,15 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _tool_fn(spec: ToolSpec, submitted_holder: dict, is_submit: bool):
+def _tool_fn(spec: ToolSpec, submitted_holder: dict, is_submit: bool, label: str):
     import mcp.types as types
 
     params = [inspect.Parameter(k, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=t)
               for k, t in spec.input_schema.items()]
 
     async def fn(**kwargs):
+        arg_hint = str(next(iter(kwargs.values()), ""))[:80]  # same trace line as the Claude backend
+        print(f"== [{label}] agent: {spec.name}({arg_hint})", flush=True)
         result = await spec.handler(kwargs)
         if is_submit and not result.get("is_error"):
             submitted_holder["value"] = result.get("_submitted", kwargs)
@@ -93,6 +98,66 @@ def _tool_fn(spec: ToolSpec, submitted_holder: dict, is_submit: bool):
     fn.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
     fn.__name__ = spec.name
     return fn
+
+
+def _task_tools() -> list[ToolSpec]:
+    """Host-side stand-in for Claude Code's session task list (allowed_builtin
+    "tasks"): same tool names and the same create/update/list/get shape, kept
+    in memory for one run_agent() call. Purely the model's own progress
+    checklist — coverage is enforced by each call site's finalize/submit
+    validation, never by this list."""
+    tasks: dict[str, dict] = {}
+    statuses = ("pending", "in_progress", "completed")
+
+    def _text(s):
+        return {"content": [{"type": "text", "text": s}]}
+
+    def _err(s):
+        return {"content": [{"type": "text", "text": s}], "is_error": True}
+
+    def _render(t):
+        return f"#{t['id']} [{t['status']}] {t['subject']}" + (f" — {t['description']}" if t["description"] else "")
+
+    async def task_create(args):
+        tid = str(len(tasks) + 1)
+        tasks[tid] = {"id": tid, "subject": str(args.get("subject") or "").strip(),
+                      "description": str(args.get("description") or "").strip(), "status": "pending"}
+        if not tasks[tid]["subject"]:
+            del tasks[tid]
+            return _err("subject is required")
+        return _text(f"created task #{tid}: {tasks[tid]['subject']}")
+
+    async def task_update(args):
+        tid = str(args.get("taskId") or "").lstrip("#")
+        if tid not in tasks:
+            return _err(f"no task #{tid}; existing: {sorted(tasks, key=int)}")
+        status = str(args.get("status") or "").strip()
+        if status not in statuses:
+            return _err(f"status must be one of {statuses}")
+        tasks[tid]["status"] = status
+        return _text(f"updated {_render(tasks[tid])}")
+
+    async def task_list(args):
+        if not tasks:
+            return _text("no tasks yet")
+        done = sum(t["status"] == "completed" for t in tasks.values())
+        return _text("\n".join(_render(tasks[k]) for k in sorted(tasks, key=int))
+                     + f"\n({done}/{len(tasks)} completed)")
+
+    async def task_get(args):
+        tid = str(args.get("taskId") or "").lstrip("#")
+        if tid not in tasks:
+            return _err(f"no task #{tid}; existing: {sorted(tasks, key=int)}")
+        return _text(_render(tasks[tid]))
+
+    return [
+        ToolSpec("TaskCreate", "Create a task on your session task list (a progress checklist). "
+                 "Returns its id.", {"subject": str, "description": str}, task_create),
+        ToolSpec("TaskUpdate", "Set a task's status: pending | in_progress | completed.",
+                 {"taskId": str, "status": str}, task_update),
+        ToolSpec("TaskList", "List every task on your session task list with its status.", {}, task_list),
+        ToolSpec("TaskGet", "Show one task by id.", {"taskId": str}, task_get),
+    ]
 
 
 def _render_patch(mcp_url: str, allowed_builtin: tuple[str, ...], provider: str, model: str | None) -> str:
@@ -177,12 +242,20 @@ async def run_agent(
     submitted_holder: dict = {}
     port = _free_port()
     mcp_server = FastMCP(name=f"ecarsi-{label}", host="127.0.0.1", port=port, stateless_http=True)
-    for spec in tools:
-        mcp_server.add_tool(_tool_fn(spec, submitted_holder, spec.name == submit_tool),
+    served = list(tools) + (_task_tools() if "tasks" in allowed_builtin else [])
+    for spec in served:
+        mcp_server.add_tool(_tool_fn(spec, submitted_holder, spec.name == submit_tool, label),
                             name=spec.name, description=spec.description)
     mcp_url = f"http://127.0.0.1:{port}{mcp_server.settings.streamable_http_path}"
 
-    server_task = asyncio.create_task(mcp_server.run_streamable_http_async())
+    # run uvicorn ourselves instead of FastMCP.run_streamable_http_async() so
+    # teardown is a graceful should_exit (no lifespan CancelledError traceback
+    # on every call) and its log level is ours to set
+    import uvicorn
+
+    server = uvicorn.Server(uvicorn.Config(mcp_server.streamable_http_app(), host="127.0.0.1", port=port,
+                                           log_level="warning", lifespan="on"))
+    server_task = asyncio.create_task(server.serve())
     try:
         for _ in range(50):  # wait for uvicorn to actually bind before dsh tries to connect
             await asyncio.sleep(0.05)
@@ -208,11 +281,11 @@ async def run_agent(
                 session_id=f"{label}-{os.getpid()}", patch_path=patch_path,
             )
     finally:
-        server_task.cancel()
+        server.should_exit = True
         try:
-            await server_task
-        except (asyncio.CancelledError, Exception):
-            pass
+            await asyncio.wait_for(server_task, timeout=10)
+        except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+            server_task.cancel()
 
     if result.finish_reason == "error":
         errs = [e for e in result.events if e.get("type") == "turn/end"

@@ -1,6 +1,6 @@
 """
-msp.annotate — cell-type annotation of an msp integration directory with a
-Claude agent (claude-agent-sdk), run AFTER msp.inspect.
+msp.annotate — cell-type annotation of an msp integration directory with an
+agent (msp.harness: HARNESS=claude|deepseek), run AFTER msp.inspect.
 
 Unit of annotation: every cluster of the base clustering (msp_leiden_r2.0,
 the finer of the two Cluster Annotations resolutions). For each cluster the
@@ -9,8 +9,9 @@ splinter of its r1.0 parent / siblings? (2) best coarse (lineage) and fine
 (subtype) label, or noise/low-quality → remove; (3) merge into a sibling or
 neighbour, or keep as is — and submits one JSON per cluster.
 
-100% coverage is enforced twice: the agent tracks progress with Claude
-Code's Task tools (TaskCreate/TaskUpdate/TaskList — one task per cluster),
+100% coverage is enforced twice: the agent tracks progress with a session
+task list (TaskCreate/TaskUpdate/TaskList — one task per cluster; Claude
+Code's own under HARNESS=claude, a host-served equivalent under deepseek),
 and the host refuses finalize_annotation until every base cluster has a
 validated submission. Merge decisions are made in ONE session (the agent
 sees its own earlier verdicts), and the host resolves the merge graph
@@ -48,8 +49,8 @@ import pandas as pd
 import scanpy as sc
 
 from .inspect import _cluster_order, _deg_table, _file_inventory, _gene_table, _load_removal_mask
+from .harness import AgentIncompleteError, default_model
 from .report import generate_report
-from .agent_util import run_query
 
 BASE_KEY = "msp_leiden_r2.0"
 PARENT_KEY = "msp_leiden_r1.0"
@@ -427,38 +428,21 @@ dedicated QC pass; you annotate identity and decide merges."""
 
 async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga, pre_agent_removed,
                      language, model, effort, max_turns):
-    from claude_agent_sdk import (
-        AssistantMessage, ClaudeAgentOptions, ResultMessage, ToolUseBlock,
-        create_sdk_mcp_server, tool,
-    )
+    from .harness import ToolSpec, run_agent
 
     entries = {}
-    holder = {}
 
-    @tool("cluster_context",
-          "Non-expression context for one base cluster: size, share already slated for removal, "
-          "r1.0 parent composition and r2.0 siblings, PAGA neighbours, sample composition, QC "
-          "medians, inspection verdict composition, prior label compositions.", {"cluster": str})
     async def cluster_context(args):
         return {"content": [{"type": "text",
                              "text": _cluster_context(ad, str(args["cluster"]), batch_col, prior_cols, paga,
                                                       pre_agent_removed)}]}
 
-    @tool("check_genes",
-          f"Per-{BASE_KEY}-cluster mean expression and expressing-cell fraction for the given genes "
-          "(case-insensitive). Use to verify markers.", {"genes": list})
     async def check_genes(args):
         genes = args["genes"]
         if isinstance(genes, str):
             genes = [g for g in genes.replace(",", " ").split() if g]
         return {"content": [{"type": "text", "text": _gene_table(ad, genes, BASE_KEY)}]}
 
-    @tool("check_deg",
-          f"On-demand DEG (wilcoxon) for one {BASE_KEY} cluster. reference='rest' (default) is "
-          "one-vs-rest (deg_global semantics); a comma-separated list of cluster ids is a pooled "
-          "reference group (e.g. its siblings under the r1.0 parent, or one specific neighbour). "
-          "Cells already slated for removal are excluded, like the precomputed tables.",
-          {"cluster": str, "reference": str, "top_n": int})
     async def check_deg(args):
         c = str(args["cluster"])
         if c not in clusters:
@@ -475,9 +459,6 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
         return {"content": [{"type": "text",
                              "text": _deg_table(ad, BASE_KEY, c, reference, top_n, pre_agent_removed)}]}
 
-    @tool("submit_cluster",
-          "Submit (or resubmit — last one wins) the annotation of ONE base cluster. cluster_json is a "
-          "JSON string with this schema:\n" + _CLUSTER_SCHEMA_DOC, {"cluster_json": str})
     async def submit_cluster(args):
         try:
             e = json.loads(args["cluster_json"])
@@ -499,10 +480,6 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                              "text": f"recorded cluster {e['cluster_id']}; {len(entries)}/{len(clusters)} submitted"
                                      + (f", remaining: {left}" if left else " — all covered, call finalize_annotation")}]}
 
-    @tool("finalize_annotation",
-          "Validate all submissions together (coverage, merge graph consistency, label hierarchy) "
-          "and finish the run. overall is a short overall assessment of the dataset's populations.",
-          {"overall": str})
     async def finalize_annotation(args):
         problems = _validate_final(entries, clusters)
         if problems:
@@ -515,54 +492,51 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                     "clusters": [entries[c] for c in clusters],
                     "merged_groups": ["+".join(g) for g in groups],
                     "overall": str(args.get("overall") or "")}
-        holder["proposal"] = proposal
         path = os.path.join(outdir, "annotation_proposal.json")
         with open(path, "w") as fh:
             json.dump(proposal, fh, ensure_ascii=False, indent=2)
-        return {"content": [{"type": "text", "text": f"accepted; saved to {path}"}]}
+        return {"content": [{"type": "text", "text": f"accepted; saved to {path}"}], "_submitted": proposal}
 
-    server = create_sdk_mcp_server(name="msp", version="1.0.0",
-                                   tools=[cluster_context, check_genes, check_deg, submit_cluster,
-                                          finalize_annotation])
-    options = ClaudeAgentOptions(
-        mcp_servers={"msp": server},
-        allowed_tools=["Read", "Glob", "Grep", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
-                       "mcp__msp__cluster_context", "mcp__msp__check_genes", "mcp__msp__check_deg",
-                       "mcp__msp__submit_cluster", "mcp__msp__finalize_annotation"],
-        permission_mode="bypassPermissions",
-        disallowed_tools=["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch"],
-        max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
-        system_prompt=_system_prompt(outdir, clusters, batch_col, species, prior_cols, language,
-                                     n_batches=int(ad.obs[batch_col].nunique())),
-        cwd=os.path.abspath(outdir),
-        max_turns=max_turns,
-        **({"model": model} if model else {}),
-        **({"effort": effort} if effort else {}),
-    )
-
-    result_text = None
-    async for message in run_query(
-        "Annotate this msp integration directory following the workflow in the system prompt "
-        "exactly: one Task per base cluster, submit_cluster for each, then finalize_annotation.",
-        options, label="annotate",
-    ):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, ToolUseBlock):
-                    arg_hint = str(next(iter(block.input.values()), ""))[:80]
-                    print(f"== agent: {block.name}({arg_hint})", flush=True)
-        elif isinstance(message, ResultMessage):
-            result_text = message.result
-            if message.total_cost_usd:
-                print(f"== agent cost: ${message.total_cost_usd:.2f}", flush=True)
-
-    if "proposal" not in holder:
-        raise RuntimeError("agent finished without a successful finalize_annotation call "
-                           f"({len(entries)}/{len(clusters)} clusters submitted). Final reply:\n{result_text}")
-    if result_text:
+    tools = [
+        ToolSpec("cluster_context",
+                 "Non-expression context for one base cluster: size, share already slated for removal, "
+                 "r1.0 parent composition and r2.0 siblings, PAGA neighbours, sample composition, QC "
+                 "medians, inspection verdict composition, prior label compositions.", {"cluster": str},
+                 cluster_context),
+        ToolSpec("check_genes",
+                 f"Per-{BASE_KEY}-cluster mean expression and expressing-cell fraction for the given genes "
+                 "(case-insensitive). Use to verify markers.", {"genes": list}, check_genes),
+        ToolSpec("check_deg",
+                 f"On-demand DEG (wilcoxon) for one {BASE_KEY} cluster. reference='rest' (default) is "
+                 "one-vs-rest (deg_global semantics); a comma-separated list of cluster ids is a pooled "
+                 "reference group (e.g. its siblings under the r1.0 parent, or one specific neighbour). "
+                 "Cells already slated for removal are excluded, like the precomputed tables.",
+                 {"cluster": str, "reference": str, "top_n": int}, check_deg),
+        ToolSpec("submit_cluster",
+                 "Submit (or resubmit — last one wins) the annotation of ONE base cluster. cluster_json is a "
+                 "JSON string with this schema:\n" + _CLUSTER_SCHEMA_DOC, {"cluster_json": str}, submit_cluster),
+        ToolSpec("finalize_annotation",
+                 "Validate all submissions together (coverage, merge graph consistency, label hierarchy) "
+                 "and finish the run. overall is a short overall assessment of the dataset's populations.",
+                 {"overall": str}, finalize_annotation),
+    ]
+    try:
+        result = await run_agent(
+            tools=tools, submit_tool="finalize_annotation",
+            prompt="Annotate this msp integration directory following the workflow in the system prompt "
+                   "exactly: one Task per base cluster, submit_cluster for each, then finalize_annotation.",
+            system_prompt=_system_prompt(outdir, clusters, batch_col, species, prior_cols, language,
+                                         n_batches=int(ad.obs[batch_col].nunique())),
+            cwd=os.path.abspath(outdir), model=model, effort=effort, max_turns=max_turns,
+            allowed_builtin=("read", "glob", "grep", "tasks"), label="annotate",
+            max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
+        )
+    except AgentIncompleteError as e:
+        raise RuntimeError(f"{e} ({len(entries)}/{len(clusters)} clusters submitted)") from None
+    if result.transcript_text:
         with open(os.path.join(outdir, "annotation_notes.md"), "w") as fh:
-            fh.write(result_text)
-    return holder["proposal"]
+            fh.write(result.transcript_text)
+    return result.submitted
 
 
 # ---------------------------------------------------------------- entry
@@ -602,7 +576,7 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     paga = _load_paga_neighbors(outdir, BASE_KEY)
 
     proposal = asyncio.run(_run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
-                                      pre_agent_removed, language, model, effort, max_turns))
+                                      pre_agent_removed, language, model or default_model(), effort, max_turns))
 
     archive = _apply(ad, proposal, pre_agent_removed, pre_sources)
     archive.to_csv(os.path.join(outdir, "annotation_removed.csv"), index=False)

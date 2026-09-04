@@ -6,7 +6,13 @@ from __future__ import annotations
 
 from .harness import AgentIncompleteError, AgentRunResult, ToolSpec
 
-_BUILTIN = {"read": "Read", "glob": "Glob", "grep": "Grep"}
+_BUILTIN = {
+    "read": ["Read"], "glob": ["Glob"], "grep": ["Grep"],
+    # Claude Code's session task list (a progress checklist the model keeps
+    # for itself — one entry per cluster in msp/zmip annotate); the DeepSeek
+    # backend serves same-named host-side tools so prompts stay identical.
+    "tasks": ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet"],
+}
 
 
 async def run_agent(
@@ -48,7 +54,7 @@ async def run_agent(
     wrapped = [_wrap(t) for t in tools]
     server = create_sdk_mcp_server(name=server_name, version="1.0.0", tools=wrapped)
 
-    allowed_tools = [_BUILTIN[b] for b in allowed_builtin] + [
+    allowed_tools = [name for b in allowed_builtin for name in _BUILTIN[b]] + [
         f"mcp__{server_name}__{t.name}" for t in tools
     ]
     options = ClaudeAgentOptions(
