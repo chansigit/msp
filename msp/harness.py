@@ -63,6 +63,26 @@ TRANSIENT_PATTERN = re.compile(
 )
 MAX_TRANSIENT_ATTEMPTS = 5
 TRANSIENT_BACKOFF_SECONDS = 20  # linear: 20s, 40s, 60s, 80s
+MAX_TIMEOUT_ATTEMPTS = 2  # a run that blew its wall-clock budget gets exactly one fresh start
+DEFAULT_WALL_MINUTES = 180.0
+
+
+class AgentTimeout(RuntimeError):
+    """The run exceeded its wall-clock budget (AGENT_WALL_MIN) and was killed."""
+
+
+def wall_seconds() -> float | None:
+    """Per-run wall-clock budget in seconds: AGENT_WALL_MIN minutes (default
+    180; 0 or a non-number = unlimited). Enforced by both backends — Claude's
+    max_turns bounds turns but not a turn that hangs, and dsh has neither a
+    turn cap nor a run-level timeout, so a model stuck in a loop would
+    otherwise burn until the provider hangs up."""
+    raw = os.environ.get("AGENT_WALL_MIN", "")
+    try:
+        minutes = float(raw) if raw.strip() else DEFAULT_WALL_MINUTES
+    except ValueError:
+        return None
+    return minutes * 60 if minutes > 0 else None
 
 
 class AgentLimitExhausted(RuntimeError):
@@ -80,9 +100,16 @@ async def retry_transient(coro_fn: Callable[[], Awaitable[T]], label: str) -> T:
     waited = 0.0
     limit_attempt = 0
     transient_attempts = 0
+    timeout_attempts = 0
     while True:
         try:
             return await coro_fn()
+        except AgentTimeout as e:
+            timeout_attempts += 1
+            if timeout_attempts >= MAX_TIMEOUT_ATTEMPTS:
+                raise
+            print(f"== [{label}] {e} — one fresh attempt", flush=True)
+            continue
         except Exception as e:
             msg = str(e)
             if TRANSIENT_PATTERN.search(msg):
@@ -186,11 +213,24 @@ async def run_agent(
     else:
         raise ValueError(f"unknown HARNESS backend {backend!r} (expected 'claude' or 'deepseek')")
 
+    wall = wall_seconds()
+
     async def _attempt() -> AgentRunResult:
-        return await _run(
+        coro = _run(
             tools=tools, submit_tool=submit_tool, prompt=prompt, system_prompt=system_prompt,
             cwd=cwd, model=model, effort=effort, max_turns=max_turns,
             allowed_builtin=allowed_builtin, label=label, max_buffer_size=max_buffer_size,
+            wall_seconds=wall,
         )
+        if wall is None:
+            return await coro
+        try:
+            # the backend enforces the budget itself (dsh: watchdog closes the
+            # runtime; claude: cancellation tears the CLI down); this is the
+            # backstop that also covers a backend stuck in its own teardown
+            return await asyncio.wait_for(coro, timeout=wall + 120)
+        except asyncio.TimeoutError:
+            raise AgentTimeout(f"[{label}] agent run exceeded the wall-clock budget of {wall / 60:g} min "
+                               f"(AGENT_WALL_MIN)") from None
 
     return await retry_transient(_attempt, label)

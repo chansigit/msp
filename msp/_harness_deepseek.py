@@ -33,6 +33,11 @@ validator is known to drop a few JSON Schema keywords like minLength/
 maxLength/minItems/maxItems, which none of this codebase's tool schemas use).
 
 Env:
+  AGENT_WALL_MIN      wall-clock budget per run in minutes (default 180, 0 =
+                      unlimited; see harness.wall_seconds) — a watchdog closes
+                      the dsh runtime when it is hit. max_turns is enforced
+                      here too, by counting assistant/message events.
+  DSH_TRACE_EVENTS    =1 prints every dsh session event type as it streams.
   DSH_BIN            path to the built `dsh` CLI entrypoint (apps/cli/lib/bin.js
                       from a source build — see the eca-rsi harness-deepseek
                       branch notes; the PyPI-published native runtime wheel
@@ -57,6 +62,7 @@ import logging
 import os
 import socket
 import tempfile
+import threading
 
 import yaml
 
@@ -66,7 +72,7 @@ for _name in ("mcp", "mcp.server", "mcp.server.streamable_http", "mcp.server.str
 # (uvicorn's own loggers are configured at server start, so they are quieted
 # through uvicorn.Config(log_level=...) in run_agent, not here)
 
-from .harness import AgentIncompleteError, AgentRunResult, ToolSpec
+from .harness import AgentIncompleteError, AgentRunResult, AgentTimeout, ToolSpec
 
 _BUILTIN_DISABLE_IDS = ("persistent-bash", "terminal-bash", "persistent-pwsh",
                          "terminal-pwsh", "str-replace-editor")
@@ -90,6 +96,9 @@ def _tool_fn(spec: ToolSpec, submitted_holder: dict, is_submit: bool, label: str
         arg_hint = str(next(iter(kwargs.values()), ""))[:80]  # same trace line as the Claude backend
         print(f"== [{label}] agent: {spec.name}({arg_hint})", flush=True)
         result = await spec.handler(kwargs)
+        if result.get("is_error"):
+            text = " ".join(str(c.get("text", "")) for c in result.get("content", []))
+            print(f"== [{label}] tool error in {spec.name}: {text[:200]!r}", flush=True)
         if is_submit and not result.get("is_error"):
             submitted_holder["value"] = result.get("_submitted", kwargs)
         content: list[types.ContentBlock] = [types.TextContent(**c) for c in result["content"]]
@@ -189,10 +198,36 @@ def _render_patch(mcp_url: str, allowed_builtin: tuple[str, ...], provider: str,
     return yaml.safe_dump([{"insert": insert}, *rows], sort_keys=False)
 
 
+class _TurnsExceeded(RuntimeError):
+    pass
+
+
 def _run_sync(*, dsh_bin: str, cwd: str, dsh_home: str, provider: str, model: str | None,
               effort: str | None, system_prompt: str | None, prompt: str, session_id: str,
-              patch_path: str):
+              patch_path: str, label: str, max_turns: int, wall_seconds: float | None):
+    """One dsh run, bounded two ways dsh itself doesn't offer: a turn cap
+    (assistant/message events, the model's turns, counted as they stream —
+    the same quantity Claude's max_turns bounds) and a wall-clock budget
+    (a watchdog thread closes the runtime, which fails the run's
+    subscription from inside). Either bound kills the subprocess."""
     from deepseek_harness import DeepSeekHarness
+
+    trace = os.environ.get("DSH_TRACE_EVENTS", "") not in ("", "0")
+    turns = 0
+    timed_out = threading.Event()
+
+    def on_notification(n):
+        nonlocal turns
+        if n.method != "session.event":
+            return
+        event = n.payload.get("event") or {}
+        kind = event.get("type")
+        if trace:
+            print(f"== [{label}] dsh event: {kind}", flush=True)
+        if kind == "assistant/message":
+            turns += 1
+            if turns > max_turns:
+                raise _TurnsExceeded(f"[{label}] HARNESS=deepseek run exceeded max_turns={max_turns}")
 
     with DeepSeekHarness(
         provider=provider,
@@ -210,7 +245,30 @@ def _run_sync(*, dsh_bin: str, cwd: str, dsh_home: str, provider: str, model: st
         # longer budget means fewer retries in the common case.
         initialize_timeout_seconds=90.0,
     ) as harness:
-        return harness.run(prompt, session_id=session_id)
+        watchdog = None
+        if wall_seconds is not None:
+            def _kill():
+                timed_out.set()
+                print(f"== [{label}] wall-clock budget of {wall_seconds / 60:g} min hit — closing dsh runtime",
+                      flush=True)
+                harness.close()
+            watchdog = threading.Timer(wall_seconds, _kill)
+            watchdog.daemon = True
+            watchdog.start()
+        try:
+            result = harness.run(prompt, session_id=session_id, on_notification=on_notification)
+        except Exception as e:
+            if timed_out.is_set():
+                raise AgentTimeout(f"[{label}] agent run exceeded the wall-clock budget of "
+                                   f"{wall_seconds / 60:g} min (AGENT_WALL_MIN)") from None
+            if isinstance(e, _TurnsExceeded):
+                raise AgentIncompleteError(f"{e} without a successful submit call") from None
+            raise
+        finally:
+            if watchdog is not None:
+                watchdog.cancel()
+        print(f"== [{label}] dsh run: {turns} model turn(s)", flush=True)
+        return result
 
 
 async def run_agent(
@@ -226,6 +284,7 @@ async def run_agent(
     allowed_builtin: tuple[str, ...],
     label: str,
     max_buffer_size: int | None,
+    wall_seconds: float | None = None,
 ) -> AgentRunResult:
     from mcp.server.fastmcp import FastMCP
 
@@ -271,14 +330,14 @@ async def run_agent(
                 patch_path = pf.name
             print(f"== [{label}] HARNESS=deepseek provider={provider} model={model} "
                   f"dsh_home={dsh_home} mcp={mcp_url}", flush=True)
-            # dsh has no per-run turn cap or pipe-buffer knob at this API level
-            # (unlike Claude's max_turns/max_buffer_size); it runs to natural
-            # completion (idle) or its own request_timeout_seconds.
-            _ = (max_turns, max_buffer_size)
+            # dsh has no pipe-buffer knob (max_buffer_size is Claude-only);
+            # max_turns and the wall-clock budget are enforced in _run_sync
+            _ = max_buffer_size
             result = await asyncio.to_thread(
                 _run_sync, dsh_bin=dsh_bin, cwd=cwd, dsh_home=dsh_home, provider=provider,
                 model=model, effort=effort, system_prompt=system_prompt, prompt=prompt,
-                session_id=f"{label}-{os.getpid()}", patch_path=patch_path,
+                session_id=f"{label}-{os.getpid()}", patch_path=patch_path, label=label,
+                max_turns=max_turns, wall_seconds=wall_seconds,
             )
     finally:
         server.should_exit = True

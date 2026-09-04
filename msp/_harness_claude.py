@@ -4,7 +4,9 @@ to hand-roll; unify it here so both backends share one call shape."""
 
 from __future__ import annotations
 
-from .harness import AgentIncompleteError, AgentRunResult, ToolSpec
+import asyncio
+
+from .harness import AgentIncompleteError, AgentRunResult, AgentTimeout, ToolSpec
 
 # Oldest claude-agent-sdk this backend accepts. 0.2.139 bundles Claude Code
 # 2.1.233, which rejects the default model on any image Read ("API Error: 400
@@ -54,6 +56,26 @@ _BUILTIN = {
 }
 
 
+async def _bounded(stream, deadline, label, wall_seconds):
+    """Yield the SDK's messages until `deadline` (loop time); past it, close
+    the generator (the SDK's own cleanup ends the CLI subprocess) and raise
+    AgentTimeout — max_turns caps turns, not a turn that never returns."""
+    it = stream.__aiter__()
+    try:
+        while True:
+            timeout = None if deadline is None else max(0.0, deadline - asyncio.get_running_loop().time())
+            try:
+                message = await asyncio.wait_for(it.__anext__(), timeout=timeout)
+            except StopAsyncIteration:
+                return
+            except asyncio.TimeoutError:
+                raise AgentTimeout(f"[{label}] agent run exceeded the wall-clock budget of "
+                                   f"{wall_seconds / 60:g} min (AGENT_WALL_MIN)") from None
+            yield message
+    finally:
+        await it.aclose()
+
+
 async def run_agent(
     *,
     tools: list[ToolSpec],
@@ -67,6 +89,7 @@ async def run_agent(
     allowed_builtin: tuple[str, ...],
     label: str,
     max_buffer_size: int | None,
+    wall_seconds: float | None = None,
 ) -> AgentRunResult:
     check_claude_agent_sdk_version()
     from claude_agent_sdk import (
@@ -119,7 +142,8 @@ async def run_agent(
     result_text = None
     cost_usd = None
     pending: dict[str, str] = {}  # tool_use_id → tool name, so a failed result can be attributed
-    async for message in query(prompt=prompt, options=options):
+    deadline = None if wall_seconds is None else asyncio.get_running_loop().time() + wall_seconds
+    async for message in _bounded(query(prompt=prompt, options=options), deadline, label, wall_seconds):
         if isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, ToolUseBlock):
