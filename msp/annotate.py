@@ -48,7 +48,9 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
-from .inspect import _cluster_order, _deg_table, _file_inventory, _gene_table, _load_removal_mask
+from .inspect import (  # _load_paga_neighbors re-exported for zmip
+    DegCache, _cluster_order, _file_inventory, _gene_table, _load_paga_neighbors, _load_removal_mask,
+)
 from .harness import AgentIncompleteError, default_model
 from .report import generate_report
 
@@ -91,17 +93,6 @@ def _prior_label_columns(ad, batch_col):
             continue  # sample identity in disguise
         out.append(c)
     return out
-
-
-def _load_paga_neighbors(outdir, key):
-    path = os.path.join(outdir, f"paga_neighbors_{key}.csv")
-    if not os.path.exists(path):
-        return {}
-    df = pd.read_csv(path, dtype=str)
-    nb = {}
-    for c, g in df.groupby("cluster", sort=False):
-        nb[str(c)] = list(g.sort_values("rank", key=lambda s: s.astype(int))["neighbor"].astype(str))
-    return nb
 
 
 def _cluster_context(ad, cluster, batch_col, prior_cols, paga, pre_agent_removed):
@@ -431,6 +422,7 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
     from .harness import ToolSpec, run_agent
 
     entries = {}
+    deg = DegCache(ad, outdir, pre_agent_removed, label="annotate")
 
     async def cluster_context(args):
         return {"content": [{"type": "text",
@@ -455,9 +447,7 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                 return {"content": [{"type": "text",
                                      "text": f"unknown reference cluster(s) {unknown}; base clusters: {clusters}"}],
                         "is_error": True}
-        top_n = int(args.get("top_n") or 20)
-        return {"content": [{"type": "text",
-                             "text": _deg_table(ad, BASE_KEY, c, reference, top_n, pre_agent_removed)}]}
+        return {"content": [{"type": "text", "text": deg.table(BASE_KEY, c, reference, int(args.get("top_n") or 20))}]}
 
     async def submit_cluster(args):
         try:

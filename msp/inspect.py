@@ -161,40 +161,135 @@ def _stability_table(ad, cluster, cluster_key, other_keys):
     return "\n".join(lines)
 
 
-def _deg_table(ad, cluster_key, cluster, reference, top_n, remove_mask):
-    """On-demand wilcoxon DEG for the CURRENT working clustering (any prior
-    subcluster splits included) — the precomputed deg_global_*/deg_local_*
-    CSVs only cover the original r1.0/r2.0 partition and can't see ids the
-    agent creates. reference='rest': one-vs-rest against every other
-    current cluster (matches deg_global_* semantics). reference=comma-list
-    of other cluster ids: pooled reference group (matches deg_local_*
-    semantics, e.g. a subcluster's siblings or PAGA neighbors). remove_mask
-    cells (already recommend_removal — see Pre-annotation filtering) are
-    excluded first, same as the precomputed CSVs."""
+def _load_paga_neighbors(outdir, key):
+    """{cluster: [top-3 PAGA neighbours]} as integrate wrote them (paga_neighbors_<key>.csv);
+    {} when the file is absent (older output, or a key integrate never saw)."""
+    path = os.path.join(outdir, f"paga_neighbors_{key}.csv")
+    if not os.path.exists(path):
+        return {}
+    df = pd.read_csv(path, dtype=str)
+    nb = {}
+    for c, g in df.groupby("cluster", sort=False):
+        nb[str(c)] = list(g.sort_values("rank", key=lambda s: s.astype(int))["neighbor"].astype(str))
+    return nb
+
+
+def _deg_frame(ad, cluster_key, cluster, ref_groups, remove_mask):
+    """Live wilcoxon for one cluster of the CURRENT working clustering — the
+    full ranked table (all genes, scanpy's natural score order), or None when
+    the cluster has no cells left once remove_mask is excluded. ref_groups is
+    "rest" (one-vs-rest, deg_global_* semantics) or a tuple of other cluster
+    ids pooled (deg_local_* semantics). remove_mask cells (recommend_removal,
+    see Pre-annotation filtering) are excluded first, same as the precomputed
+    CSVs."""
     base = ad[~remove_mask]
     lab = base.obs[cluster_key].astype(str)
     if cluster not in set(lab):
-        return f"cluster {cluster!r} has no cells left once recommend_removal cells are excluded"
-    if reference == "rest":
-        sub = base
-    else:
-        ref_groups = [g.strip() for g in reference.split(",") if g.strip()]
-        sub = base[lab.isin([cluster, *ref_groups])].copy()
+        return None
+    sub = base if ref_groups == "rest" else base[lab.isin([cluster, *ref_groups])].copy()
     sc.tl.rank_genes_groups(sub, cluster_key, groups=[cluster], reference="rest",
                             method="wilcoxon", use_raw=True, pts=True)
     df = sc.get.rank_genes_groups_df(sub, group=cluster)
-    df = df.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
     # natural scanpy ranking (by test score), not resorted by raw logFC —
     # sorting by logFC alone surfaces near-zero-expression noise genes with
     # huge fold change but pct1==pct2==0 and padj==1, same trap as anywhere
     # else in msp that reads rank_genes_groups_df
-    df = df.head(top_n)
-    ref_desc = "rest" if reference == "rest" else reference
+    return df.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"}).reset_index(drop=True)
+
+
+def _format_deg(cluster, ref_desc, df):
     lines = [f"DEG for cluster {cluster!r} vs {ref_desc}, top {len(df)}:"]
     for _, r in df.iterrows():
         lines.append(f"  {r['names']}: logFC={r['logfoldchanges']:.2f} padj={r['pvals_adj']:.2e} "
                      f"pct1={r['pct1']:.2f} pct2={r['pct2']:.2f}")
     return "\n".join(lines)
+
+
+def _parse_reference(reference):
+    reference = str(reference or "rest").strip() or "rest"
+    if reference == "rest":
+        return "rest"
+    return tuple(sorted({g.strip() for g in reference.split(",") if g.strip()}))
+
+
+def _deg_table(ad, cluster_key, cluster, reference, top_n, remove_mask):
+    """One-shot check_deg text (no cache) — kept for callers outside the
+    agent loops; the agents go through DegCache."""
+    ref = _parse_reference(reference)
+    df = _deg_frame(ad, cluster_key, cluster, ref, remove_mask)
+    if df is None:
+        return f"cluster {cluster!r} has no cells left once recommend_removal cells are excluded"
+    return _format_deg(cluster, "rest" if ref == "rest" else ",".join(ref), df.head(top_n))
+
+
+class DegCache:
+    """check_deg for one agent session: every (clustering key, cluster,
+    reference set) is computed at most once, and when the request is exactly
+    what integrate already tabulated it is answered from disk instead of
+    recomputed — one-vs-rest on an original key == deg_global_<key>.csv, and
+    "vs its top-3 PAGA neighbours" == deg_local_<key>.csv, provided this
+    session excludes exactly the cells those tables excluded (inspect always
+    does; annotate/zmip only when inspect proposed no drops). A live
+    one-vs-rest wilcoxon on 59k cells costs ~35 s, so a 40-cluster annotate
+    session used to spend 5-10 min recomputing tables it could have read.
+    Numbers are identical either way (same test, same exclusion, same
+    use_raw, same ranking); only top_n beyond the tabulated 50 rows falls
+    back to computing."""
+
+    def __init__(self, ad, outdir, remove_mask, label="check_deg"):
+        self.ad, self.outdir, self.mask, self.label = ad, outdir, np.asarray(remove_mask, dtype=bool), label
+        self._memo = {}  # (key, cluster, ref) -> (df, complete)
+        self._csv = {}   # (key, view) -> DataFrame | None
+        self._paga = {}  # key -> {cluster: [neighbours]}
+        self.tables_usable = bool(np.array_equal(_load_removal_mask(outdir, ad), self.mask))
+        self.n_computed = self.n_precomputed = self.n_memo = 0
+
+    def _csv_rows(self, key, view, cluster):
+        k = (key, view)
+        if k not in self._csv:
+            path = os.path.join(self.outdir, f"deg_{view}_{key}.csv")
+            self._csv[k] = pd.read_csv(path, dtype={"group": str}) if os.path.exists(path) else None
+        df = self._csv[k]
+        if df is None or "group" not in df:
+            return None
+        sub = df[df["group"].astype(str) == cluster]
+        return sub.reset_index(drop=True) if len(sub) else None
+
+    def _precomputed(self, key, cluster, ref):
+        if not self.tables_usable:
+            return None
+        if ref == "rest":
+            return self._csv_rows(key, "global", cluster)
+        if key not in self._paga:
+            self._paga[key] = _load_paga_neighbors(self.outdir, key)
+        nbs = self._paga[key].get(cluster)
+        if not nbs or set(nbs) != set(ref):
+            return None
+        return self._csv_rows(key, "local", cluster)
+
+    def table(self, key, cluster, reference, top_n):
+        ref = _parse_reference(reference)
+        mk = (key, cluster, ref)
+        hit = self._memo.get(mk)
+        if hit is not None and (hit[1] or top_n <= len(hit[0])):
+            df, source = hit[0], "memo"
+            self.n_memo += 1
+        else:
+            df = self._precomputed(key, cluster, ref) if hit is None else None
+            if df is not None and top_n <= len(df):
+                self._memo[mk] = (df, False)
+                source = "precomputed"
+                self.n_precomputed += 1
+            else:
+                df = _deg_frame(self.ad, key, cluster, ref, self.mask)
+                if df is None:
+                    return f"cluster {cluster!r} has no cells left once recommend_removal cells are excluded"
+                self._memo[mk] = (df, True)
+                source = "computed"
+                self.n_computed += 1
+        ref_desc = "rest" if ref == "rest" else ",".join(ref)
+        print(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: {source}", flush=True)
+        return _format_deg(cluster, ref_desc, df.head(top_n))
 
 
 def _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
@@ -416,6 +511,7 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
     from .harness import ToolSpec, run_agent
 
     state = {"key": cluster_key, "n_sub": 0}
+    deg = DegCache(ad, outdir, remove_mask, label="inspect")
 
     def current_clusters():
         return _cluster_order(ad.obs[state["key"]].astype(str))
@@ -446,9 +542,7 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
                 return {"content": [{"type": "text",
                                      "text": f"unknown reference cluster(s) {unknown}; current: {current_clusters()}"}],
                         "is_error": True}
-        top_n = int(args.get("top_n") or 20)
-        text = _deg_table(ad, state["key"], c, reference, top_n, remove_mask)
-        return {"content": [{"type": "text", "text": text}]}
+        return {"content": [{"type": "text", "text": deg.table(state["key"], c, reference, int(args.get("top_n") or 20))}]}
 
     async def subcluster(args):
         c = str(args["cluster"])

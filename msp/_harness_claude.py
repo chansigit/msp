@@ -100,7 +100,13 @@ async def run_agent(
     options = ClaudeAgentOptions(
         mcp_servers={server_name: server},
         allowed_tools=allowed_tools,
-        disallowed_tools=["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch"],
+        # Agent/Task = Claude Code subagents: under bypassPermissions the model
+        # can (and did — a 57-cluster NK lineage fanned out to 6 subagents at
+        # 3× the usual cost, with the reasoning outside our transcript) spawn
+        # them unless explicitly denied; every site here is one agent, one
+        # session, by design
+        disallowed_tools=["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
+                          "Agent", "Task"],
         permission_mode="bypassPermissions",
         cwd=cwd,
         max_turns=max_turns,
