@@ -259,10 +259,13 @@ class _TurnsExceeded(RuntimeError):
 MCP_LIST_GRACE_SECONDS = 90.0  # dsh must have asked our server for tools/list by then
 
 
+MAX_NUDGES = 2  # times a session that ended without the submit call is told to carry on
+
+
 def _run_sync(*, dsh_bin: str, cwd: str, dsh_home: str, provider: str, model: str | None,
               effort: str | None, system_prompt: str | None, prompt: str, session_id: str,
               patch_path: str, label: str, max_turns: int, wall_seconds: float | None,
-              listed: threading.Event, http_trace: dict):
+              listed: threading.Event, http_trace: dict, submitted_holder: dict, submit_tool: str):
     """One dsh run, bounded two ways dsh itself doesn't offer: a turn cap
     (assistant/message events, the model's turns, counted as they stream —
     the same quantity Claude's max_turns bounds) and a wall-clock budget
@@ -334,6 +337,22 @@ def _run_sync(*, dsh_bin: str, cwd: str, dsh_home: str, provider: str, model: st
 
         try:
             result = harness.run(prompt, session_id=session_id, on_notification=on_notification)
+            # Doubao sometimes ends a turn on a bare reasoning block ("now I
+            # will do clusters 4-11") with no tool call — dsh reports the turn
+            # as completed and the submit tool never fired. The session (and
+            # its context) is still alive, so carry it on instead of paying
+            # for a fresh run; bounded so a model that truly refuses still
+            # surfaces as AgentIncompleteError.
+            nudges = 0
+            while ("value" not in submitted_holder and result.finish_reason != "error"
+                   and nudges < MAX_NUDGES and turns < max_turns):
+                nudges += 1
+                print(f"== [{label}] turn ended without {submit_tool} after {turns} model turn(s) — "
+                      f"nudging the session to continue ({nudges}/{MAX_NUDGES})", flush=True)
+                result = harness.run(
+                    f"Your previous turn ended without calling {submit_tool}. Continue exactly where you "
+                    f"left off and finish by calling {submit_tool}.",
+                    session_id=session_id, on_notification=on_notification)
         except Exception as e:
             if timed_out.is_set():
                 raise AgentTimeout(f"[{label}] agent run exceeded the wall-clock budget of "
@@ -449,6 +468,7 @@ async def run_agent(
                     model=model, effort=effort, system_prompt=system_prompt, prompt=prompt,
                     session_id=f"{label}-{os.getpid()}", patch_path=patch_path, label=label,
                     max_turns=max_turns, wall_seconds=wall_seconds, listed=listed, http_trace=http_trace,
+                    submitted_holder=submitted_holder, submit_tool=submit_tool,
                 )
                 keep = keep or "value" not in submitted_holder
             except BaseException:
