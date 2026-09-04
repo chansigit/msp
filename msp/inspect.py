@@ -197,12 +197,45 @@ def _deg_frame(ad, cluster_key, cluster, ref_groups, remove_mask):
     return df.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"}).reset_index(drop=True)
 
 
-def _format_deg(cluster, ref_desc, df):
-    lines = [f"DEG for cluster {cluster!r} vs {ref_desc}, top {len(df)}:"]
-    for _, r in df.iterrows():
-        lines.append(f"  {r['names']}: logFC={r['logfoldchanges']:.2f} padj={r['pvals_adj']:.2e} "
-                     f"pct1={r['pct1']:.2f} pct2={r['pct2']:.2f}")
-    return "\n".join(lines)
+def _filter_deg(df, min_logfc=None, max_padj=None, min_pct1=None, max_pct2=None):
+    """Row filter shared by every DEG surface; None/0/1 defaults mean no filter."""
+    m = np.ones(len(df), dtype=bool)
+    if min_logfc:
+        m &= df["logfoldchanges"].to_numpy() >= float(min_logfc)
+    if max_padj is not None and 0 < float(max_padj) < 1:
+        m &= df["pvals_adj"].to_numpy() <= float(max_padj)
+    if min_pct1:
+        m &= df["pct1"].to_numpy() >= float(min_pct1)
+    if max_pct2 is not None and 0 < float(max_pct2) < 1:
+        m &= df["pct2"].to_numpy() <= float(max_pct2)
+    return df[m]
+
+
+def _filter_desc(min_logfc=None, max_padj=None, min_pct1=None, max_pct2=None):
+    parts = []
+    if min_logfc:
+        parts.append(f"logFC>={float(min_logfc):g}")
+    if max_padj is not None and 0 < float(max_padj) < 1:
+        parts.append(f"padj<={float(max_padj):g}")
+    if min_pct1:
+        parts.append(f"pct1>={float(min_pct1):g}")
+    if max_pct2 is not None and 0 < float(max_pct2) < 1:
+        parts.append(f"pct2<={float(max_pct2):g}")
+    return ", ".join(parts)
+
+
+def _format_deg(cluster, ref_desc, df, n_total=None, filters=""):
+    """One line per gene, terse — gene logFC padj pct1/pct2 — so a 20-gene
+    answer costs ~200 tokens, not 600; the header carries the comparison,
+    the filters applied and how many genes passed."""
+    head = f"DEG cluster {cluster} vs {ref_desc}"
+    if filters:
+        head += f" [{filters}]"
+    head += f": {len(df)} gene(s)" + (f" of {n_total} passing" if n_total is not None and n_total != len(df) else "")
+    head += " (gene logFC padj pct1/pct2, by wilcoxon score):"
+    body = ", ".join(f"{r.names} {r.logfoldchanges:.1f} {r.pvals_adj:.0e} {r.pct1:.2f}/{r.pct2:.2f}"
+                     for r in df.itertuples(index=False))
+    return head + "\n  " + (body if len(df) else "(none)")
 
 
 def _parse_reference(reference):
@@ -219,7 +252,176 @@ def _deg_table(ad, cluster_key, cluster, reference, top_n, remove_mask):
     df = _deg_frame(ad, cluster_key, cluster, ref, remove_mask)
     if df is None:
         return f"cluster {cluster!r} has no cells left once recommend_removal cells are excluded"
-    return _format_deg(cluster, "rest" if ref == "rest" else ",".join(ref), df.head(top_n))
+    return _format_deg(cluster, "rest" if ref == "rest" else ",".join(ref), df.head(top_n), len(df))
+
+
+_DEG_TOOL_DOC = """Targeted retrieval over integrate's precomputed DEG tables (deg_global_*/deg_local_*, top-50 \
+per cluster per view, every leiden key) — the CSVs themselves are larger than Read allows, use this instead. \
+Selectors: cluster (its ranked markers), gene (which clusters have it among their top markers), view \
+('global' = one-vs-rest, 'local' = vs the cluster's 3 pooled PAGA neighbours, 'both'), key (leiden key; \
+default = the base key). Thresholds (0 / empty = off): min_logfc, max_padj, min_pct1, max_pct2 — e.g. \
+min_logfc=1, max_padj=1e-10, max_pct2=0.3 returns just the specific positive markers. top_n per view \
+(default 20). At least one of cluster/gene is required. For an arbitrary a-vs-b comparison use check_deg \
+(same thresholds)."""
+
+_DEG_SQL_DOC = """Read-only SQL (one SELECT, ≤200 rows returned) over the same precomputed DEG tables, for \
+questions deg_lookup's filters can't express. Table deg(key TEXT, view TEXT 'global'|'local', cluster \
+TEXT, rank INTEGER 1=best, gene TEXT, logfc REAL, padj REAL, pct1 REAL, pct2 REAL, neighbors TEXT \
+'a|b|c' for local rows). Example: SELECT cluster, gene, logfc FROM deg WHERE key='msp_leiden_r2.0' AND \
+view='global' AND gene IN ('CD3D','MS4A1') ORDER BY cluster, rank"""
+
+
+class DegTables:
+    """integrate's precomputed DEG tables (deg_global_<key>.csv / deg_local_<key>.csv,
+    every key present in outdir) loaded into an in-memory, read-only sqlite so the
+    agent can retrieve exactly what it needs: Claude Code's Read refuses files
+    over 25k tokens and a 40-cluster deg_global CSV is ~50k, so before this the
+    agent could not read the tables it was told to read and fell back to 35-s
+    check_deg calls. Three surfaces: lookup() (structured filters), sql() (one
+    SELECT), markers_text() (a compact per-cluster summary cluster_context
+    appends). The tables are evidence the agent already had on disk — no new
+    computation, same numbers."""
+
+    _COLS = ("key", "view", "cluster", "rank", "gene", "logfc", "padj", "pct1", "pct2", "neighbors")
+
+    def __init__(self, outdir, base_key=None):
+        import glob as _glob
+        import sqlite3
+
+        self.base_key = base_key
+        self.keys: list[str] = []
+        self.conn = sqlite3.connect(":memory:", check_same_thread=False)
+        self.conn.execute("CREATE TABLE deg (key TEXT, view TEXT, cluster TEXT, rank INTEGER, gene TEXT, "
+                          "logfc REAL, padj REAL, pct1 REAL, pct2 REAL, neighbors TEXT)")
+        rows = []
+        for path in sorted(_glob.glob(os.path.join(outdir, "deg_*_*.csv"))):
+            name = os.path.basename(path)[len("deg_"):-len(".csv")]
+            view, key = name.split("_", 1)
+            if view not in ("global", "local"):
+                continue
+            df = pd.read_csv(path, dtype={"group": str})
+            if "group" not in df or df.empty:
+                continue
+            if key not in self.keys:
+                self.keys.append(key)
+            df = df.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
+            for c, sub in df.groupby("group", sort=False):
+                nbs = str(sub["neighbors"].iloc[0]) if "neighbors" in sub and pd.notna(sub["neighbors"].iloc[0]) else ""
+                for rank, r in enumerate(sub.itertuples(index=False), 1):
+                    rows.append((key, view, str(c), rank, str(r.names), float(r.logfoldchanges),
+                                 float(r.pvals_adj), float(r.pct1), float(r.pct2), nbs))
+        self.conn.executemany("INSERT INTO deg VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+        self.conn.execute("CREATE INDEX ix_ckv ON deg(key, view, cluster, rank)")
+        self.conn.execute("CREATE INDEX ix_gene ON deg(gene)")
+        self.conn.commit()
+        self.n_rows = len(rows)
+
+        def _authorizer(action, *_):
+            return sqlite3.SQLITE_OK if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ,
+                                                   sqlite3.SQLITE_FUNCTION) else sqlite3.SQLITE_DENY
+        self.conn.set_authorizer(_authorizer)
+
+    def _fmt_rows(self, rows, header):
+        """Grouped per (view, cluster): one terse line per group — gene #rank logFC padj pct1/pct2."""
+        groups = {}
+        for key, view, cluster, rank, gene, logfc, padj, pct1, pct2, nbs in rows:
+            ref = "rest" if view == "global" else "PAGA nbrs " + nbs.replace("|", ",")
+            groups.setdefault((view, cluster, ref), []).append(f"{gene} #{rank} {logfc:.1f} {padj:.0e} {pct1:.2f}/{pct2:.2f}")
+        lines = [header]
+        for (view, cluster, ref), items in groups.items():
+            lines.append(f"  {view} cluster {cluster} vs {ref}: " + ", ".join(items))
+        return "\n".join(lines)
+
+    def lookup(self, cluster="", gene="", view="both", key="", top_n=20, min_logfc=None, max_padj=None,
+               min_pct1=None, max_pct2=None):
+        cluster, gene, key = str(cluster or "").strip(), str(gene or "").strip(), str(key or "").strip()
+        view = (str(view or "both").strip().lower() or "both")
+        if view not in ("global", "local", "both"):
+            return "view must be global | local | both"
+        if not cluster and not gene:
+            return "give cluster and/or gene"
+        key = key or self.base_key or (self.keys[0] if self.keys else "")
+        if key not in self.keys:
+            return f"no precomputed tables for key {key!r}; available: {self.keys} (a subclustered key has none — use check_deg)"
+        where, params = ["key = ?"], [key]
+        if view != "both":
+            where.append("view = ?"); params.append(view)
+        if cluster:
+            where.append("cluster = ?"); params.append(cluster)
+        if gene:
+            where.append("upper(gene) = ?"); params.append(gene.upper())
+        if min_logfc:
+            where.append("logfc >= ?"); params.append(float(min_logfc))
+        if max_padj is not None and 0 < float(max_padj) < 1:
+            where.append("padj <= ?"); params.append(float(max_padj))
+        if min_pct1:
+            where.append("pct1 >= ?"); params.append(float(min_pct1))
+        if max_pct2 is not None and 0 < float(max_pct2) < 1:
+            where.append("pct2 <= ?"); params.append(float(max_pct2))
+        filters = _filter_desc(min_logfc, max_padj, min_pct1, max_pct2)
+        top_n = max(1, min(int(top_n or 20), 200))
+        sql = f"SELECT * FROM deg WHERE {' AND '.join(where)} ORDER BY view, rank"
+        rows = self.conn.execute(sql, params).fetchall()
+        n_total = len(rows)
+        if cluster:  # per view, the best top_n of the rows that pass
+            per_view = {}
+            rows = [r for r in rows if per_view.setdefault(r[1], []).append(r) or len(per_view[r[1]]) <= top_n]
+        else:
+            rows = rows[:top_n]
+        if not rows:
+            what = f"cluster {cluster!r}" if cluster else f"gene {gene!r}"
+            if gene and not cluster:
+                return f"{what} is not among any cluster's top-50 markers in {key} ({view}); use check_genes for its expression per cluster"
+            return f"nothing for {what} in {key} ({view}); clusters present: {self.clusters(key)}"
+        head = (f"precomputed DEG, {key}, " + (f"cluster {cluster}" if cluster else f"gene {gene}")
+                + (f" ∩ gene {gene}" if cluster and gene else "") + f", view={view}"
+                + (f" [{filters}]" if filters else "") + f": {len(rows)} row(s)"
+                + (f" of {n_total} passing" if n_total != len(rows) else "")
+                + " (tables hold each cluster's top-50 per view; for other references or deeper lists use check_deg):")
+        return self._fmt_rows(rows, head)
+
+    def clusters(self, key):
+        return [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT cluster FROM deg WHERE key = ? ORDER BY CAST(cluster AS REAL), cluster", [key])]
+
+    def sql(self, query, max_rows=200):
+        q = str(query or "").strip().rstrip(";").strip()
+        if not q.lower().startswith(("select", "with")):
+            return "only a single SELECT is allowed"
+        if ";" in q:
+            return "one statement only"
+        try:
+            cur = self.conn.execute(q)
+            rows = cur.fetchmany(max_rows + 1)
+        except Exception as exc:  # sqlite3 errors — feed the message back verbatim
+            return f"SQL error: {exc}"
+        cols = [d[0] for d in cur.description]
+        truncated = len(rows) > max_rows
+        rows = rows[:max_rows]
+        if not rows:
+            return "no rows"
+        df = pd.DataFrame(rows, columns=cols)
+        out = df.to_string(index=False, float_format=lambda v: f"{v:.3g}")
+        if truncated:
+            out += f"\n... truncated at {max_rows} rows — narrow the query"
+        return out
+
+    def markers_text(self, key, cluster, n=12):
+        """Two compact lines for cluster_context: top global and top local
+        markers of one cluster from the precomputed tables ('' if absent)."""
+        if key not in self.keys:
+            return ""
+        lines = []
+        for view in ("global", "local"):
+            rows = self.conn.execute(
+                "SELECT gene, logfc, pct1, pct2, neighbors FROM deg WHERE key=? AND view=? AND cluster=? "
+                "AND rank<=? ORDER BY rank", [key, view, str(cluster), n]).fetchall()
+            if not rows:
+                continue
+            ref = "rest" if view == "global" else "PAGA nbrs " + rows[0][4].replace("|", ",")
+            lines.append(f"  top {view} markers (vs {ref}, precomputed; gene logFC pct1/pct2): "
+                         + ", ".join(f"{g} {lf:.1f} {p1:.2f}/{p2:.2f}" for g, lf, p1, p2, _ in rows))
+        return "\n".join(lines)
 
 
 class DegCache:
@@ -267,7 +469,7 @@ class DegCache:
             return None
         return self._csv_rows(key, "local", cluster)
 
-    def table(self, key, cluster, reference, top_n):
+    def table(self, key, cluster, reference, top_n, min_logfc=None, max_padj=None, min_pct1=None, max_pct2=None):
         ref = _parse_reference(reference)
         mk = (key, cluster, ref)
         hit = self._memo.get(mk)
@@ -289,7 +491,9 @@ class DegCache:
                 self.n_computed += 1
         ref_desc = "rest" if ref == "rest" else ",".join(ref)
         print(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: {source}", flush=True)
-        return _format_deg(cluster, ref_desc, df.head(top_n))
+        kept = _filter_deg(df, min_logfc, max_padj, min_pct1, max_pct2)
+        return _format_deg(cluster, ref_desc, kept.head(top_n), len(kept),
+                           _filter_desc(min_logfc, max_padj, min_pct1, max_pct2))
 
 
 def _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
@@ -463,8 +667,10 @@ All relevant files (paths relative to the working directory — Read exactly the
 What they are:
 - deg_global_{{key}}.csv / deg_local_{{key}}.csv, for key in msp_leiden_r1.0 and msp_leiden_r2.0: \
 precomputed DEG at both resolutions (global = one-vs-rest; local = vs the cluster's 3 nearest \
-PAGA neighbors pooled; pct1/pct2 = expressing fraction in/out). These only cover the ORIGINAL \
-clustering, though — once you subcluster, use check_deg for DEG on the refined ids;
+PAGA neighbors pooled; pct1/pct2 = expressing fraction in/out). They are TOO LARGE to Read whole — \
+query them with deg_lookup (a cluster's ranked markers, or every cluster a gene marks) and deg_sql \
+(one SELECT for anything else). These only cover the ORIGINAL clustering, though — once you \
+subcluster, use check_deg for DEG on the refined ids;
 - stress_clusters.csv: (key, cluster) pairs whose deg_global/deg_local top genes already trip the \
 dissociation-stress/mitochondrial signature check — a head start, not a substitute for your own judgment;
 - cluster_qc_*.csv, per_sample_qc.csv, cell_outlier_summary.csv: QC + composition tables (the \
@@ -486,8 +692,9 @@ plus inherited keep/flag/drop.
 Mandatory workflow:
 1. Figures BEFORE conclusions: sample-mixing UMAP, the three resolution UMAPs, qc_umap_metrics, \
 qc_umap_qc_action, umap_preannotation_removal.
-2. Read deg_global_{cluster_key}.csv / deg_local_{cluster_key}.csv and the QC/composition tables; \
-read the standissect diagnosis + drift tables.
+2. deg_lookup(cluster=<id>) for every cluster of {cluster_key} (batch several calls in one turn; the \
+CSVs themselves exceed the Read limit), then Read the QC/composition tables and the standissect \
+diagnosis + drift tables.
 3. Verify markers with check_genes (batch dozens of genes per call); QC/composition with \
 check_qc_scores (one call, no arguments); stability with check_stability per suspicious cluster.
 4. If a cluster is heterogeneous, split it with subcluster (ids like "5,0") — all tools and the \
@@ -512,6 +719,17 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
 
     state = {"key": cluster_key, "n_sub": 0}
     deg = DegCache(ad, outdir, remove_mask, label="inspect")
+    tables = DegTables(outdir, base_key=cluster_key)
+    print(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}", flush=True)
+
+    async def deg_lookup(args):
+        return {"content": [{"type": "text", "text": tables.lookup(
+            args.get("cluster", ""), args.get("gene", ""), args.get("view", "both"), args.get("key", ""),
+            args.get("top_n") or 20, args.get("min_logfc"), args.get("max_padj"), args.get("min_pct1"),
+            args.get("max_pct2"))}]}
+
+    async def deg_sql(args):
+        return {"content": [{"type": "text", "text": tables.sql(args.get("query", ""))}]}
 
     def current_clusters():
         return _cluster_order(ad.obs[state["key"]].astype(str))
@@ -542,7 +760,9 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
                 return {"content": [{"type": "text",
                                      "text": f"unknown reference cluster(s) {unknown}; current: {current_clusters()}"}],
                         "is_error": True}
-        return {"content": [{"type": "text", "text": deg.table(state["key"], c, reference, int(args.get("top_n") or 20))}]}
+        return {"content": [{"type": "text", "text": deg.table(
+            state["key"], c, reference, int(args.get("top_n") or 20), args.get("min_logfc"), args.get("max_padj"),
+            args.get("min_pct1"), args.get("max_pct2"))}]}
 
     async def subcluster(args):
         c = str(args["cluster"])
@@ -575,6 +795,9 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
         return {"content": [{"type": "text", "text": f"saved to {path}"}], "_submitted": proposal}
 
     tools = [
+        ToolSpec("deg_lookup", _DEG_TOOL_DOC,
+                 {"cluster": str, "gene": str, "view": str, "key": str, "top_n": int, "min_logfc": float, "max_padj": float, "min_pct1": float, "max_pct2": float}, deg_lookup),
+        ToolSpec("deg_sql", _DEG_SQL_DOC, {"query": str}, deg_sql),
         ToolSpec("check_genes",
                  "Per-cluster mean expression and expressing-cell fraction for the given genes "
                  "(case-insensitive). Use to verify markers.", {"genes": list}, check_genes),
@@ -591,7 +814,12 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
                  "one-vs-rest against every other current cluster, same semantics as deg_global_*. Pass "
                  "a comma-separated list of other cluster ids as reference instead for a pooled-group "
                  "comparison (e.g. a subcluster vs its siblings, or vs specific PAGA neighbors), same "
-                 "semantics as deg_local_*.", {"cluster": str, "reference": str, "top_n": int}, check_deg),
+                 "semantics as deg_local_*. Thresholds (0/empty = off): min_logfc, max_padj, min_pct1, "
+                 "max_pct2 — ask for exactly the gene list you need (e.g. min_logfc=1, max_padj=1e-10). "
+                 "Results are cached per (cluster, reference); one-vs-rest on the base clustering is answered "
+                 "from the precomputed table.",
+                 {"cluster": str, "reference": str, "top_n": int, "min_logfc": float, "max_padj": float,
+                  "min_pct1": float, "max_pct2": float}, check_deg),
         ToolSpec("subcluster",
                  "Split one heterogeneous cluster with leiden restrict_to at the given resolution "
                  '(0.3-1.0 typical). New ids look like "5,0"; all tools and the final submission '

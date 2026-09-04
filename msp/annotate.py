@@ -49,7 +49,8 @@ import pandas as pd
 import scanpy as sc
 
 from .inspect import (  # _load_paga_neighbors re-exported for zmip
-    DegCache, _cluster_order, _file_inventory, _gene_table, _load_paga_neighbors, _load_removal_mask,
+    _DEG_SQL_DOC, _DEG_TOOL_DOC, DegCache, DegTables, _cluster_order, _file_inventory, _gene_table,
+    _load_paga_neighbors, _load_removal_mask,
 )
 from .harness import AgentIncompleteError, default_model
 from .report import generate_report
@@ -95,7 +96,7 @@ def _prior_label_columns(ad, batch_col):
     return out
 
 
-def _cluster_context(ad, cluster, batch_col, prior_cols, paga, pre_agent_removed):
+def _cluster_context(ad, cluster, batch_col, prior_cols, paga, pre_agent_removed, tables=None):
     """Everything about ONE base cluster that is not gene expression:
     size, how much of it is already slated for removal, its r1.0 parent(s)
     and the r2.0 siblings under that parent, PAGA neighbours, sample
@@ -121,6 +122,10 @@ def _cluster_context(ad, cluster, batch_col, prior_cols, paga, pre_agent_removed
                      (", ".join(f"{i}:{v}" for i, v in sib.items()) if len(sib) else "none — this cluster IS the parent"))
     if cluster in paga:
         lines.append(f"  PAGA nearest neighbours ({BASE_KEY}): {', '.join(paga[cluster])}")
+    if tables is not None:
+        mk = tables.markers_text(BASE_KEY, cluster)
+        if mk:
+            lines.append(mk)
     vc = sub[batch_col].value_counts(normalize=True)
     lines.append(f"  samples: {sub[batch_col].nunique()}/{ad.obs[batch_col].nunique()} present, "
                  f"dominant sample share {vc.iloc[0]:.2f} ({vc.index[0]})")
@@ -386,7 +391,11 @@ All relevant files (paths relative to the working directory — Read exactly the
 What they are:
 - deg_global_{{key}}.csv / deg_local_{{key}}.csv for key in {PARENT_KEY} and {BASE_KEY}: precomputed DEG \
 (global = one-vs-rest; local = vs the cluster's 3 nearest PAGA neighbours pooled; pct1/pct2 = expressing \
-fraction in/out), computed after excluding the cells in figures/umap_preannotation_removal.png;
+fraction in/out), computed after excluding the cells in figures/umap_preannotation_removal.png. TOO LARGE \
+to Read whole: cluster_context already carries each cluster's top-12 global and local markers from them; \
+deg_lookup (a cluster's full ranked list, or every cluster a gene marks, any key) and deg_sql (one \
+SELECT) retrieve the rest — check_deg is for comparisons the tables don't hold (custom references, \
+subclustered ids);
 - paga_neighbors_{{key}}.csv: the PAGA neighbours used for deg_local;
 - inspection_proposal.json / inspection_notes.md: the QC inspection that ran before you (five-test \
 verdicts on {PARENT_KEY} clusters; its 'drop' clusters are already in the removal set — do not re-litigate \
@@ -401,7 +410,7 @@ Mandatory workflow:
 so nothing is skipped; keep TaskList honest — TaskUpdate a task to completed ONLY after its submit_cluster \
 call succeeded.
 2. Look at the figures first (three resolution UMAPs, inherited annotation, sample mixing, \
-inspect_umap_action), then Read deg_global_{BASE_KEY}.csv and deg_local_{BASE_KEY}.csv once.
+inspect_umap_action); the DEG tables are reached through cluster_context / deg_lookup / deg_sql, not Read.
 3. For each cluster: cluster_context (parent/siblings/neighbours/priors/QC/inspect verdict in one call), \
 then verify markers with check_genes (batch dozens of genes per call) and, when distinctness is in \
 doubt, check_deg against its siblings or a specific neighbour. Then submit_cluster. You may resubmit a \
@@ -423,11 +432,22 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
 
     entries = {}
     deg = DegCache(ad, outdir, pre_agent_removed, label="annotate")
+    tables = DegTables(outdir, base_key=BASE_KEY)
+    print(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}", flush=True)
 
     async def cluster_context(args):
         return {"content": [{"type": "text",
                              "text": _cluster_context(ad, str(args["cluster"]), batch_col, prior_cols, paga,
-                                                      pre_agent_removed)}]}
+                                                      pre_agent_removed, tables)}]}
+
+    async def deg_lookup(args):
+        return {"content": [{"type": "text", "text": tables.lookup(
+            args.get("cluster", ""), args.get("gene", ""), args.get("view", "both"), args.get("key", ""),
+            args.get("top_n") or 20, args.get("min_logfc"), args.get("max_padj"), args.get("min_pct1"),
+            args.get("max_pct2"))}]}
+
+    async def deg_sql(args):
+        return {"content": [{"type": "text", "text": tables.sql(args.get("query", ""))}]}
 
     async def check_genes(args):
         genes = args["genes"]
@@ -447,7 +467,9 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                 return {"content": [{"type": "text",
                                      "text": f"unknown reference cluster(s) {unknown}; base clusters: {clusters}"}],
                         "is_error": True}
-        return {"content": [{"type": "text", "text": deg.table(BASE_KEY, c, reference, int(args.get("top_n") or 20))}]}
+        return {"content": [{"type": "text", "text": deg.table(
+            BASE_KEY, c, reference, int(args.get("top_n") or 20), args.get("min_logfc"), args.get("max_padj"),
+            args.get("min_pct1"), args.get("max_pct2"))}]}
 
     async def submit_cluster(args):
         try:
@@ -493,6 +515,9 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                  "r1.0 parent composition and r2.0 siblings, PAGA neighbours, sample composition, QC "
                  "medians, inspection verdict composition, prior label compositions.", {"cluster": str},
                  cluster_context),
+        ToolSpec("deg_lookup", _DEG_TOOL_DOC,
+                 {"cluster": str, "gene": str, "view": str, "key": str, "top_n": int, "min_logfc": float, "max_padj": float, "min_pct1": float, "max_pct2": float}, deg_lookup),
+        ToolSpec("deg_sql", _DEG_SQL_DOC, {"query": str}, deg_sql),
         ToolSpec("check_genes",
                  f"Per-{BASE_KEY}-cluster mean expression and expressing-cell fraction for the given genes "
                  "(case-insensitive). Use to verify markers.", {"genes": list}, check_genes),
@@ -500,8 +525,12 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                  f"On-demand DEG (wilcoxon) for one {BASE_KEY} cluster. reference='rest' (default) is "
                  "one-vs-rest (deg_global semantics); a comma-separated list of cluster ids is a pooled "
                  "reference group (e.g. its siblings under the r1.0 parent, or one specific neighbour). "
-                 "Cells already slated for removal are excluded, like the precomputed tables.",
-                 {"cluster": str, "reference": str, "top_n": int}, check_deg),
+                 "Cells already slated for removal are excluded, like the precomputed tables. Thresholds "
+                 "(0/empty = off): min_logfc, max_padj, min_pct1, max_pct2 — ask for exactly the gene list you "
+                 "need. Cached per (cluster, reference); one-vs-rest and vs-the-3-PAGA-neighbours come from the "
+                 "precomputed tables.",
+                 {"cluster": str, "reference": str, "top_n": int, "min_logfc": float, "max_padj": float,
+                  "min_pct1": float, "max_pct2": float}, check_deg),
         ToolSpec("submit_cluster",
                  "Submit (or resubmit — last one wins) the annotation of ONE base cluster. cluster_json is a "
                  "JSON string with this schema:\n" + _CLUSTER_SCHEMA_DOC, {"cluster_json": str}, submit_cluster),

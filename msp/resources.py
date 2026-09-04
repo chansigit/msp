@@ -15,20 +15,43 @@ import os
 _UNLIMITED = 1 << 60  # cgroup v1 reports ~9.2e18 for "no limit"
 
 
-def available_cpus() -> int:
+def _env_int(name: str) -> int | None:
     try:
-        return max(1, len(os.sched_getaffinity(0)))
-    except (AttributeError, OSError):
-        return max(1, os.cpu_count() or 1)
+        v = int(os.environ.get(name, ""))
+        return v if v > 0 else None
+    except ValueError:
+        return None
+
+
+def available_cpus() -> int:
+    """CPUs this process may use: the scheduler affinity mask (what Slurm /
+    docker --cpuset actually grant), capped by MSP_MAX_THREADS when a parent
+    that runs several of us side by side (zmip's lineage pool) sets it. Never
+    raises: no affinity API (macOS), no /proc, or a container that hides it
+    all fall back to os.cpu_count(), then to 1."""
+    try:
+        n = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
+    except Exception:
+        n = 0
+    if n <= 0:
+        try:
+            n = os.cpu_count() or 1
+        except Exception:
+            n = 1
+    cap = _env_int("MSP_MAX_THREADS")
+    return max(1, min(n, cap) if cap else n)
 
 
 def _cgroup_memory_limits() -> list[int]:
     """Every memory limit that applies to this process, from its own cgroup up
-    to the root (cgroup v1 `memory.limit_in_bytes`, v2 `memory.max`)."""
+    to the root (cgroup v1 `memory.limit_in_bytes`, v2 `memory.max`). Works
+    for Slurm (path /slurm/uid_N/job_N/...), docker (/docker/<id> or v2
+    "0::/"), plain VMs (no limit → empty list); a container that namespaces
+    /sys/fs/cgroup so the listed path doesn't exist just yields nothing."""
     limits: list[int] = []
     try:
         lines = open("/proc/self/cgroup").read().splitlines()
-    except OSError:
+    except Exception:
         return limits
     for line in lines:
         parts = line.split(":", 2)
@@ -59,18 +82,35 @@ def _cgroup_memory_limits() -> list[int]:
 
 
 def available_memory_bytes() -> int:
-    """Tightest enforced memory limit, else physical RAM."""
-    limits = _cgroup_memory_limits()
-    if limits:
-        return min(limits)
+    """Tightest enforced memory limit, else physical RAM, else (nothing
+    readable at all — never an exception) a conservative 8 GiB."""
     try:
-        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-    except (ValueError, OSError, AttributeError):
-        return 8 << 30
+        limits = _cgroup_memory_limits()
+    except Exception:
+        limits = []
+    phys = 0
+    try:
+        phys = int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
+    except Exception:
+        pass
+    candidates = [v for v in [*limits, phys] if v > 0]
+    return min(candidates) if candidates else 8 << 30
+
+
+def current_rss_bytes() -> int:
+    """This process's resident set (0 when /proc is unavailable)."""
+    try:
+        for line in open("/proc/self/status"):
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+    except Exception:
+        pass
+    return 0
 
 
 def describe() -> str:
-    return f"{available_cpus()} cpu(s), {available_memory_bytes() / 2**30:.1f} GiB memory available to this process"
+    return (f"{available_cpus()} cpu(s), {available_memory_bytes() / 2**30:.1f} GiB memory available to this "
+            f"process (rss {current_rss_bytes() / 2**30:.1f} GiB)")
 
 
 if __name__ == "__main__":
