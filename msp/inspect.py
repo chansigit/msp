@@ -1,6 +1,6 @@
 """
 msp.inspect — per-cluster inspection of an msp integration directory with an
-agent (msp.harness: HARNESS=claude|deepseek), mirroring osp.annotate's
+agent (msp.harness: HARNESS=claude|deepseek|openai), mirroring osp.annotate's
 architecture.
 
 Every integrated cluster goes through five tests (the R11 battery):

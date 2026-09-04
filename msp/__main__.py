@@ -3,7 +3,7 @@ UMAP → QC/DEG tables → HTML report), end to end.
 
 With --inspect, the per-cluster QC inspection agent (msp.inspect) runs
 afterwards; with --annotate, the cell-type annotation agent (msp.annotate)
-runs after that (both need the optional claude-agent-sdk). Each step is
+runs after that (both need the optional agent dependencies). Each step is
 skipped when its contract file already exists, so re-running the same
 command resumes where it stopped; --force redoes everything.
 """
@@ -41,7 +41,9 @@ parser.add_argument("--annotate", action="store_true",
                     help="after inspection, run the cell-type annotation agent (msp.annotate); "
                          "implies --inspect")
 parser.add_argument("--language", default="English", help='agent prose language (default "English")')
-parser.add_argument("--model", default=None, help='model for the agents, e.g. "claude-sonnet-5"')
+parser.add_argument("--harness", choices=["deepseek", "openai", "claude"], default=None,
+                    help="agent runtime backend (default: HARNESS env, then deepseek)")
+parser.add_argument("--model", default=None, help='model id for the selected HARNESS backend')
 parser.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"],
                     help="reasoning effort for the agents (models that support it)")
 parser.add_argument("--max-turns", type=int, default=None,
@@ -51,6 +53,9 @@ parser.add_argument("--report-context", default=None, metavar="TEXT",
                          "persisted in <outdir>/report_context.txt so later report refreshes keep it")
 parser.add_argument("--force", action="store_true", help="redo steps whose outputs already exist")
 args = parser.parse_args()
+
+if args.harness:
+    os.environ["HARNESS"] = args.harness
 
 if bool(args.inputs) == bool(args.from_h5ad):
     sys.exit("give either per-sample inputs or --from-h5ad, not both / neither")
@@ -103,6 +108,11 @@ if args.force or not _done("integrated.h5ad", "report.html"):
 else:
     print(f"[resume] integration already done in {out} (integrated.h5ad + report.html) — skipping")
 
+if args.inspect:
+    from .harness import backend_name, default_model
+
+    args.model = args.model or default_model()
+    print(f"[agent] harness={backend_name()} model={args.model}")
 agent_kw = dict(species=args.species, language=args.language, model=args.model, effort=args.effort)
 
 if args.inspect:

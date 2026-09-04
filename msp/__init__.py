@@ -1,6 +1,6 @@
 """msp (multi-sample-pipeline): integrate osp per-sample outputs (harmony)
 → multi-resolution leiden + UMAP → cluster QC / DEG tables → self-contained
-HTML report, with two optional Claude-agent steps that run afterwards:
+HTML report, with two optional agent steps that run afterwards:
 
     integrate  (msp.integrate)  propose-only: nothing deleted, nothing named
     inspect    (msp.inspect)    per-cluster five-test QC verdicts, proposals only
@@ -16,13 +16,13 @@ Entry points:
 
 Command line:
     python -m msp A/clustered.h5ad B/clustered.h5ad --batch-col project --outdir msp_out
-    python -m msp ... --inspect --annotate --model claude-sonnet-5   # full chain
+    python -m msp ... --inspect --annotate --model <model-id>        # full chain
     python -m msp.inspect  msp_out          # QC inspection agent only
     python -m msp.annotate msp_out          # annotation agent only (after inspect)
     python -m msp.report   msp_out          # rebuild the report only
 
 msp.inspect / msp.annotate are intentionally not imported here — they depend
-on the optional claude-agent-sdk (`pip install "msp[agent]"`); use
+on optional agent dependencies (`pip install "msp-sc[agent]"`); use
 `from msp.inspect import inspect_clusters` / `from msp.annotate import
 annotate_clusters` when needed.
 """

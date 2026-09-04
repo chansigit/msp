@@ -1,6 +1,6 @@
 """
 msp.annotate — cell-type annotation of an msp integration directory with an
-agent (msp.harness: HARNESS=claude|deepseek), run AFTER msp.inspect.
+agent (msp.harness: HARNESS=claude|deepseek|openai), run AFTER msp.inspect.
 
 Unit of annotation: every cluster of the base clustering (msp_leiden_r2.0,
 the finer of the two Cluster Annotations resolutions). For each cluster the
@@ -11,7 +11,7 @@ neighbour, or keep as is — and submits one JSON per cluster.
 
 100% coverage is enforced twice: the agent tracks progress with a session
 task list (TaskCreate/TaskUpdate/TaskList — one task per cluster; Claude
-Code's own under HARNESS=claude, a host-served equivalent under deepseek),
+Code's own under HARNESS=claude, a host-served equivalent under deepseek/openai),
 and the host refuses finalize_annotation until every base cluster has a
 validated submission. Merge decisions are made in ONE session (the agent
 sees its own earlier verdicts), and the host resolves the merge graph

@@ -16,18 +16,12 @@ actually drives the model is an env-var choice, not a call-site choice:
                          bridged over an in-process streamable-http MCP
                          server (see below)
     HARNESS=claude      claude_agent_sdk, in-process MCP tools
-    HARNESS=deepseek    DeepSeek Harness (dsh) via its Python SDK, tools
-                         bridged over an in-process streamable-http MCP
-                         server (dsh's mcp-client only attaches to an
-                         external server; the tool handlers are Python
-                         closures that can't cross a real subprocess
-                         boundary, so the "external" server is HTTP-local
-                         rather than a spawned stdio child)
-
+    HARNESS=openai      OpenAI Agents SDK with the Doubao Ark endpoint,
+                         direct in-process function tools
 The tool `handler` return shape (`{"content": [{"type": "text", ...}],
 "is_error": bool}`) is already the real MCP `CallToolResult` wire shape —
 Claude Agent SDK's in-process server is itself an MCP server — so the same
-handler bodies serve both backends unchanged.
+handler bodies serve all backends unchanged.
 
 Every run_agent() call is wrapped in `retry_transient` (ported from msp's
 agent_util.run_query, generalized to both backends — DeepSeek Harness is
@@ -82,7 +76,7 @@ class AgentTimeout(RuntimeError):
 
 def wall_seconds() -> float | None:
     """Per-run wall-clock budget in seconds: AGENT_WALL_MIN minutes (default
-    180; 0 or a non-number = unlimited). Enforced by both backends — Claude's
+    180; 0 or a non-number = unlimited). Enforced by every backend — Claude's
     max_turns bounds turns but not a turn that hangs, and dsh has neither a
     turn cap nor a run-level timeout, so a model stuck in a loop would
     otherwise burn until the provider hangs up."""
@@ -180,6 +174,7 @@ def backend_name() -> str:
 
 _DEFAULT_MODEL = {
     "claude": "claude-sonnet-5",
+    "openai": "doubao-seed-2-1-turbo-260628",
     # HARNESS=deepseek's default provider is Doubao via dsh's pi-ai adapter
     # (see _harness_deepseek); DSH_PROVIDER=deepseek-official switches to a
     # real DeepSeek model, in which case override MODEL too.
@@ -214,16 +209,19 @@ async def run_agent(
     `submit_tool` never fired. `allowed_builtin` is the read-only filesystem
     exploration surface ("read", "glob", "grep") plus "tasks" — a session
     task list the model keeps as its own progress checklist (Claude Code's
-    TaskCreate/TaskUpdate/TaskList/TaskGet; the DeepSeek backend serves
-    same-named in-memory tools so prompts stay identical). The model never
-    gets write access under either backend."""
+    TaskCreate/TaskUpdate/TaskList/TaskGet; the DeepSeek and OpenAI backends
+    serve same-named in-memory tools so prompts stay identical). The model
+    never gets write access under any backend."""
     backend = backend_name()
+    model = model or default_model()
     if backend == "claude":
         from ._harness_claude import run_agent as _run
+    elif backend == "openai":
+        from ._harness_openai import run_agent as _run
     elif backend == "deepseek":
         from ._harness_deepseek import run_agent as _run
     else:
-        raise ValueError(f"unknown HARNESS backend {backend!r} (expected 'claude' or 'deepseek')")
+        raise ValueError(f"unknown HARNESS backend {backend!r} (expected 'claude', 'openai', or 'deepseek')")
 
     wall = wall_seconds()
 

@@ -2,7 +2,7 @@
 
 Integrates the per-sample outputs of [osp](https://github.com/chansigit/osp)
 (one `clustered.h5ad` per 10x run) into one harmony-corrected space, then
-runs two optional Claude-agent steps on the result: a per-cluster QC
+runs two optional agent steps on the result: a per-cluster QC
 **inspection** (proposals only) and a cell-type **annotation** (coarse/fine
 labels, explicit merges, real removal). Every step writes a self-contained
 `report.html` (all figures base64-embedded) that the next step reads.
@@ -17,9 +17,18 @@ osp per-sample ──▶ integrate ──▶ inspect ──▶ annotate
 
 ```bash
 pip install msp-sc                     # PyPI name; `import msp`
-# with the agent steps (needs claude-agent-sdk + Claude Code CLI credentials):
-pip install "msp-sc[agent]"            # + claude-agent-sdk for inspect / annotate
+# with the agent steps (Claude, dsh, and OpenAI Agents SDK backends):
+pip install "msp-sc[agent]"
 ```
+
+The default backend remains `HARNESS=deepseek`. For the direct Python path,
+export `HARNESS=openai` and `ARK_API_KEY`; it uses Ark's Responses API and
+server-side `previous_response_id` chaining by default. Set
+`OPENAI_AGENTS_API=chat_completions` only for text-only compatibility, or
+`OPENAI_AGENTS_SERVER_STATE=0` when complete local-history replay is required.
+If an image-heavy session reaches Ark's context limit, the backend retains
+host-side Tasks and accepted submissions and continues in a fresh model
+session (at most `OPENAI_AGENTS_MAX_CONTEXT_RESETS`, default 2).
 
 Dependencies of note: `harmonypy>=0.2.0` (the torch-based fork — set
 `MSP_DEVICE=cpu|cuda|mps` to override device auto-detection) and
@@ -33,14 +42,19 @@ python -m msp A/clustered.h5ad B/clustered.h5ad --batch-col project --outdir msp
 
 # the whole chain (integration → inspection agent → annotation agent)
 python -m msp A/clustered.h5ad B/clustered.h5ad --batch-col project --outdir msp_out \
-    --species human --annotate --model claude-sonnet-5
+    --species human --annotate --harness openai --model doubao-seed-2-1-turbo-260628
+
+# quality-oriented, higher-cost Doubao option; validate it on your workload
+python -m msp ... --batch-col project --outdir msp_out --annotate \
+    --harness openai --model doubao-seed-2-1-pro-260628
 
 # re-integrate one merged h5ad (e.g. a previous round's survivors) instead of per-sample inputs
-python -m msp --from-h5ad prev_round/annotated_zmip.h5ad --batch-col project --outdir msp_out2 --annotate --model claude-sonnet-5
+python -m msp --from-h5ad prev_round/annotated_zmip.h5ad --batch-col project --outdir msp_out2 \
+    --annotate --harness openai --model doubao-seed-2-1-turbo-260628
 
-# individual steps
-python -m msp.inspect  msp_out --model claude-sonnet-5   # QC verdicts
-python -m msp.annotate msp_out --model claude-sonnet-5   # identity + merges + removal (after inspect)
+# individual agent steps select the harness through its environment variable
+HARNESS=openai python -m msp.inspect  msp_out --model doubao-seed-2-1-turbo-260628
+HARNESS=openai python -m msp.annotate msp_out --model doubao-seed-2-1-turbo-260628
 python -m msp.report   msp_out                           # rebuild report.html only
 ```
 
