@@ -10,7 +10,12 @@ the actual answer is produced/validated — the model never needs filesystem
 write access to get its answer out) and hands it to `run_agent()`. Which SDK
 actually drives the model is an env-var choice, not a call-site choice:
 
-    HARNESS=claude     (default) claude_agent_sdk, in-process MCP tools
+    HARNESS=deepseek    (default since 2026-09-03 — Claude Code quota is the
+                         scarce resource) DeepSeek Harness (dsh) via its
+                         Python SDK, driving Doubao by default, tools
+                         bridged over an in-process streamable-http MCP
+                         server (see below)
+    HARNESS=claude      claude_agent_sdk, in-process MCP tools
     HARNESS=deepseek    DeepSeek Harness (dsh) via its Python SDK, tools
                          bridged over an in-process streamable-http MCP
                          server (dsh's mcp-client only attaches to an
@@ -58,9 +63,12 @@ LIMIT_PATTERN = re.compile(
 TRANSIENT_PATTERN = re.compile(
     r"control request timeout|broken pipe|connection reset|econnreset|epipe|"
     r"process exited unexpectedly|failed to start|connection closed|stdout closed|"
-    r"transportclosed|initialize timed out|timed out waiting|returned an error result",
+    r"transportclosed|initialize timed out|timed out waiting",
     re.IGNORECASE,
 )
+# ("returned an error result" used to be here for the old bundled CLI's
+# image-read bug; with the SDK version gate that string now only ever means
+# a real error, which retrying 5× would just delay by 200 s)
 MAX_TRANSIENT_ATTEMPTS = 5
 TRANSIENT_BACKOFF_SECONDS = 20  # linear: 20s, 40s, 60s, 80s
 MAX_TIMEOUT_ATTEMPTS = 2  # a run that blew its wall-clock budget gets exactly one fresh start
@@ -162,8 +170,11 @@ class AgentIncompleteError(RuntimeError):
     """The run ended without the submit tool ever firing."""
 
 
+DEFAULT_BACKEND = "deepseek"
+
+
 def backend_name() -> str:
-    return os.environ.get("HARNESS", "claude")
+    return os.environ.get("HARNESS", DEFAULT_BACKEND)
 
 
 _DEFAULT_MODEL = {

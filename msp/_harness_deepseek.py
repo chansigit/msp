@@ -42,7 +42,8 @@ Env:
                       from a source build — see the eca-rsi harness-deepseek
                       branch notes; the PyPI-published native runtime wheel
                       is glibc-2.28-only and unusable on Sherlock as of
-                      2026-09). Required.
+                      2026-09). Default: $SCRATCH/tools/deepseek-harness-src/
+                      apps/cli/lib/bin.js when that file exists.
   DSH_HOME_ROOT       parent dir for the disposable per-call dsh home
                       (default: $SCRATCH or /tmp).
   DSH_PROVIDER        pi-ai route name to select (default 'doubao'); pass
@@ -78,6 +79,17 @@ _BUILTIN_DISABLE_IDS = ("persistent-bash", "terminal-bash", "persistent-pwsh",
                          "terminal-pwsh", "str-replace-editor")
 
 DOUBAO_BASE_URL_DEFAULT = "https://ark.cn-beijing.volces.com/api/v3"
+
+
+def _default_dsh_bin() -> str | None:
+    """The source build this cluster uses when DSH_BIN is unset (HARNESS=
+    deepseek is the default, so a bare `eca-rsi run` must find dsh)."""
+    root = os.environ.get("SCRATCH")
+    if root:
+        cand = os.path.join(root, "tools", "deepseek-harness-src", "apps", "cli", "lib", "bin.js")
+        if os.path.isfile(cand):
+            return cand
+    return None
 
 
 def _free_port() -> int:
@@ -288,7 +300,7 @@ async def run_agent(
 ) -> AgentRunResult:
     from mcp.server.fastmcp import FastMCP
 
-    dsh_bin = os.environ.get("DSH_BIN")
+    dsh_bin = os.environ.get("DSH_BIN") or _default_dsh_bin()
     if not dsh_bin:
         raise RuntimeError(
             "HARNESS=deepseek needs DSH_BIN pointing at a built dsh CLI entrypoint "
