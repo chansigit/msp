@@ -319,7 +319,7 @@ def _validate_final(entries, clusters):
             )
     comp = _components(entries)
     seen = set()
-    for c, members in comp.items():
+    for members in comp.values():
         key = tuple(members)
         if key in seen or len(members) < 2:
             continue
@@ -377,7 +377,7 @@ def _apply(ad, proposal, pre_removed, pre_sources):
         {
             "cell": ad.obs_names,
             BASE_KEY: base.values,
-            **{k: v for k, v in pre_sources.items()},
+            **pre_sources,
             "annotate_remove": agent_remove,
             "remove_reason": base.map(
                 {c: e.get("remove_reason") for c, e in entries.items() if e["action"] == "remove"}

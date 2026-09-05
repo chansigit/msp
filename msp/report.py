@@ -178,7 +178,7 @@ def _tabs(group_id: str, items: list[tuple[str, str]]) -> str:
     style = f"<style>{', '.join(rules)} {{ display: block; }}</style>"
     return (
         '<div class="tabset">'
-        + "".join(x for pair in zip(inputs, labels) for x in pair)
+        + "".join(x for pair in zip(inputs, labels, strict=True) for x in pair)
         + f'<div class="tab-panels">{"".join(panels)}</div></div>{style}'
     )
 
@@ -214,7 +214,8 @@ def _csv_table(path: str) -> str:
         return ""
     head = "".join(f"<th>{html.escape(c)}</th>" for c in rows[0])
     body = "".join(
-        "<tr>" + "".join(f"<td>{_fmt_cell(h, c)}</td>" for h, c in zip(rows[0], r)) + "</tr>" for r in rows[1:]
+        "<tr>" + "".join(f"<td>{_fmt_cell(h, c)}</td>" for h, c in zip(rows[0], r, strict=False)) + "</tr>"
+        for r in rows[1:]
     )
     return f"<table><tr>{head}</tr>{body}</table>"
 
@@ -769,7 +770,7 @@ def _number_sections(section_htmls):
     numbered_htmls = []
     toc_groups = []
     for s in section_htmls:
-        sec_anchor = next((a for a, l in present if f'<h2 id="{a}">{l}</h2>' in s), None)
+        sec_anchor = next((a for a, lbl in present if f'<h2 id="{a}">{lbl}</h2>' in s), None)
         for anchor, label in present:
             s = s.replace(f'<h2 id="{anchor}">{label}</h2>', f'<h2 id="{anchor}">{numbered[anchor]}</h2>', 1)
         subs = []

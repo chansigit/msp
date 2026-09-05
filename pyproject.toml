@@ -50,6 +50,7 @@ extend-exclude = ["build", ".msp-history"]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "RUF100"]
 ignore = [
     "E501",  # long prompt/doc strings; the formatter handles code lines
+    "C408",  # dict(k=v) keyword style is intentional for kwargs bundles
 ]
 
 [tool.pytest.ini_options]

@@ -119,7 +119,7 @@ def _gene_table(ad, genes, cluster_key):
         m = (cl == c).values
         mean = X[m].mean(axis=0)
         pct = 100 * (X[m] > 0).mean(axis=0)
-        cols[c] = [f"{mn:.2f}|{p:.0f}%" for mn, p in zip(mean, pct)]
+        cols[c] = [f"{mn:.2f}|{p:.0f}%" for mn, p in zip(mean, pct, strict=True)]
     df = pd.DataFrame(cols, index=list(found.values()))
     out = "mean lognorm expr | pct expressing, per cluster:\n" + df.to_string()
     if missing:
@@ -410,7 +410,7 @@ class DegTables:
     def _fmt_rows(self, rows, header):
         """Grouped per (view, cluster): one terse line per group — gene #rank logFC padj pct1/pct2."""
         groups = {}
-        for key, view, cluster, rank, gene, logfc, padj, pct1, pct2, nbs in rows:
+        for _key, view, cluster, rank, gene, logfc, padj, pct1, pct2, nbs in rows:
             ref = "rest" if view == "global" else "PAGA nbrs " + nbs.replace("|", ",")
             groups.setdefault((view, cluster, ref), []).append(
                 f"{gene} #{rank} {logfc:.1f} {padj:.0e} {pct1:.2f}/{pct2:.2f}"

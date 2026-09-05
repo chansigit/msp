@@ -278,7 +278,7 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir, leiden_keys=(), reso
     # same table at the primary leiden resolutions (r1.0 / r2.0) — coarser
     # than standissect fragments, but this is what Cluster Annotations (DEG,
     # PAGA, stress flags) actually keys off, so its QC belongs alongside it
-    res_to_key = dict(zip(resolutions, leiden_keys))
+    res_to_key = dict(zip(resolutions, leiden_keys, strict=True))
     for r in (1.0, 2.0):
         key = res_to_key.get(r)
         if key is None or key == violin_key:
@@ -310,7 +310,7 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     minor_sibling_qc.csv marked recommend_removal in red."""
     frag = res.fragments
     core_rows = frag.loc[frag["rank"] == 0]
-    parent_of_core = dict(zip(core_rows["subcluster"], core_rows["parent"]))
+    parent_of_core = dict(zip(core_rows["subcluster"], core_rows["parent"], strict=True))
     core_mask = ad.obs["standissect_product"].astype(str).isin(parent_of_core)
     core_ad = ad[core_mask].copy()
     core_ad.obs["parent"] = (
@@ -386,8 +386,8 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
             removal_set = {r["subcluster"] for r in csv.DictReader(f) if r.get("recommend_removal") == "True"}
     core_pattern = re.compile(r"^c\d+_0$")
 
-    parents = sorted({p for p in gene_parent.values()}, key=int)
-    parent_palette = dict(zip(parents, sns.color_palette("tab20", n_colors=max(len(parents), 1))))
+    parents = sorted(set(gene_parent.values()), key=int)
+    parent_palette = dict(zip(parents, sns.color_palette("tab20", n_colors=max(len(parents), 1)), strict=False))
 
     n_genes, n_clusters = z.shape
 
@@ -614,7 +614,7 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         flush=True,
     )
 
-    res_to_key = dict(zip(resolutions, leiden_keys))
+    res_to_key = dict(zip(resolutions, leiden_keys, strict=True))
     target = [(r, res_to_key[r]) for r in (1.0, 2.0) if r in res_to_key]
     if not target:
         print("== cluster annotations: neither r1.0 nor r2.0 in resolutions — skipping", flush=True)
@@ -784,7 +784,7 @@ def _cell_level_outliers(ad, leiden_keys, resolutions, outdir):
     metrics = [m for m in CELL_OUTLIER_METRICS if m in ad.obs]
     if not metrics:
         return None
-    res_to_key = dict(zip(resolutions, leiden_keys))
+    res_to_key = dict(zip(resolutions, leiden_keys, strict=True))
     targets = [(r, res_to_key[r]) for r in (1.0, 2.0) if r in res_to_key]
     if not targets:
         return None
@@ -794,7 +794,7 @@ def _cell_level_outliers(ad, leiden_keys, resolutions, outdir):
         df[m] = ad.obs[m]
 
     flag_cols = []
-    for r, key in targets:
+    for _r, key in targets:
         df[key] = ad.obs[key].values
         g = ad.obs.groupby(key, observed=True)
         for m in metrics:
@@ -811,7 +811,7 @@ def _cell_level_outliers(ad, leiden_keys, resolutions, outdir):
     df.reset_index().to_csv(os.path.join(outdir, "cell_outliers.csv"), index=False)
 
     summary_rows = []
-    for r, key in targets:
+    for _r, key in targets:
         g = df.groupby(key, observed=True)
         for cl, sub in g:
             row = {"key": key, "cluster": cl, "n_cells": len(sub)}
@@ -843,9 +843,9 @@ def _leiden_cluster_qc_violins(ad, leiden_keys, resolutions, figdir):
     metrics = [m for m in CELL_OUTLIER_METRICS if m in ad.obs]
     if not metrics:
         return
-    res_to_key = dict(zip(resolutions, leiden_keys))
+    res_to_key = dict(zip(resolutions, leiden_keys, strict=True))
     targets = [(r, res_to_key[r]) for r in (1.0, 2.0) if r in res_to_key]
-    for r, key in targets:
+    for _r, key in targets:
         order = [str(c) for c in ad.obs[key].cat.categories]
         g = ad.obs.groupby(key, observed=True)
         for m in metrics:
@@ -939,7 +939,7 @@ def integrate_adata(
         raise ValueError("resolutions must contain at least one positive value")
     if any(not math.isfinite(float(r)) or float(r) <= 0 for r in resolutions):
         raise ValueError(f"resolutions must be finite and positive, got {resolutions!r}")
-    if len(set(float(r) for r in resolutions)) != len(resolutions):
+    if len({float(r) for r in resolutions}) != len(resolutions):
         raise ValueError(f"resolutions must be unique, got {resolutions!r}")
     if n_top_genes <= 0 or n_pcs <= 0 or n_neighbors <= 0:
         raise ValueError("n_top_genes, n_pcs, and n_neighbors must be positive")

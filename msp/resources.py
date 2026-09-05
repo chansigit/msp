@@ -10,6 +10,7 @@ per-lineage concurrency)."""
 
 from __future__ import annotations
 
+import contextlib
 import os
 
 _UNLIMITED = 1 << 60  # cgroup v1 reports ~9.2e18 for "no limit"
@@ -50,7 +51,8 @@ def _cgroup_memory_limits() -> list[int]:
     /sys/fs/cgroup so the listed path doesn't exist just yields nothing."""
     limits: list[int] = []
     try:
-        lines = open("/proc/self/cgroup").read().splitlines()
+        with open("/proc/self/cgroup") as fh:
+            lines = fh.read().splitlines()
     except Exception:
         return limits
     for line in lines:
@@ -68,7 +70,8 @@ def _cgroup_memory_limits() -> list[int]:
             p = path.rstrip("/")
             while True:
                 try:
-                    raw = open(os.path.join(root + p, fname)).read().strip()
+                    with open(os.path.join(root + p, fname)) as fh:
+                        raw = fh.read().strip()
                     if raw != "max":
                         v = int(float(raw))
                         if 0 < v < _UNLIMITED:
@@ -89,10 +92,8 @@ def available_memory_bytes() -> int:
     except Exception:
         limits = []
     phys = 0
-    try:
+    with contextlib.suppress(Exception):
         phys = int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
-    except Exception:
-        pass
     candidates = [v for v in [*limits, phys] if v > 0]
     return min(candidates) if candidates else 8 << 30
 
@@ -100,9 +101,10 @@ def available_memory_bytes() -> int:
 def current_rss_bytes() -> int:
     """This process's resident set (0 when /proc is unavailable)."""
     try:
-        for line in open("/proc/self/status"):
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) * 1024
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) * 1024
     except Exception:
         pass
     return 0
