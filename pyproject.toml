@@ -47,7 +47,7 @@ agent = ["agent-harness-bridge[all]>=0.2.0,<0.3"]
 Homepage = "https://github.com/chansigit/msp"
 
 [tool.setuptools]
-packages = ["msp"]
+packages = ["msp", "msp.integrate"]
 
 [tool.ruff]
 line-length = 120

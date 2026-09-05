@@ -59,6 +59,8 @@ All notable changes to msp-sc. The format follows
 - `msp.harness` emits a `DeprecationWarning`; it will be removed in 0.4.
 
 ### Fixed
+- The wheel includes the `msp.integrate` subpackage (`packages` in
+  `pyproject.toml`); CI now builds the wheel and imports it.
 - `_apply_proposal` no longer writes in place into the read-only array
   pandas 3 returns from `Series.values` (cell actions raised
   `ValueError: output array is read-only`).

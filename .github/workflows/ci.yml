@@ -34,3 +34,9 @@ jobs:
           python -m pip install -e . pytest pytest-cov
       - name: Test
         run: python -m pytest --cov=msp --cov-report=term-missing --cov-fail-under=80
+      - name: Build and import the wheel
+        run: |
+          python -m pip install build
+          python -m build --wheel --outdir /tmp/wheel
+          python -m pip install --force-reinstall --no-deps /tmp/wheel/*.whl
+          cd /tmp && python -c "import msp, msp.integrate, msp.evidence, msp.agent_tools, msp.log; print(msp.__version__)"
