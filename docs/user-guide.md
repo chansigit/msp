@@ -70,6 +70,21 @@ HARNESS=openai python -m msp.inspect msp_out --species human
 HARNESS=openai python -m msp.annotate msp_out --species human
 ```
 
+## Read core and satellite patterns
+
+Similar outliers can be sparse in each sample yet accumulate into a distinct
+satellite after integration. Look for fragments that retain a main population's
+markers but separate along quality or stress signals; this core-and-satellite
+pattern may recur across cell types. Compare each fragment's markers, sample
+origins, and QC with the main populations. A satellite with coherent subtype
+markers and comparable quality may represent biology worth retaining.
+
+| Evidence | Where to look |
+| --- | --- |
+| Main populations and separated fragments | `figures/standissect_product.png` and `fragments_*.csv`. |
+| Fragment QC comparisons and candidate reasons | `minor_sibling_qc.csv` and the report's Per-cluster QC section. |
+| Identity and possible technical signals | Marker comparisons, QC plots, and Integration QC Inspection. |
+
 ## Read the report
 
 Open `msp_out/report.html`, downloading it first if needed. Follow the questions

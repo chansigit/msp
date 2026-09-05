@@ -5,7 +5,7 @@
 <h1 align="center">MSP: Multi-Sample Pipeline</h1>
 
 <p align="center">
-  <strong>Review cell populations across samples and annotate them together.</strong>
+  <strong>Find recurring noise and annotate cell types across samples.</strong>
 </p>
 
 <p align="center">
@@ -22,31 +22,42 @@
   <a href="#documentation">Documentation</a>
 </p>
 
-MSP integrates single-cell RNA-seq samples with Harmony, builds a shared cell
-map, and produces a browser report. Optional AI agents inspect cluster quality
-and assign cell types, with supporting genes and reasons for each decision.
-Use it after sample-level analysis with [OSP](https://github.com/chansigit/osp),
-or with your own compatible H5AD files.
+MSP uses cross-sample integration to identify recurring noisy populations and
+annotate cell types in single-cell RNA-seq data. It combines Harmony, cluster
+structure, and QC evidence in a browser report, with optional AI agents for
+inspection and annotation. Start from [OSP](https://github.com/chansigit/osp)
+outputs or your own compatible H5AD files.
 
 ## Why review samples together?
 
-A population seen in one sample needs context: does it recur elsewhere, have
-consistent markers, or separate mainly by quality? MSP brings sample composition,
-marker expression, and QC evidence into the same analysis. It helps you review
-suspicious groups and reconcile cell-type labels across samples.
+Outliers are scarce within one sample, but similar noisy cells can recur across
+many samples. After integration, they can accumulate into dense groups,
+separating from the main populations while retaining traces of their cell-type
+identity. This repeated **core-and-satellite pattern**, or **fractal structure**,
+makes noise that was scattered within samples easier to locate and assess
+together. Recurrence across samples can therefore reveal shared technical
+effects as well as shared biology.
+
+## From structure to noise filtering
+
+MSP locates separated fragments within broad cell populations and compares
+their QC profiles with core cells. Contamination, doublet, stress, mitochondrial,
+and inherited QC evidence contribute removal candidates. AI inspection checks
+markers, sample composition, and cluster structure; annotation applies removals
+and records their sources. A detached group needs supporting evidence before
+being interpreted as noise.
 
 ## How it works
 
-Integration builds the shared map. Inspection checks markers, quality, sample
-composition, cluster geometry, and stability across clustering resolutions.
-Annotation assigns broad and fine labels, merges groups judged to represent
-the same population, and writes a filtered dataset. Both AI stages record
-their evidence in the report.
+Integration builds the shared map and finds fragments. Inspection reviews
+quality and biological evidence. Annotation assigns broad and fine labels,
+merges groups judged to represent the same population, and writes a filtered
+dataset. The report brings the structures, evidence, and decisions together.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/msp-workflow-dark.svg">
-    <img src="assets/msp-workflow-light.svg" alt="Sample H5AD files enter integration; optional AI inspection records proposals without removing cells; annotation applies labels, merges, and removals to a separate dataset. Each stage updates the HTML report." width="960">
+    <img src="assets/msp-workflow-light.svg" alt="Sample H5AD files enter integration to reveal core and satellite fragments; optional AI inspection reviews QC and markers without removing cells; annotation applies labels, merges, and removals to a separate dataset. Each stage updates the HTML report." width="960">
   </picture>
 </p>
 

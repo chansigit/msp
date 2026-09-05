@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="350" viewBox="0 0 960 350" role="img" aria-labelledby="title desc">
   <title id="title">MSP workflow</title>
-  <desc id="desc">Sample H5AD files enter integration. Optional AI inspection adds quality proposals while retaining all cells. Annotation assigns labels, resolves merges, and applies removals to a separate annotated dataset. Each completed stage contributes to one HTML report.</desc>
+  <desc id="desc">Sample H5AD files enter integration to reveal core and satellite fragments. Optional AI inspection adds quality proposals while retaining all cells. Annotation assigns labels, resolves merges, and applies removals to a separate annotated dataset. Each completed stage contributes to one HTML report.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L7 4L1 7" fill="none" stroke="#52667A" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
   </defs>
@@ -15,15 +15,15 @@
     <text x="46" y="118" text-anchor="middle" font-size="17" font-weight="bold" fill="#FFFFFF">1</text>
     <text x="76" y="120" font-size="25" font-weight="bold" fill="#182F48">Integrate</text>
     <text x="28" y="167" font-size="17" fill="#52667A">Harmony and clustering</text>
-    <text x="28" y="193" font-size="17" fill="#52667A">QC and marker evidence</text>
+    <text x="28" y="193" font-size="17" fill="#52667A">Core and satellite fragments</text>
     <path d="M28 220H276" stroke="#2855BD" stroke-width="2"/>
     <text x="28" y="250" font-size="17" font-weight="bold" fill="#182F48">integrated.h5ad</text>
     <text x="28" y="275" font-size="15" fill="#52667A">All input cells</text>
     <circle cx="374" cy="112" r="18" fill="#168575"/>
     <text x="374" y="118" text-anchor="middle" font-size="17" font-weight="bold" fill="#FFFFFF">2</text>
     <text x="404" y="120" font-size="25" font-weight="bold" fill="#182F48">Inspect</text>
-    <text x="356" y="167" font-size="17" fill="#52667A">Review cluster quality</text>
-    <text x="356" y="193" font-size="17" fill="#52667A">Record keep, flag, or drop</text>
+    <text x="356" y="167" font-size="17" fill="#52667A">Check fragment QC</text>
+    <text x="356" y="193" font-size="17" fill="#52667A">Markers and sample evidence</text>
     <path d="M356 220H604" stroke="#168575" stroke-width="2"/>
     <text x="356" y="250" font-size="17" font-weight="bold" fill="#182F48">+ inspection proposals</text>
     <text x="356" y="275" font-size="15" fill="#52667A">Same dataset; all cells retained</text>

@@ -68,6 +68,33 @@ repeatable CLI `--harmony KEY=VALUE` options pass overrides to Harmony, while
 | `obs["standissect_product"]` | Fragment labels used in geometry and QC evidence. |
 | `uns["msp"]` | Input paths, species, batch column, dimensions, and integration settings. |
 
+## Fractal structure and fragment detection
+
+The working principle is that recurring sample-level outliers can pool into
+dense satellites around major populations; the repeated core-and-satellite
+geometry provides a way to locate noise. MSP uses `standissect-lite` to
+intersect the lowest-resolution RNA-side Leiden partition with UMAP-side
+clustering. Within each parent, the largest fragment is rank 0 (the core),
+and smaller fragments receive increasing ranks. These labels describe
+structure; QC and marker evidence supply its interpretation.
+
+## Fragment QC rules
+
+`_minor_sibling_qc` tests eligible non-core fragments against the pooled cells
+from all rank-0 cores. A fragment becomes a removal candidate if any available
+QC test passes or a majority of its cells carry inherited OSP drop proposals.
+The rules below govern this fragment test; separate cell-level outlier and
+inherited-drop rules also contribute to the final preannotation candidate set.
+
+| Rule | Current implementation |
+| --- | --- |
+| Large fragments | Skip this test at ≥25% of their own parent core's size, or ≥800 cells. |
+| Inherited OSP decisions | Propose the fragment if >50% of its cells have `_qc_action == "drop"`, including fragments too small for statistical testing. |
+| Statistical comparison | One-sided Mann–Whitney U, p < 0.05, with at least five finite measurements in each comparison group; no multiple-testing correction. |
+| Contamination and stress | Test available `decontX_contamination` and `dissociation_score` values for an upward shift. |
+| Doublets and mitochondrial counts | Require the upward shift plus a fragment median above 0.2 for `doublet_score`, or above 20 for `pct_counts_mt`. |
+| Filtering | Record candidates in `preannotation_removal.csv`; annotation applies the removal union described below. |
+
 ## Inspection contract
 
 Inspection reviews markers, QC, sample composition, geometry, and stability.
