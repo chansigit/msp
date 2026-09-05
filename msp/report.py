@@ -891,9 +891,13 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     return out_html
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(prog="msp.report", description=__doc__)
     parser.add_argument("outdir")
     parser.add_argument("--out", default=None)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     print(f"wrote {generate_report(args.outdir, out_html=args.out)}")
+
+
+if __name__ == "__main__":
+    main()

@@ -3,6 +3,10 @@
 Application code may keep importing this module; every public object is the
 same object exported by harness_bridge, so exception and dataclass identity
 remain stable across repositories.
+
+Deprecated: new code should import from ``harness_bridge`` directly. This
+module stays until every in-tree caller (inspect, annotate, __main__) and the
+external ones (zmip, eca-rsi) have moved; see TODO.md.
 """
 
 from harness_bridge import (

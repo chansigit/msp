@@ -93,11 +93,13 @@ def _load_removal_mask(outdir, ad):
         return np.zeros(ad.n_obs, dtype=bool)
     # Cell IDs are opaque strings: preserve leading zeros and literal "NA" IDs.
     df = pd.read_csv(path, dtype={"cell": str}, keep_default_na=False).set_index("cell")
-    return df["recommend_removal"].reindex(ad.obs_names).fillna(False).to_numpy()
+    # Nullable boolean: cells absent from the file are not flagged, without object-dtype downcasting.
+    flags = df["recommend_removal"].astype("boolean").reindex(ad.obs_names).fillna(False)
+    return flags.to_numpy(dtype=bool)
 
 
 def _cluster_order(labels):
-    seen = pd.unique(labels)
+    seen = list(dict.fromkeys(labels))  # first-seen order, any iterable
     try:
         return sorted(seen, key=lambda x: float(str(x).split(",")[0]))
     except ValueError:
@@ -330,9 +332,11 @@ class DegTables:
     computation, same numbers."""
 
     _COLS = ("key", "view", "cluster", "rank", "gene", "logfc", "padj", "pct1", "pct2", "neighbors")
+    # Per-cell tables (one row per cell) are not evidence the agents query by
+    # SQL, and loading them costs memory on every session — skip by file stem.
+    PER_CELL_TABLES = frozenset({"cell_outliers", "preannotation_removal", "annotation_removed"})
 
     def __init__(self, outdir, base_key=None):
-        import glob as _glob
         import sqlite3
 
         self.base_key = base_key
@@ -343,7 +347,7 @@ class DegTables:
             "logfc REAL, padj REAL, pct1 REAL, pct2 REAL, neighbors TEXT)"
         )
         rows = []
-        for path in sorted(_glob.glob(os.path.join(outdir, "deg_*_*.csv"))):
+        for path in sorted(glob.glob(os.path.join(outdir, "deg_*_*.csv"))):
             name = os.path.basename(path)[len("deg_") : -len(".csv")]
             view, key = name.split("_", 1)
             if view not in ("global", "local"):
@@ -379,9 +383,9 @@ class DegTables:
         # fragments, ...) as its own table named by file stem — the agents reach for
         # them in SQL as soon as they see one table exists, and several are large
         self.extra_tables: dict[str, tuple[int, list[str]]] = {}  # name -> (rows, columns)
-        for path in sorted(_glob.glob(os.path.join(outdir, "*.csv"))):
+        for path in sorted(glob.glob(os.path.join(outdir, "*.csv"))):
             stem = os.path.basename(path)[: -len(".csv")]
-            if stem.startswith("deg_"):
+            if stem.startswith("deg_") or stem in self.PER_CELL_TABLES:
                 continue
             name = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in stem)
             try:
@@ -406,6 +410,15 @@ class DegTables:
             )
 
         self.conn.set_authorizer(_authorizer)
+
+    def close(self):
+        self.conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     def _fmt_rows(self, rows, header):
         """Grouped per (view, cluster): one terse line per group — gene #rank logFC padj pct1/pct2."""
@@ -1094,28 +1107,31 @@ async def _run_agent(
             submit_inspection,
         ),
     ]
-    result = await run_agent(
-        tools=tools,
-        submit_tool="submit_inspection",
-        prompt="Inspect this msp integration directory following the workflow in the system "
-        "prompt exactly, and finish by submitting via submit_inspection.",
-        system_prompt=_system_prompt(
-            outdir,
-            cluster_key,
-            _cluster_order(ad.obs[cluster_key].astype(str)),
-            batch_col,
-            species,
-            language,
-            n_batches=int(ad.obs[batch_col].nunique()),
-        ),
-        cwd=os.path.abspath(outdir),
-        model=model,
-        effort=effort,
-        max_turns=max_turns,
-        allowed_builtin=("read", "glob", "grep"),
-        label="inspect",
-        max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
-    )
+    try:
+        result = await run_agent(
+            tools=tools,
+            submit_tool="submit_inspection",
+            prompt="Inspect this msp integration directory following the workflow in the system "
+            "prompt exactly, and finish by submitting via submit_inspection.",
+            system_prompt=_system_prompt(
+                outdir,
+                cluster_key,
+                _cluster_order(ad.obs[cluster_key].astype(str)),
+                batch_col,
+                species,
+                language,
+                n_batches=int(ad.obs[batch_col].nunique()),
+            ),
+            cwd=os.path.abspath(outdir),
+            model=model,
+            effort=effort,
+            max_turns=max_turns,
+            allowed_builtin=("read", "glob", "grep"),
+            label="inspect",
+            max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
+        )
+    finally:
+        tables.close()
     if result.transcript_text:
         with open(os.path.join(outdir, "inspection_notes.md"), "w") as fh:
             fh.write(result.transcript_text)
@@ -1178,7 +1194,7 @@ def inspect_clusters(
     return proposal
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(prog="msp.inspect", description=__doc__)
     parser.add_argument("outdir", help="msp integration output directory")
     parser.add_argument("--species", default=None, help="defaults to uns['msp']['species']")
@@ -1187,7 +1203,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", default=None)
     parser.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"])
     parser.add_argument("--max-turns", type=int, default=100)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     proposal = inspect_clusters(
         args.outdir,
@@ -1200,3 +1216,7 @@ if __name__ == "__main__":
     )
     for e in proposal["clusters"]:
         print(f"cluster {e['cluster']}: {e['verdict']} -> {e['action']} [{e['confidence']}]")
+
+
+if __name__ == "__main__":
+    main()

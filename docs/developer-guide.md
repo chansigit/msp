@@ -57,6 +57,13 @@ skips Harmony and uses PCA directly. The project pins `harmonypy==0.2.0`;
 repeatable CLI `--harmony KEY=VALUE` options pass overrides to Harmony, while
 `MSP_DEVICE` can select `cpu`, `cuda`, or `mps`.
 
+| Environment variable | Effect |
+| --- | --- |
+| `MSP_DEVICE` | Harmony device: `cpu`, `cuda`, or `mps` (default: auto-detect). |
+| `MSP_MAX_THREADS` | Cap on the CPUs the DEG thread pool may use (default: the affinity mask). |
+| `MSP_PALETTE_DIR` | Directory holding stanhue's `scatter_colormap.py`; annotation UMAPs then use its hierarchical palette. Unset: scanpy's default palette. An unusable directory is reported, not ignored. |
+| `HARNESS` | Agent backend when `--harness` is not given; see Agent Harness Bridge. |
+
 | Location | Meaning |
 | --- | --- |
 | `layers["counts"]` | Preserved raw counts under the default layer name. |
@@ -168,6 +175,13 @@ behavior in this repository.
 
 ```bash
 python -m pip install -e ".[agent]"
-python -m pip install pytest
-python -m pytest -q
+python -m pip install pytest ruff
+ruff check msp tests && ruff format --check msp tests
+python -m pytest
 ```
+
+Lint and test settings live in `pyproject.toml`; the GitHub Actions workflow
+runs the same commands on pushes and pull requests. The test suite treats
+`FutureWarning`s raised from `msp` as errors, so a pandas deprecation shows up
+as a failure rather than as noise. Open refactoring items are tracked in
+[TODO.md](../TODO.md).

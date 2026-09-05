@@ -15,6 +15,7 @@ import msp.annotate as annotate
 import msp.inspect as inspect
 import msp.integrate as integrate
 import msp.steps as steps
+from msp import report
 from msp.report import generate_report
 from msp.steps import begin_step, complete_step, step_pending
 
@@ -310,8 +311,7 @@ def test_report_only_never_clears_pending(completed_run, monkeypatch):
     begin_step(completed_run, "annotate")
     marker = completed_run / ".msp-state" / "annotate.pending"
     before = marker.stat().st_mtime_ns
-    monkeypatch.setattr(sys, "argv", ["msp.report", str(completed_run)])
-    runpy.run_module("msp.report", run_name="__main__")
+    report.main([str(completed_run)])
     assert marker.stat().st_mtime_ns == before
     assert "Incomplete steps: annotate" in (completed_run / "report.html").read_text()
 

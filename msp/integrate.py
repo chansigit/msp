@@ -67,7 +67,8 @@ def load_and_merge(inputs, batch_col, counts_layer="counts"):
         # counts is all downstream needs
         a.obsm.clear()
         a.uns.clear()
-        a.layers = {counts_layer: counts}
+        for layer in [k for k in a.layers if k != counts_layer]:
+            del a.layers[layer]  # deleting keys never touches X, unlike reassigning .layers
         adatas.append(a)
 
     # Gene axes were checked above, so an outer join only widens obs metadata.

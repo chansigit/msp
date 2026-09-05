@@ -68,7 +68,9 @@ BASE_KEY = "msp_leiden_r2.0"
 PARENT_KEY = "msp_leiden_r1.0"
 CONFIDENCES = ("high", "medium", "low")
 REMOVE_REASONS = ("doublet", "low-quality", "ambient", "stress", "batch", "other")
-_STANHUE_DIR = os.path.expanduser("~/.claude/skills/stanhue/scripts")
+# Optional: a directory holding stanhue's scatter_colormap.py (hierarchical
+# cell-type palette). Unset → scanpy's default palette; never auto-detected.
+PALETTE_DIR_ENV = "MSP_PALETTE_DIR"
 
 
 # ---------------------------------------------------------------- evidence
@@ -389,12 +391,17 @@ def _apply(ad, proposal, pre_removed, pre_sources):
 
 def _palette(ad, col):
     """stanhue hierarchical palette (related labels share a hue family) when
-    the skill is importable, else scanpy's default."""
+    $MSP_PALETTE_DIR points at a directory with scatter_colormap.py, else
+    None (scanpy's default). Falling back is announced, never silent."""
+    palette_dir = os.environ.get(PALETTE_DIR_ENV)
+    if not palette_dir:
+        return None
     try:
-        if _STANHUE_DIR not in sys.path:
-            sys.path.insert(0, _STANHUE_DIR)
+        if palette_dir not in sys.path:
+            sys.path.insert(0, palette_dir)
         from scatter_colormap import assign_celltype_colors  # type: ignore[import-not-found]
-    except Exception:
+    except Exception as exc:
+        print(f"== {PALETTE_DIR_ENV}={palette_dir!r} unusable ({exc}); using scanpy's default palette", flush=True)
         return None
     cmap = assign_celltype_colors(np.asarray(ad.obsm["X_umap"]), ad.obs[col].astype(str).to_numpy())
     return [cmap.get(str(c), "#999999") for c in ad.obs[col].cat.categories]
@@ -657,7 +664,12 @@ async def _run_agent(
                 "is_error": True,
             }
         comp = _components(entries)
-        groups = sorted({tuple(v) for v in comp.values() if len(v) > 1}, key=lambda t: float(t[0]))
+        # Order merged groups by their first member's position in the base
+        # clustering order; cluster IDs are not guaranteed to be numeric.
+        position = {c: i for i, c in enumerate(clusters)}
+        groups = sorted(
+            {tuple(v) for v in comp.values() if len(v) > 1}, key=lambda t: position.get(t[0], len(position))
+        )
         proposal = {
             "cluster_key": BASE_KEY,
             "parent_key": PARENT_KEY,
@@ -757,6 +769,8 @@ async def _run_agent(
         )
     except AgentIncompleteError as e:
         raise RuntimeError(f"{e} ({len(entries)}/{len(clusters)} clusters submitted)") from None
+    finally:
+        tables.close()
     if result.transcript_text:
         with open(os.path.join(outdir, "annotation_notes.md"), "w") as fh:
             fh.write(result.transcript_text)
@@ -838,7 +852,7 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     return proposal
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(prog="msp.annotate", description=__doc__)
     parser.add_argument("outdir", help="msp integration output directory (after msp.inspect)")
     parser.add_argument("--species", default=None, help="defaults to uns['msp']['species']")
@@ -846,7 +860,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", default=None)
     parser.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"])
     parser.add_argument("--max-turns", type=int, default=200)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     proposal = annotate_clusters(
         args.outdir,
@@ -864,3 +878,7 @@ if __name__ == "__main__":
         )
     if proposal["merged_groups"]:
         print("merged groups: " + ", ".join(proposal["merged_groups"]))
+
+
+if __name__ == "__main__":
+    main()

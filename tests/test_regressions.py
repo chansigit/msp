@@ -12,7 +12,7 @@ from scipy import sparse
 
 import msp.integrate as integrate
 import msp.resources as resources
-from msp.inspect import DegTables, _load_paga_neighbors, _load_removal_mask
+from msp.inspect import DegTables, _cluster_order, _load_paga_neighbors, _load_removal_mask
 
 
 @pytest.mark.parametrize("harmony", [{}, {"theta": [1, 2]}])
@@ -159,11 +159,28 @@ def test_deg_lookup_limits_each_view_after_filtering(tmp_path):
     )
     for view in ("global", "local"):
         rows.to_csv(tmp_path / f"deg_{view}_k.csv", index=False)
-    tables = DegTables(tmp_path, base_key="k")
-    try:
+    with DegTables(tmp_path, base_key="k") as tables:
         result = tables.lookup(cluster="0", top_n=2, min_logfc=1)
         assert "4 row(s) of 6 passing" in result
         assert result.count("G1 #2") == result.count("G2 #3") == 2
         assert "G0 #1" not in result and "G3 #4" not in result
-    finally:
-        tables.conn.close()
+
+
+def test_deg_tables_skip_per_cell_csvs_but_keep_summaries(tmp_path):
+    pd.DataFrame({"cell": ["a", "b"], "recommend_removal": [True, False]}).to_csv(
+        tmp_path / "preannotation_removal.csv", index=False
+    )
+    pd.DataFrame({"cell": ["a"], "recommend_removal": [True]}).to_csv(tmp_path / "cell_outliers.csv", index=False)
+    pd.DataFrame({"key": ["k"], "cluster": ["0"], "stress": [False]}).to_csv(
+        tmp_path / "stress_clusters.csv", index=False
+    )
+    with DegTables(tmp_path, base_key="k") as tables:
+        assert set(tables.extra_tables) == {"stress_clusters"}
+        assert "no rows" not in tables.sql("SELECT cluster FROM stress_clusters")
+        assert tables.sql("SELECT * FROM cell_outliers").startswith("SQL error")
+
+
+def test_cluster_order_accepts_any_iterable_and_non_numeric_ids():
+    assert _cluster_order(["10", "2", "5,1", "5,0"]) == ["2", "5,1", "5,0", "10"]
+    assert _cluster_order(pd.Series(["b", "a", "b"])) == ["a", "b"]
+    assert _cluster_order(iter(["1", "1", "0"])) == ["0", "1"]
