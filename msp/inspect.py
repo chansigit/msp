@@ -8,8 +8,8 @@ Every integrated cluster goes through five tests (the R11 battery):
   (a) markers     — own specific positive markers; ribo/mito/stress modules
                     with flat logFC → noise partition;
   (b) QC axis     — separation from neighbors along QC metrics → technical;
-  (c) composition — multi-sample presence; single-sample dominance → batch
-                    artifact (unless metadata explains it);
+  (c) composition — sample imbalance is a review signal, not evidence
+                    that cells are invalid; distinguish study design from batch;
   (d) geometry    — sits between two populations with intermediate
                     signatures → doublet candidate;
   (e) stability   — persists across resolutions; one-resolution splinters
@@ -133,7 +133,10 @@ _PROPOSAL_SCHEMA_DOC = """{
      "action": "drop|flag", "reason": "doublet|ambient|debris|low-quality|other", "note": "<free text>"}
   ],
   "overall": "<overall assessment of the integration>"
-}"""
+}
+Host policy: artifact-batch/drop is adjusted to flag without another agent turn;
+requested_action and host_adjustment record the original request and policy.
+"""
 
 _VERDICTS = ("real", "artifact-doublet", "artifact-lowquality", "artifact-batch", "artifact-ambient", "ambiguous")
 
@@ -210,9 +213,29 @@ def _validate_proposal(proposal, clusters, obs):
     return problems
 
 
+def _guard_batch_actions(proposal):
+    """Retain sample/batch suspicions without treating them as cell invalidity.
+
+    Normalize in place so callers persist the same proposal applied to AnnData.
+    The original requested action and host policy remain auditable. This also
+    covers saved proposals, bypassing neither the policy nor agent retries.
+    """
+    for entry in proposal["clusters"]:
+        if entry.get("verdict") == "artifact-batch" and entry.get("action") == "drop":
+            entry["requested_action"] = "drop"
+            entry["action"] = "flag"
+            entry["host_adjustment"] = {
+                "policy": "batch_verdict_non_destructive_v1",
+                "reason": "Sample/batch composition alone does not establish invalid cells; retained for review.",
+            }
+            log.warning("== inspect cluster %s: artifact-batch drop adjusted to flag for review", entry["cluster"])
+    return proposal
+
+
 def _apply_proposal(ad, key, proposal):
     """obs["_msp_action"] in keep/flag/drop: cluster actions first, then
     cell_actions refine; within each pass flags before drops so drop wins."""
+    _guard_batch_actions(proposal)
     lab = ad.obs[key].astype(str)
     action = np.array(["keep"] * ad.n_obs, dtype=object)
     for verb in ("flag", "drop"):
@@ -272,17 +295,20 @@ a verdict + action per cluster.
 The five tests (all five must be answered for every cluster):
 (a) markers — own specific positive markers? ribo/mito/stress modules with flat logFC → noise;
 (b) QC axis — separated from neighbors mainly along QC metrics (mt/doublet/contamination/depth) → technical;
-(c) composition — cells from several samples, or dominated by one sample → batch artifact unless \
-biology explains it; clusters rich in per-sample flag/drop cells that CO-CLUSTER across samples \
-are the point of this integration — judge whether the cross-sample agreement confirms the artifact \
-(e.g. shared doublet signature) or rescues the cells (a real rare population every sample flagged);
+(c) composition — sample dominance is a review signal, not proof of technical artifact. Sample \
+identity may encode condition, donor, sex or tissue. When the design is absent or confounded, \
+record that batch and biology cannot be distinguished. Small size, similar markers and merging \
+under lower clustering resolution do not establish that the cells should be deleted. A supported \
+artifact-batch suspicion can request flag/keep only, never drop. Independent cell-quality evidence \
+must be assessed on its own; co-clustering across samples does not by itself validate deletion;
 (d) geometry — between two populations with intermediate signatures → doublet candidate;
 (e) stability — persists across resolutions (check_stability); one-resolution splinters are not actionable.
 
 Standard verdict mapping: passes a+c+e → real/keep; fails a and trips b → artifact-lowquality; \
-trips d → artifact-doublet; single-sample + no biological explanation → artifact-batch; \
-unclear → ambiguous/flag (defer, never force). "drop" proposes removal, "flag" requests review — \
-NOTHING is executed here; deletion is a later separate step, so be precise, not timid.
+trips d → artifact-doublet; unresolved sample/design effects → ambiguous/flag; supported batch \
+suspicions → artifact-batch/flag. Lack of a biological explanation is not positive technical evidence. \
+"drop" will be consumed by the later annotation step as a deletion decision, whereas "flag" retains \
+cells for review. Do not relabel a batch-only suspicion as a different artifact to bypass this rule.
 
 All relevant files (paths relative to the working directory — Read exactly these, no guessing):
 {file_inventory(outdir)}
@@ -388,6 +414,7 @@ async def _run_agent(
         problems = _validate_proposal(proposal, current_clusters(), ad.obs)
         if problems:
             return text_result("validation failed, fix and resubmit:\n- " + "\n- ".join(problems), is_error=True)
+        _guard_batch_actions(proposal)
         proposal["cluster_key"] = state["key"]
         path = os.path.join(outdir, "inspection_proposal.json")
         with open(path, "w") as fh:
@@ -525,6 +552,12 @@ def inspect_clusters(
         )
     )
     _apply_proposal(ad, proposal["cluster_key"], proposal)
+    # Persist the exact guarded actions, including when a saved proposal was
+    # supplied by a caller instead of the live submit tool.
+    proposal_path = os.path.join(outdir, "inspection_proposal.json")
+    with open(proposal_path + ".tmp", "w", encoding="utf-8") as fh:
+        json.dump(proposal, fh, ensure_ascii=False, indent=2)
+    os.replace(proposal_path + ".tmp", proposal_path)
     _plot_verdicts(ad, os.path.join(outdir, "figures"))
     tmp = os.path.join(outdir, "integrated.tmp.h5ad")
     ad.write_h5ad(tmp)

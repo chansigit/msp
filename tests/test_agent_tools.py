@@ -49,7 +49,8 @@ def test_shared_tools_answer_from_tables_and_expression(tmp_path):
     with DegTables(tmp_path, base_key="k") as tables:
         tools = shared_tools(tables, data, lambda: "k", "DOC")
         assert [t.name for t in tools] == ["deg_lookup", "deg_sql", "check_genes"]
-        assert tools[2].description == "DOC"
+        assert tools[2].description.startswith("DOC ")
+        assert "16 KiB" in tools[2].description and "clusters" in tools[2].description
         handlers = {t.name: t.handler for t in tools}
         lookup = asyncio.run(handlers["deg_lookup"]({"cluster": "0", "min_logfc": 1}))["content"][0]["text"]
         assert "G1 #2" in lookup and "G0 #1" not in lookup

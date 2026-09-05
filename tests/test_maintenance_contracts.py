@@ -21,8 +21,10 @@ def test_deg_warning_summary_preserves_other_warnings_and_results(monkeypatch, c
     def rank(*args, **kwargs):
         for _ in range(8):
             warnings.warn_explicit(
-                "divide by zero encountered in log2", RuntimeWarning,
-                "/env/scanpy/tools/_rank_genes_groups.py", 400,
+                "divide by zero encountered in log2",
+                RuntimeWarning,
+                "/env/scanpy/tools/_rank_genes_groups.py",
+                400,
                 module="scanpy.tools._rank_genes_groups",
             )
         warnings.warn("different numerical issue", RuntimeWarning, stacklevel=2)
@@ -46,28 +48,45 @@ def test_deg_errors_propagate(monkeypatch):
 
 
 def test_prior_columns_and_cluster_context():
-    obs = pd.DataFrame({
-        "batch": ["A", "A", "B", "B"],
-        "source_identity": ["p1", "p1", "p2", "p2"],
-        "prior": ["T", "B", "T", "B"],
-        "boolean_label": ["yes", "no", "yes", "no"],
-        "numeric": [1, 2, 3, 4],
-        "msp_old_label": ["a", "b", "a", "b"],
-        "unlabelled": [None, "B", None, "T"],
-        annotate.BASE_KEY: ["0", "1", "0", "1"],
-        annotate.PARENT_KEY: ["0"] * 4,
-        "_msp_action": ["keep", "keep", None, "flag"],
-        "doublet_score": [0.1, 0.2, 0.3, 0.4],
-    }, index=[f"c{i}" for i in range(4)])
+    obs = pd.DataFrame(
+        {
+            "batch": ["A", "A", "B", "B"],
+            "source_identity": ["p1", "p1", "p2", "p2"],
+            "prior": ["T", "B", "T", "B"],
+            "boolean_label": ["yes", "no", "yes", "no"],
+            "numeric": [1, 2, 3, 4],
+            "msp_old_label": ["a", "b", "a", "b"],
+            "unlabelled": [None, "B", None, "T"],
+            annotate.BASE_KEY: ["0", "1", "0", "1"],
+            annotate.PARENT_KEY: ["0"] * 4,
+            "_msp_action": ["keep", "keep", None, "flag"],
+            "doublet_score": [0.1, 0.2, 0.3, 0.4],
+        },
+        index=[f"c{i}" for i in range(4)],
+    )
     ad = anndata.AnnData(np.ones((4, 2)), obs=obs)
     assert evidence.prior_label_columns(ad, "batch") == ["prior"]
     tables = SimpleNamespace(markers_text=lambda key, cluster: "cached marker evidence")
     context = annotate._cluster_context(
-        ad, "0", "batch", ["prior", "unlabelled"], {"0": ["1"]},
-        np.array([True, False, False, False]), tables,
+        ad,
+        "0",
+        "batch",
+        ["prior", "unlabelled"],
+        {"0": ["1"]},
+        np.array([True, False, False, False]),
+        tables,
     )
-    for text in ["n=2", "1 (50.0%)", "siblings under parent 0", "1:2", "samples: 2/2",
-                 "cached marker evidence", "1 missing", "unlabelled in this cluster", "NOT ground truth"]:
+    for text in [
+        "n=2",
+        "1 (50.0%)",
+        "siblings under parent 0",
+        "1:2",
+        "samples: 2/2",
+        "cached marker evidence",
+        "1 missing",
+        "unlabelled in this cluster",
+        "NOT ground truth",
+    ]:
         assert text in context
     assert "unknown cluster" in annotate._cluster_context(ad, "absent", "batch", [], {}, np.zeros(4, bool))
 

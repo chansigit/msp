@@ -21,7 +21,7 @@ classifiers = [
 #   pandas 2.0    groupby(observed=True) everywhere, nullable "boolean" dtype
 #   adjustText 1.0 adjust_text(expand=..., max_move=...)
 dependencies = [
-    "agent-harness-bridge>=0.2.0,<0.3",   # 0.2: logging via configure_logging
+    "agent-harness-bridge>=0.2.1,<0.3",   # 0.2.1: bounded host Read and logging
     "scanpy>=1.10",
     "anndata>=0.10",
     "igraph>=0.10",
@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-agent = ["agent-harness-bridge[all]>=0.2.0,<0.3"]
+agent = ["agent-harness-bridge[all]>=0.2.1,<0.3"]
 
 [project.urls]
 Homepage = "https://github.com/chansigit/msp"

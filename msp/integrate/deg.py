@@ -155,9 +155,7 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
     def run_global(item):
         key = item["key"]
         slot = f"_rgg_{key}"
-        rank_genes_groups(
-            ad_excl, key, groups=item["valid"], method="wilcoxon", use_raw=True, pts=True, key_added=slot
-        )
+        rank_genes_groups(ad_excl, key, groups=item["valid"], method="wilcoxon", use_raw=True, pts=True, key_added=slot)
         gdf = sc.get.rank_genes_groups_df(ad_excl, group=None, key=slot)
         del ad_excl.uns[slot]
         # Scanpy omits group when only one group qualifies for testing.

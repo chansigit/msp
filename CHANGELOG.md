@@ -4,7 +4,13 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased (0.3.1)
+## 0.3.1 - 2026-09-05
+
+- Require agent-harness-bridge >=0.2.1,<0.3 for bounded host Read support.
+
+### Safety and agent recovery
+- Preserve annotation batch/remove requests as keep with explicit host audit and review flags; reject unsafe legacy application.
+- Add bounded annotation status recovery and bounded, cluster-selectable gene queries to avoid repeating completed annotation work after context reset.
 
 ### Added
 - Public downstream helpers: `msp.evidence.prior_label_columns`, `components`,
@@ -14,6 +20,10 @@ All notable changes to msp-sc. The format follows
   graph subclustering, including removal masks and singleton remnants.
 
 ### Fixed
+- Treat artifact-batch/drop as a deterministic host flag, recording the requested
+  action and host adjustment in the proposal and report. Saved-proposal application
+  uses the same safeguard; annotation rejects unguarded legacy batch/drop actions.
+  Independent numeric cell-level QC remains available within flagged clusters.
 - Summarize repeated Scanpy log2 divide-by-zero/invalid-value warnings once
   per DEG call. Non-finite results are retained, unrelated warnings remain
   visible, and numerical errors still propagate.

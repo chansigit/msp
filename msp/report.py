@@ -603,6 +603,21 @@ def _section_inspection(outdir: str, inspection_figs: list[str]) -> str:
         "<h3>Per-cluster verdicts and actions</h3>",
         table(prop.get("clusters", []), ("cluster", "verdict", "action", "confidence", "rationale")),
     ]
+    adjusted = [
+        {
+            "cluster": e.get("cluster"),
+            "requested_action": e.get("requested_action"),
+            "action": e.get("action"),
+            "reason": e["host_adjustment"].get("reason", ""),
+        }
+        for e in prop.get("clusters", [])
+        if isinstance(e.get("host_adjustment"), dict)
+    ]
+    if adjusted:
+        parts += [
+            "<h3>Host safeguards: retained for review</h3>",
+            table(adjusted, ("cluster", "requested_action", "action", "reason")),
+        ]
     evidence = []
     for entry in prop.get("clusters", []):
         tests = entry.get("tests")
@@ -687,6 +702,23 @@ def _section_annotation(outdir: str, annotation_figs: list[str]) -> str:
         for e in prop.get("clusters", [])
     )
     parts += ['<div id="annotation-tables">', "<h3>Per-cluster decisions</h3>", f"<table><tr>{head}</tr>{body}</table>"]
+    adjustments = [e for e in prop.get("clusters", []) if e.get("host_adjustment")]
+    if adjustments:
+        parts.append(
+            "<h3>Host policy adjustments — review required</h3><ul>"
+            + "".join(
+                "<li>"
+                + html.escape(
+                    f"Cluster {e.get('cluster_id')}: requested {e.get('requested_action')} "
+                    f"({e.get('requested_remove_reason')}); applied {e.get('action')}. "
+                    + str(e["host_adjustment"].get("reason", ""))
+                )
+                + "</li>"
+                for e in adjustments
+            )
+            + "</ul><p>Independent pre-annotation or inspection removals still apply; "
+            "the original model rationale and evidence are unchanged.</p>"
+        )
     if prop.get("merged_groups"):
         parts.append("<p><b>Merged groups:</b> " + html.escape(", ".join(prop["merged_groups"])) + "</p>")
     ev_rows = "".join(

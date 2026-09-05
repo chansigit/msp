@@ -66,9 +66,13 @@ def cluster_order(labels):
         return sorted(seen)
 
 
-def gene_table(ad, genes, cluster_key):
+def gene_table(ad, genes, cluster_key, cluster_ids=None):
     """Mean log-normalized expression and expressing fraction per cluster
-    for the given genes (case-insensitive symbol match)."""
+    for the given genes (case-insensitive symbol match).
+
+    cluster_ids optionally selects comparison clusters, preserving their order;
+    omitted or empty retains the complete-table behavior for Python callers.
+    """
     upper = {g.upper(): g for g in ad.var_names}
     found = {q: upper[q.upper()] for q in genes if q.upper() in upper}
     missing = [q for q in genes if q.upper() not in upper]
@@ -79,7 +83,11 @@ def gene_table(ad, genes, cluster_key):
     X = X.toarray() if sp.issparse(X) else np.asarray(X)
     cl = ad.obs[cluster_key].astype(str)
     cols = {}
-    for c in cluster_order(cl):
+    selected = cluster_order(cl) if not cluster_ids else list(dict.fromkeys(map(str, cluster_ids)))
+    unknown = sorted(set(selected) - set(cl))
+    if unknown:
+        return f"unknown cluster IDs: {unknown}; available: {cluster_order(cl)}"
+    for c in selected:
         m = (cl == c).values
         mean = X[m].mean(axis=0)
         pct = 100 * (X[m] > 0).mean(axis=0)
@@ -181,9 +189,7 @@ def deg_frame(ad, cluster_key, cluster, ref_groups, remove_mask):
     if cluster not in set(lab):
         return None
     sub = base if ref_groups == "rest" else base[lab.isin([cluster, *ref_groups])].copy()
-    rank_genes_groups(
-        sub, cluster_key, groups=[cluster], reference="rest", method="wilcoxon", use_raw=True, pts=True
-    )
+    rank_genes_groups(sub, cluster_key, groups=[cluster], reference="rest", method="wilcoxon", use_raw=True, pts=True)
     df = sc.get.rank_genes_groups_df(sub, group=cluster)
     # natural scanpy ranking (by test score), not resorted by raw logFC —
     # sorting by logFC alone surfaces near-zero-expression noise genes with
@@ -649,28 +655,33 @@ class DegCache:
 def prior_label_columns(ad, batch_col):
     """Return candidate prior label columns, excluding sample identities."""
     from .annotate import _prior_label_columns
+
     return _prior_label_columns(ad, batch_col)
 
 
 def components(entries):
     """Return connected annotation merge components from cluster entries."""
     from .annotate import _components
+
     return _components(entries)
 
 
 def palette(ad, col):
     """Assign the annotation palette for an observation column."""
     from .annotate import _palette
+
     return _palette(ad, col)
 
 
 def plot_annotation(ad_full, ad_kept, figdir):
     """Render full and retained annotation views into a figure directory."""
     from .annotate import _plot
+
     return _plot(ad_full, ad_kept, figdir)
 
 
 def subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
     """Split one cluster and report sibling markers excluding removed cells."""
     from .inspect import _subcluster_once
+
     return _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask)

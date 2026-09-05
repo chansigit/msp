@@ -18,8 +18,10 @@ def rank_genes_groups(*args, **kwargs):
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.filterwarnings(
-                "always", message=r"(divide by zero|invalid value) encountered in log2$",
-                category=RuntimeWarning, module=r"scanpy\.tools\._rank_genes_groups$",
+                "always",
+                message=r"(divide by zero|invalid value) encountered in log2$",
+                category=RuntimeWarning,
+                module=r"scanpy\.tools\._rank_genes_groups$",
             )
             return sc.tl.rank_genes_groups(*args, **kwargs)
     finally:
@@ -28,18 +30,24 @@ def rank_genes_groups(*args, **kwargs):
             is_logfc = (
                 issubclass(warning.category, RuntimeWarning)
                 and warning.filename.replace("\\", "/").endswith("/scanpy/tools/_rank_genes_groups.py")
-                and str(warning.message) in {
-                    "divide by zero encountered in log2", "invalid value encountered in log2",
+                and str(warning.message)
+                in {
+                    "divide by zero encountered in log2",
+                    "invalid value encountered in log2",
                 }
             )
             if is_logfc:
                 count += 1
             else:
                 warnings.warn_explicit(
-                    warning.message, warning.category, warning.filename, warning.lineno,
+                    warning.message,
+                    warning.category,
+                    warning.filename,
+                    warning.lineno,
                 )
         if count:
             log.warning(
                 "== DEG: %d Scanpy log-fold-change warnings (zero/invalid expression); "
-                "non-finite values remain in the DEG results", count,
+                "non-finite values remain in the DEG results",
+                count,
             )

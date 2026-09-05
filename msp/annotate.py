@@ -356,6 +356,22 @@ def _validate_final(entries, clusters):
     return problems
 
 
+def _guard_batch_annotation(entry):
+    """Retain batch-only suspicions without changing the model's explanation."""
+    if entry.get("action") == "remove" and entry.get("remove_reason") == "batch":
+        entry["requested_action"] = entry["action"]
+        entry["requested_remove_reason"] = entry["remove_reason"]
+        entry["action"] = "keep"
+        entry["remove_reason"] = None
+        entry["host_adjustment"] = {
+            "policy": "batch_annotation_non_destructive_v1",
+            "reason": "Sample/batch composition alone does not establish invalid cells; retained for review.",
+        }
+        entry["review_required"] = True
+        log.warning("== annotate cluster %s: batch-only removal adjusted to keep for review", entry["cluster_id"])
+    return entry
+
+
 # ---------------------------------------------------------------- apply
 
 
@@ -365,12 +381,17 @@ def _apply(ad, proposal, pre_removed, pre_sources):
     (keep/remove). Returns the removal archive (removed cells only, with
     their sources)."""
     entries = {str(e["cluster_id"]): e for e in proposal["clusters"]}
+    if any(e.get("action") == "remove" and e.get("remove_reason") == "batch" for e in entries.values()):
+        raise ValueError("unguarded batch-only annotation removal; normalize and validate the proposal before applying")
     comp = _components(entries)
     base = ad.obs[BASE_KEY].astype(str)
     merged_id = {c: "+".join(members) for c, members in comp.items()}
     ad.obs["msp_ann_cluster"] = base.map(merged_id).astype("category")
     ad.obs["msp_ann_coarse"] = base.map({c: e["coarse_label"].strip() for c, e in entries.items()}).astype("category")
     ad.obs["msp_ann_fine"] = base.map({c: e["fine_label"].strip() for c, e in entries.items()}).astype("category")
+    ad.obs["msp_ann_review"] = base.map({c: bool(e.get("review_required", False)) for c, e in entries.items()}).astype(
+        bool
+    )
     agent_remove = base.isin([c for c, e in entries.items() if e["action"] == "remove"]).values
     removed = pre_removed | agent_remove
     ad.obs["msp_ann_action"] = pd.Categorical(np.where(removed, "remove", "keep"), categories=["keep", "remove"])
@@ -479,8 +500,11 @@ against its siblings under the same parent (check_deg with reference=<sibling id
 PAGA neighbours (deg_local_{BASE_KEY}.csv). Real subtype signal (specific positive markers) vs a \
 resolution splinter (only depth/QC/cell-cycle/stress genes, or nothing).
 2. Identity — the best coarse label and fine label in English; OR, if the positive markers are absent \
-and the cluster is explained by doublet/ambient/low-quality/stress/batch signals, action=remove with \
-remove_reason (labels still describe what it is, e.g. 'Fibroblast-immune doublet').
+and the cluster is explained by independent doublet/ambient/low-quality/stress evidence, action=remove with \
+remove_reason (labels still describe what it is, e.g. 'Fibroblast-immune doublet'). Batch/sample composition \
+alone never justifies removal: use keep and explain the uncertainty. The host converts batch-only \
+remove requests to keep for review and preserves your original request and explanation. Do not relabel \
+a batch-only suspicion as another removal reason to bypass this policy.
 3. Merge — if it is the same population as another base cluster (a splinter, or two clusters with \
 the same identity), set merge_target to that cluster's id; otherwise null. Merge is explicit: two kept \
 clusters given the same fine label MUST also be merged (or given distinct fine labels), and a merged \
@@ -512,16 +536,23 @@ them, annotate what remains);
 - figures/umap_*.png, figures/qc_umap_*.png: UMAPs by sample, clusterings at three resolutions, inherited \
 annotation, QC metrics; figures/inspect_umap_action.png: the inspection verdict.
 
-Mandatory workflow:
+Recovery rule (takes precedence after a fresh-session/context-reset notice): first call \
+annotation_status(cluster='', offset=0) and TaskList. Host submissions are authoritative; reconcile task \
+statuses with them. Query one saved cluster entry only if needed for label/merge consistency. Continue \
+only pending clusters. Do not repeat global figures or completed cluster_context calls merely because \
+the conversation reset. If all clusters are submitted, proceed to finalize_annotation and fix only its \
+named conflicts.
+
+Mandatory workflow for new work:
 1. Create ONE task per base cluster with TaskCreate (subject "annotate cluster <id>") before any analysis, \
 so nothing is skipped; keep TaskList honest — TaskUpdate a task to completed ONLY after its submit_cluster \
 call succeeded.
 2. Look at the figures first (three resolution UMAPs, inherited annotation, sample mixing, \
 inspect_umap_action); the DEG tables are reached through cluster_context / deg_lookup / deg_sql, not Read.
-3. For each cluster: cluster_context (parent/siblings/neighbours/priors/QC/inspect verdict in one call), \
-then verify markers with check_genes (batch dozens of genes per call) and, when distinctness is in \
-doubt, check_deg against its siblings or a specific neighbour. Then submit_cluster. You may resubmit a \
-cluster later to revise it (e.g. after seeing its merge partner) — the last submission wins.
+3. Work in batches of at most FOUR pending clusters: get cluster_context only for that batch \
+(parent/siblings/neighbours/priors/QC/inspect verdict in one call), then verify markers with check_genes (batch dozens of genes per call) and, when distinctness is in \
+doubt, check_deg against its siblings or a specific neighbour. Submit those clusters before requesting \
+context for the next batch; never collect every cluster context first. You may resubmit a cluster later to revise it (e.g. after seeing its merge partner) — the last submission wins.
 4. When every task is completed, call finalize_annotation. If it reports problems, fix them by \
 resubmitting the named clusters and call it again. The run completes only after it succeeds.
 
@@ -533,6 +564,71 @@ contamination (decontX evidence exists for that). Respect the inspection verdict
 dedicated QC pass; you annotate identity and decide merges."""
 
 
+_STATUS_MAX_BYTES = 16 * 1024
+_STATUS_PAGE_ITEMS = 8
+_STATUS_DETAIL_BYTES = 6000
+
+
+def _annotation_status(entries, clusters, cluster="", offset=0):
+    """Bounded recovery view; host submissions, not TaskList, are authoritative."""
+    if not isinstance(cluster, str) or type(offset) is not int or offset < 0:
+        return text_result("cluster must be a string and offset a nonnegative integer", is_error=True)
+    if cluster:
+        if cluster not in clusters:
+            return text_result("unknown cluster ID", is_error=True)
+        if cluster not in entries:
+            return text_result(json.dumps({"submitted": False, "message": "This cluster has no saved submission."}))
+        # ASCII JSON has unambiguous byte offsets, including Unicode evidence.
+        serialized = json.dumps(entries[cluster], ensure_ascii=True, separators=(",", ":"))
+        if offset > len(serialized):
+            return text_result("offset is past the end of the saved entry", is_error=True)
+        end = min(offset + _STATUS_DETAIL_BYTES, len(serialized))
+        result = {
+            "cluster": cluster,
+            "submitted": True,
+            "entry_json": serialized[offset:end],
+            "offset": offset,
+            "next_offset": end if end < len(serialized) else None,
+            "total_bytes": len(serialized),
+        }
+    else:
+        pending = [c for c in clusters if c not in entries]
+        accepted = [entries[c] for c in clusters if c in entries]
+        length = max(len(pending), len(accepted))
+        if offset > length:
+            return text_result("offset is past the status lists", is_error=True)
+        result = None
+        for page_size in range(_STATUS_PAGE_ITEMS, 0, -1):
+            end = min(offset + page_size, length)
+            summaries = []
+            for entry in accepted[offset:end]:
+                row = {
+                    "cluster_id": entry["cluster_id"],
+                    "action": entry["action"],
+                    "merge_target": entry["merge_target"],
+                }
+                for field in ("coarse_label", "fine_label"):
+                    value = entry[field]
+                    row[field] = value if len(value) <= 96 else value[:96] + "…"
+                summaries.append(row)
+            result = {
+                "total_clusters": len(clusters),
+                "submitted_count": len(accepted),
+                "pending_count": len(pending),
+                "pending_ids": pending[offset:end],
+                "submitted": summaries,
+                "offset": offset,
+                "next_offset": end if end < length else None,
+                "note": "Host submissions are authoritative. Labels may be shortened; query one cluster for its full saved entry.",
+            }
+            if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) <= _STATUS_MAX_BYTES:
+                break
+    text = json.dumps(result, ensure_ascii=False)
+    if len(text.encode("utf-8")) > _STATUS_MAX_BYTES:
+        return text_result("status identifier exceeds the response size limit", is_error=True)
+    return text_result(text)
+
+
 async def _run_agent(
     ad, outdir, clusters, batch_col, species, prior_cols, paga, pre_agent_removed, language, model, effort, max_turns
 ):
@@ -542,6 +638,9 @@ async def _run_agent(
     deg = DegCache(ad, outdir, pre_agent_removed, label="annotate")
     tables = DegTables(outdir, base_key=BASE_KEY)
     log.info(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}")
+
+    async def annotation_status(args):
+        return _annotation_status(entries, clusters, args.get("cluster", ""), args.get("offset", 0))
 
     async def cluster_context(args):
         return text_result(
@@ -572,6 +671,10 @@ async def _run_agent(
         e["cluster_id"] = str(e["cluster_id"])
         if e["merge_target"] is not None:
             e["merge_target"] = str(e["merge_target"])
+        # Audit fields are host-owned, never accepted from an agent submission.
+        for field in ("requested_action", "requested_remove_reason", "host_adjustment", "review_required"):
+            e.pop(field, None)
+        _guard_batch_annotation(e)
         entries[e["cluster_id"]] = e
         left = [c for c in clusters if c not in entries]
         log.info(
@@ -581,6 +684,11 @@ async def _run_agent(
         return text_result(
             f"recorded cluster {e['cluster_id']}; {len(entries)}/{len(clusters)} submitted"
             + (f", remaining: {left}" if left else " — all covered, call finalize_annotation")
+            + (
+                "; host retained this batch-only removal for review; merge/label consistency still applies"
+                if e.get("review_required")
+                else ""
+            )
         )
 
     async def finalize_annotation(args):
@@ -607,6 +715,16 @@ async def _run_agent(
         return {**text_result(f"accepted; saved to {path}"), "_submitted": proposal}
 
     tools = [
+        ToolSpec(
+            "annotation_status",
+            "Recover authoritative saved annotation progress. cluster='' gives compact paged pending IDs "
+            "and submitted labels/action/merge, never evidence; offset=0 starts, then follow next_offset. "
+            "Specify one cluster to recover its complete saved entry as ASCII JSON entry_json fragments "
+            "(offset is then a byte cursor; concatenate fragments). Each response is at most 16 KiB. "
+            "Call this and TaskList FIRST after a context reset; do not resubmit completed work just to recover it.",
+            {"cluster": str, "offset": int},
+            annotation_status,
+        ),
         ToolSpec(
             "cluster_context",
             "Non-expression context for one base cluster: size, share already slated for removal, "
@@ -703,7 +821,38 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
 
     pre_sources = {"preannotation": load_removal_mask(outdir, ad)}
     if "_msp_action" in ad.obs:
-        pre_sources["inspect_drop"] = (ad.obs["_msp_action"].astype(str) == "drop").to_numpy()
+        inspect_drop = (ad.obs["_msp_action"].astype(str) == "drop").to_numpy()
+        if (
+            "_msp_verdict" in ad.obs
+            and (inspect_drop & ad.obs["_msp_verdict"].astype(str).eq("artifact-batch").to_numpy()).any()
+        ):
+            # A saved pre-policy integrated matrix must not bypass the host
+            # gate. Explicit cell-level QC may still remove cells within a
+            # flagged batch cluster; verify that its guarded proposal agrees.
+            from types import SimpleNamespace
+
+            from .inspect import _apply_proposal, _validate_proposal
+
+            path = os.path.join(outdir, "inspection_proposal.json")
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    inspection = json.load(fh)
+                key = inspection["cluster_key"]
+                problems = _validate_proposal(inspection, cluster_order(ad.obs[key].astype(str)), ad.obs)
+                if problems or any(
+                    e.get("verdict") == "artifact-batch" and e.get("action") == "drop" for e in inspection["clusters"]
+                ):
+                    raise ValueError("unguarded inspection proposal")
+                probe = SimpleNamespace(obs=ad.obs.copy(), n_obs=ad.n_obs)
+                _apply_proposal(probe, key, inspection)
+                if not probe.obs["_msp_action"].astype(str).equals(ad.obs["_msp_action"].astype(str)):
+                    raise ValueError("inspection proposal and applied actions disagree")
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise ValueError(
+                    "legacy artifact-batch drop decisions require reapplying the saved inspection "
+                    "with conservative host flags in a new output directory"
+                ) from exc
+        pre_sources["inspect_drop"] = inspect_drop
     else:
         log.warning("== no obs['_msp_action'] — msp.inspect has not run; only preannotation removals inherited")
     pre_agent_removed = np.logical_or.reduce(list(pre_sources.values()))
