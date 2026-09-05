@@ -1,151 +1,153 @@
 <p align="center">
-  <img src="assets/msp-logo.svg" alt="MSP — Multi-sample Pipeline logo" width="200" height="200">
+  <img src="assets/msp-logo.svg" alt="MSP logo: distinct cell populations sharing sample colors" width="176" height="176">
 </p>
 
-# MSP — Multi-sample Pipeline
+<h1 align="center">MSP: Multi-Sample Pipeline</h1>
 
-**Bring single-cell samples together, review their quality, and annotate cell types.**
+<p align="center">
+  <strong>Review cell populations across samples and annotate them together.</strong>
+</p>
 
-MSP combines processed single-cell RNA-seq samples into a shared analysis. It
-corrects for differences between samples with Harmony, groups similar cells,
-and produces a report you can open in your browser. Optional AI agents then
-review cluster quality and assign cell-type labels, recording the evidence
-behind their decisions.
+<p align="center">
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.10%2B-2855BD?style=flat" alt="Python 3.10 or newer"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2855BD?style=flat" alt="MIT license"></a>
+  <a href="https://github.com/chansigit/eca-rsi"><img src="https://img.shields.io/badge/Ecosystem-ECA--RSI-168575?style=flat" alt="Part of the ECA-RSI ecosystem"></a>
+</p>
 
-Use MSP when you have analyzed samples individually and want to understand
-which cell populations they share, which groups need closer inspection, and
-how to label them consistently across samples.
+<p align="center">
+  <a href="#why-review-samples-together">Why MSP</a> &nbsp; · &nbsp;
+  <a href="#how-it-works">Workflow</a> &nbsp; · &nbsp;
+  <a href="#get-started">Get started</a> &nbsp; · &nbsp;
+  <a href="#find-and-understand-your-results">Results</a> &nbsp; · &nbsp;
+  <a href="#documentation">Documentation</a>
+</p>
 
-## From samples to annotated cells
+MSP integrates single-cell RNA-seq samples with Harmony, builds a shared cell
+map, and produces a browser report. Optional AI agents inspect cluster quality
+and assign cell types, with supporting genes and reasons for each decision.
+Use it after sample-level analysis with [OSP](https://github.com/chansigit/osp),
+or with your own compatible H5AD files.
 
-```mermaid
-flowchart LR
-    A[Per-sample data] --> B[Integrate samples]
-    B --> C[Inspect cluster quality]
-    C --> D[Annotate cell types]
-```
+## Why review samples together?
 
-| Step | What it does | What happens to the cells |
-| --- | --- | --- |
-| **Integrate** | Builds a shared representation, clusters cells, and summarizes quality and marker genes. | All input cells are retained. |
-| **Inspect** · optional AI step | Reviews markers, quality measurements, sample composition, cluster geometry, and stability. | Records keep, flag, or drop proposals; retains all cells. |
-| **Annotate** · optional AI step | Assigns broad cell types and finer subtypes, records cluster merges, and applies removal decisions. | Writes retained cells to a separate annotated dataset. |
+A population seen in one sample needs context: does it recur elsewhere, have
+consistent markers, or separate mainly by quality? MSP brings sample composition,
+marker expression, and QC evidence into the same analysis. It helps you review
+suspicious groups and reconcile cell-type labels across samples.
 
-The report brings together sample summaries, cell maps (UMAPs), quality
-measurements, marker genes, inspection evidence, and cell-type annotations as
-those steps complete. Figures are embedded in the HTML, so you can share the
-report as a single file.
+## How it works
 
-## Prepare your data
+Integration builds the shared map. Inspection checks markers, quality, sample
+composition, cluster geometry, and stability across clustering resolutions.
+Annotation assigns broad and fine labels, merges groups judged to represent
+the same population, and writes a filtered dataset. Both AI stages record
+their evidence in the report.
 
-The usual input is one `.h5ad` file per sample, such as the `clustered.h5ad`
-files produced by [OSP — One-sample Pipeline](https://github.com/chansigit/osp).
-H5AD is the AnnData format commonly used with Scanpy.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/msp-workflow-dark.svg">
+    <img src="assets/msp-workflow-light.svg" alt="Sample H5AD files enter integration; optional AI inspection records proposals without removing cells; annotation applies labels, merges, and removals to a separate dataset. Each stage updates the HTML report." width="960">
+  </picture>
+</p>
 
-Each file needs:
+## Get started
 
-- **Raw counts** in `layers["counts"]`.
-- **A sample column** in `obs`, with one sample identifier per file. You choose
-  its name with `--batch-col`.
-- **The same genes in the same order** across files.
-- **Unique cell IDs** across all input files.
+### 1. Install
 
-Existing quality measurements and cell-type labels are retained as evidence.
-Columns available in only some samples remain missing in the others. MSP can
-also start from one combined file using `--from-h5ad`.
-
-## Install
-
-Use Python 3.10 or newer in a separate environment. Install the current
-GitHub version with the optional AI dependencies:
+Use Python 3.10 or newer in a separate environment. Install from GitHub with
+AI support; omit `[agent]` if you only need integration.
 
 ```bash
 python -m pip install "msp-sc[agent] @ git+https://github.com/chansigit/msp.git"
 ```
 
-For integration only, omit `[agent]`. The package is named `msp-sc`; its Python
-import and command module are `msp`. Dependencies include `harmonypy==0.2.0`,
-the version currently pinned by the project. Integration requires no model
-credentials.
+### 2. Prepare your samples
 
-## Run your first analysis
+Provide one H5AD per sample, with raw counts in `layers["counts"]` and a sample
+column in `obs`. Files must share the same genes in the same order, and cell
+IDs must be unique across files. Replace the paths and `sample_id` below with
+your own; see the [user guide](docs/user-guide.md#prepare-inputs) for details.
 
-Replace the example paths with your sample files and `sample_id` with the name
-of their sample column.
+### 3. Run the analysis
 
-**Integrate samples and generate a report:**
+This command integrates samples and creates `msp_out/report.html` without an
+API key. To include AI inspection and annotation, follow the example below it.
 
 ```bash
 python -m msp A/clustered.h5ad B/clustered.h5ad \
     --batch-col sample_id --species human --outdir msp_out
 ```
 
-Open `msp_out/report.html` in a browser to review the result.
+<details>
+<summary>Add AI inspection and annotation</summary>
 
-**Include AI inspection and cell-type annotation:**
-
-The default configuration uses the OpenAI Agents SDK to access a Doubao model
-through Volcengine Ark. It requires an **Ark API key** and model access in that
-account. Model calls may incur provider charges.
+This example uses Doubao through Volcengine Ark and requires an Ark API key
+with model access; provider charges may apply. `--annotate` also runs inspection.
+For other runtimes, see [AI configuration](docs/user-guide.md#configure-ai).
 
 ```bash
-export ARK_API_KEY="your-ark-api-key"
+export ARK_API_KEY="YOUR_ARK_API_KEY"
 python -m msp A/clustered.h5ad B/clustered.h5ad \
     --batch-col sample_id --species human --outdir msp_out \
     --annotate --harness openai --model doubao-seed-2-1-turbo-260628
 ```
 
-`--annotate` includes inspection. To request inspection alone, use `--inspect`.
-The `--harness` option selects the agent runtime; `--model` selects its model.
-Claude and DeepSeek Harness runtimes are also supported. For runtime-specific
-installation, authentication, and configuration, see the
-[Agent Harness Bridge guide](https://github.com/chansigit/agent-harness-bridge#configuration).
+</details>
 
 ## Find and understand your results
 
-| File | Use it to… |
+Open **`msp_out/report.html`** in your browser; download it first if you ran on
+a server. Start with sample composition and cell maps, then compare flagged
+groups against their markers and QC. Review the proposed labels, merges, and
+removals before downstream analysis. The HTML embeds its plots and can be
+shared as one file.
+
+| Output | What you get |
 | --- | --- |
-| `report.html` | Review the analysis, including inspection evidence and annotation decisions when available. |
-| `integrated.h5ad` | Continue working with all input cells in the integrated space; inspection adds its proposed actions here. |
-| `annotated.h5ad` | Analyze retained cells with broad and fine cell-type labels after annotation. |
-| `annotation_removed.csv` | See every removed cell and the sources of its removal decision. |
-| `inspection_proposal.json`, `annotation_proposal.json` | Read the structured cluster decisions. |
-| `inspection_notes.md`, `annotation_notes.md` | Read agent session notes when provided by the runtime. |
-| `figures/` | Reuse individual plots. |
+| `report.html` | Cell maps, quality evidence, and completed AI reviews. |
+| `integrated.h5ad` | All input cells in the shared space, with inspection proposals when available. |
+| `annotated.h5ad` | Retained cells with broad and fine cell-type labels after annotation. |
+| `annotation_removed.csv` | Removed cell IDs and the sources of each removal decision. |
 
-**Annotation applies removals from all three sources:** integration's removal
-candidates, inspection's drop proposals, and clusters the annotation agent
-marks for removal. It preserves `integrated.h5ad` and writes survivors to
-`annotated.h5ad`. If every cell is removed, the annotated file has zero cells
-and the removal record still accounts for them all.
+## FAQ
 
-Review the evidence before using labels or removal decisions downstream.
-MSP checks submission completeness and consistency; these checks do not
-establish that a biological interpretation is correct.
+<details>
+<summary>Does MSP remove cells?</summary>
 
-## Continue an analysis
+Integration and inspection retain all cells. Annotation applies the union of
+integration's removal candidates, inspection's drop proposals, and its own
+removal decisions. It writes survivors to `annotated.h5ad`, preserves
+`integrated.h5ad`, and records removed cells in `annotation_removed.csv`.
 
-Repeat the same command to resume completed steps. When an upstream step is
-rerun, its downstream results must be regenerated; previous outputs are kept
-under `.msp-history/`. Use one running process per output directory.
+</details>
 
-Use `--force` to recompute the requested steps. Use it, or choose a new output
-directory, if you replace an input file at the same path or want to rerun with
-a different model: resume does not detect those changes automatically.
+<details>
+<summary>Can I continue or rerun an analysis?</summary>
 
-To rebuild the report without rerunning computation or agents:
+Repeat the command to reuse completed steps. Use `--force` or a new output
+directory when replacing input contents at the same path or changing the AI
+model. Rerunning a stage archives its previous outputs and invalidates later
+stages; see [rerunning](docs/user-guide.md#continue-or-rerun).
 
-```bash
-python -m msp.report msp_out
-```
+</details>
 
-## More information
+<details>
+<summary>Do I need OSP or ECA-RSI?</summary>
 
-- Run `python -m msp --help` for command options.
-- See [the folder-based example](examples/run_msp.sh) for processing a directory
-  of OSP sample outputs.
-- A basic user guide and an advanced developer guide are planned as separate
-  documents; this README is the starting point.
-- Report problems or discuss usage in [GitHub Issues](https://github.com/chansigit/msp/issues).
+MSP runs independently with compatible inputs. [OSP](https://github.com/chansigit/osp)
+handles sample-level QC and annotation; [ZMIP](https://github.com/chansigit/zmip)
+continues with closer analysis of individual lineages.
+[ECA-RSI](https://github.com/chansigit/eca-rsi) coordinates these steps and
+iterative review, starting from data prepared with
+[ECA-PP](https://github.com/chansigit/eca-pp).
 
-MSP is available under the [MIT License](LICENSE).
+</details>
+
+## Documentation
+
+Read the [user guide](docs/user-guide.md) for input preparation, report reading,
+and reruns, or the [developer guide](docs/developer-guide.md) for APIs, data
+fields, and stage contracts. A [folder-based example](examples/run_msp.sh)
+runs MSP over OSP outputs. Questions and problems belong in
+[GitHub Issues](https://github.com/chansigit/msp/issues). MSP uses the
+[MIT license](LICENSE).

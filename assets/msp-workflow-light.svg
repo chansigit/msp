@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="350" viewBox="0 0 960 350" role="img" aria-labelledby="title desc">
+  <title id="title">MSP workflow</title>
+  <desc id="desc">Sample H5AD files enter integration. Optional AI inspection adds quality proposals while retaining all cells. Annotation assigns labels, resolves merges, and applies removals to a separate annotated dataset. Each completed stage contributes to one HTML report.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L7 4L1 7" fill="none" stroke="#52667A" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+  <rect width="960" height="350" rx="12" fill="#FFFFFF"/>
+  <g font-family="DejaVu Sans, Arial, sans-serif">
+    <text x="28" y="36" font-size="17" fill="#52667A">Sample H5AD files</text>
+    <path d="M46 49V77" fill="none" stroke="#52667A" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <path d="M356 64V52H932V64" fill="none" stroke="#D8E1EA" stroke-width="1.5"/>
+    <text x="644" y="36" text-anchor="middle" font-size="16" fill="#52667A">Optional AI stages</text>
+    <path d="M226 112H329M531 112H657" fill="none" stroke="#52667A" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <circle cx="46" cy="112" r="18" fill="#2855BD"/>
+    <text x="46" y="118" text-anchor="middle" font-size="17" font-weight="bold" fill="#FFFFFF">1</text>
+    <text x="76" y="120" font-size="25" font-weight="bold" fill="#182F48">Integrate</text>
+    <text x="28" y="167" font-size="17" fill="#52667A">Harmony and clustering</text>
+    <text x="28" y="193" font-size="17" fill="#52667A">QC and marker evidence</text>
+    <path d="M28 220H276" stroke="#2855BD" stroke-width="2"/>
+    <text x="28" y="250" font-size="17" font-weight="bold" fill="#182F48">integrated.h5ad</text>
+    <text x="28" y="275" font-size="15" fill="#52667A">All input cells</text>
+    <circle cx="374" cy="112" r="18" fill="#168575"/>
+    <text x="374" y="118" text-anchor="middle" font-size="17" font-weight="bold" fill="#FFFFFF">2</text>
+    <text x="404" y="120" font-size="25" font-weight="bold" fill="#182F48">Inspect</text>
+    <text x="356" y="167" font-size="17" fill="#52667A">Review cluster quality</text>
+    <text x="356" y="193" font-size="17" fill="#52667A">Record keep, flag, or drop</text>
+    <path d="M356 220H604" stroke="#168575" stroke-width="2"/>
+    <text x="356" y="250" font-size="17" font-weight="bold" fill="#182F48">+ inspection proposals</text>
+    <text x="356" y="275" font-size="15" fill="#52667A">Same dataset; all cells retained</text>
+    <circle cx="702" cy="112" r="18" fill="#926211"/>
+    <text x="702" y="118" text-anchor="middle" font-size="17" font-weight="bold" fill="#FFFFFF">3</text>
+    <text x="732" y="120" font-size="25" font-weight="bold" fill="#182F48">Annotate</text>
+    <text x="684" y="167" font-size="17" fill="#52667A">Assign labels and merges</text>
+    <text x="684" y="193" font-size="17" fill="#52667A">Apply removal decisions</text>
+    <path d="M684 220H932" stroke="#926211" stroke-width="2"/>
+    <text x="684" y="250" font-size="17" font-weight="bold" fill="#182F48">annotated.h5ad</text>
+    <text x="684" y="275" font-size="15" fill="#52667A">Retained cells + removal record</text>
+    <rect x="28" y="299" width="904" height="37" rx="6" fill="#F2F6FB"/>
+    <text x="44" y="324" font-size="17" font-weight="bold" fill="#2855BD">report.html</text>
+    <text x="203" y="324" font-size="16" fill="#52667A">Cell maps, QC, markers, and completed AI reviews</text>
+  </g>
+</svg>
