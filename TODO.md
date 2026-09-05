@@ -50,5 +50,12 @@ the dependency cleanup, the logging switch and the harmonypy 2.0 upgrade
       path without replacing non-finite results or suppressing other errors.
 - [x] Quiet Harmony iteration logs by default, with explicit verbose override.
 - [x] Expose all seven helpers ZMIP used privately; keep old names for 0.3.
-- [ ] Record the full 19Liu inspect/annotate/report content audit once the
-      coordinated validation run completes (file existence is insufficient).
+- [x] Complete the full-size 19Liu inspect/annotate/report engineering audit
+      (2026-09-05): 81,079 input cells; inspect/annotation and six ZMIP lineages
+      completed, with 75,394 final cells. Checked expression/counts, cell and
+      gene order, removal ledgers, reassignment records and report contents.
+      The final report, parallel-DE and ZMIP status patches have separate
+      validation; the full chain was not rerun with all three final files.
+      This establishes engineering and data-contract acceptance, not
+      independent biological accuracy. Sample and condition are confounded;
+      uncertain removal decisions and labels still need independent review.
