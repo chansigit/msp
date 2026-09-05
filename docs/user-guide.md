@@ -60,7 +60,7 @@ python -m msp A/clustered.h5ad B/clustered.h5ad \
 Annotation UMAPs color related cell types in shared hue families using
 [stanhue](https://github.com/chansigit/stanhue), which installs with MSP. If
 stanhue is missing or fails, the run continues with scanpy's default colors
-and prints a notice.
+and logs a warning.
 
 ## Choose how far to run
 

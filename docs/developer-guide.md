@@ -21,13 +21,15 @@ removed in 0.4.
 | [`agent_tools.py`](../msp/agent_tools.py) | The `deg_lookup`, `deg_sql`, and `check_genes` tools both agents share. |
 | [`inspect.py`](../msp/inspect.py) | Inspect cluster quality, subcluster, validate and apply proposals. |
 | [`annotate.py`](../msp/annotate.py) | Assign labels, resolve merges, apply removals. |
+| [`log.py`](../msp/log.py) | Route the `msp` and `harness_bridge` logger families to one flushed stdout handler (`configure` for CLIs, `ensure` for library entry points). |
 | [`steps.py`](../msp/steps.py) | Invalidate and archive outputs; track pending stages. |
 | [`report.py`](../msp/report.py) | Build a self-contained HTML report from completed stages. |
 | [`__main__.py`](../msp/__main__.py) | Parse CLI options, check resume conditions, run stages in order. |
 
-`inspect.py` and `annotate.py` still expose the evidence helpers under their
-old underscore names (`_cluster_order`, `_load_paga_neighbors`, ...) because
-ZMIP imports them; new code should use the public names in `msp.evidence`.
+Evidence helpers are imported from `msp.evidence` by their public names;
+the underscore re-exports that `inspect.py` and `annotate.py` carried up to
+0.2 were removed in 0.3 (ZMIP 0.3 uses the public names). `log.py` holds
+`configure` and `ensure`, described under [Logging](#logging).
 
 ## Python entry points
 

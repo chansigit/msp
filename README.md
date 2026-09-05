@@ -65,8 +65,15 @@ dataset. The report brings the structures, evidence, and decisions together.
 
 ### 1. Install
 
-Use Python 3.10 or newer in a separate environment. Install from GitHub with
-AI support; omit `[agent]` if you only need integration.
+Use Python 3.10 or newer in a separate environment. Install from PyPI with
+AI support; omit `[agent]` if you only need integration. No GPU or torch is
+needed: Harmony runs on the CPU through harmonypy 2.
+
+```bash
+python -m pip install "msp-sc[agent]"
+```
+
+For the development version, install from GitHub instead:
 
 ```bash
 python -m pip install "msp-sc[agent] @ git+https://github.com/chansigit/msp.git"
