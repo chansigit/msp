@@ -109,8 +109,10 @@ def current_rss_bytes() -> int:
 
 
 def describe() -> str:
-    return (f"{available_cpus()} cpu(s), {available_memory_bytes() / 2**30:.1f} GiB memory available to this "
-            f"process (rss {current_rss_bytes() / 2**30:.1f} GiB)")
+    return (
+        f"{available_cpus()} cpu(s), {available_memory_bytes() / 2**30:.1f} GiB memory available to this "
+        f"process (rss {current_rss_bytes() / 2**30:.1f} GiB)"
+    )
 
 
 if __name__ == "__main__":

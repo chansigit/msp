@@ -44,6 +44,7 @@ import operator
 import os
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -57,8 +58,15 @@ from .steps import begin_step, complete_step, require_upstream_ready
 
 _OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le}
 
-QC_COLS = ("pct_counts_mt", "n_genes_by_counts", "total_counts", "doublet_score",
-           "decontX_contamination", "dissociation_score", "pct_counts_malat1")
+QC_COLS = (
+    "pct_counts_mt",
+    "n_genes_by_counts",
+    "total_counts",
+    "doublet_score",
+    "decontX_contamination",
+    "dissociation_score",
+    "pct_counts_malat1",
+)
 
 
 def _detect_primary_key(outdir):
@@ -68,7 +76,7 @@ def _detect_primary_key(outdir):
     paths = sorted(glob.glob(os.path.join(outdir, "deg_global_*.csv")))
     if not paths:
         raise FileNotFoundError(f"no deg_global_*.csv in {outdir} — run the msp pipeline first")
-    keys = [os.path.basename(p)[len("deg_global_"):-len(".csv")] for p in paths]
+    keys = [os.path.basename(p)[len("deg_global_") : -len(".csv")] for p in paths]
     return "msp_leiden_r1.0" if "msp_leiden_r1.0" in keys else keys[0]
 
 
@@ -128,8 +136,11 @@ def _qc_table(ad, cluster_key, batch_col):
     for c in _cluster_order(cl):
         m = (cl == c).values
         sub = ad.obs.loc[m]
-        row = [int(m.sum()), int(sub[batch_col].nunique()),
-               f"{sub[batch_col].value_counts(normalize=True).iloc[0]:.2f}"]
+        row = [
+            int(m.sum()),
+            int(sub[batch_col].nunique()),
+            f"{sub[batch_col].value_counts(normalize=True).iloc[0]:.2f}",
+        ]
         if "_qc_action" in ad.obs:
             act = sub["_qc_action"].dropna().astype(str)
             row += [f"{(act == 'flag').mean():.2f}", f"{(act == 'drop').mean():.2f}"]
@@ -141,8 +152,10 @@ def _qc_table(ad, cluster_key, batch_col):
     index += cols
     df = pd.DataFrame(rows, index=index).T
     df.index.name = cluster_key
-    return ("per-cluster QC (median|p90) and composition "
-            "(frac_* among cells with inherited QC; nan means unavailable):\n" + df.to_string())
+    return (
+        "per-cluster QC (median|p90) and composition "
+        "(frac_* among cells with inherited QC; nan means unavailable):\n" + df.to_string()
+    )
 
 
 def _stability_table(ad, cluster, cluster_key, other_keys):
@@ -192,8 +205,9 @@ def _deg_frame(ad, cluster_key, cluster, ref_groups, remove_mask):
     if cluster not in set(lab):
         return None
     sub = base if ref_groups == "rest" else base[lab.isin([cluster, *ref_groups])].copy()
-    sc.tl.rank_genes_groups(sub, cluster_key, groups=[cluster], reference="rest",
-                            method="wilcoxon", use_raw=True, pts=True)
+    sc.tl.rank_genes_groups(
+        sub, cluster_key, groups=[cluster], reference="rest", method="wilcoxon", use_raw=True, pts=True
+    )
     df = sc.get.rank_genes_groups_df(sub, group=cluster)
     # natural scanpy ranking (by test score), not resorted by raw logFC —
     # sorting by logFC alone surfaces near-zero-expression noise genes with
@@ -238,8 +252,10 @@ def _format_deg(cluster, ref_desc, df, n_total=None, filters=""):
         head += f" [{filters}]"
     head += f": {len(df)} gene(s)" + (f" of {n_total} passing" if n_total is not None and n_total != len(df) else "")
     head += " (gene logFC padj pct1/pct2, by wilcoxon score):"
-    body = ", ".join(f"{r.names} {r.logfoldchanges:.1f} {r.pvals_adj:.0e} {r.pct1:.2f}/{r.pct2:.2f}"
-                     for r in df.itertuples(index=False))
+    body = ", ".join(
+        f"{r.names} {r.logfoldchanges:.1f} {r.pvals_adj:.0e} {r.pct1:.2f}/{r.pct2:.2f}"
+        for r in df.itertuples(index=False)
+    )
     return head + "\n  " + (body if len(df) else "(none)")
 
 
@@ -259,17 +275,18 @@ def _parse_reference(reference, clusters=None):
         return (reference,)
     if known is not None and '"' not in reference:
         parts = [p.strip() for p in reference.split(",")]
-        if any(",".join(parts[i:j]) in known
-               for i in range(len(parts)) for j in range(i + 2, len(parts) + 1)):
+        if any(",".join(parts[i:j]) in known for i in range(len(parts)) for j in range(i + 2, len(parts) + 1)):
             raise ValueError('ambiguous reference; CSV-quote each ID, e.g. \'"5,0","5,1"\'')
     try:
-        groups = tuple(sorted({g.strip() for g in next(csv.reader(
-            [reference], skipinitialspace=True, strict=True)) if g.strip()}))
+        groups = tuple(
+            sorted({g.strip() for g in next(csv.reader([reference], skipinitialspace=True, strict=True)) if g.strip()})
+        )
     except csv.Error as exc:
         raise ValueError(f"invalid reference CSV: {exc}") from exc
     if not groups or (known is not None and any(g not in known for g in groups)):
-        raise ValueError('unknown reference cluster(s); use current IDs and CSV-quote IDs containing '
-                         'commas, e.g. \'"5,0","5,1"\'')
+        raise ValueError(
+            'unknown reference cluster(s); use current IDs and CSV-quote IDs containing commas, e.g. \'"5,0","5,1"\''
+        )
     return groups
 
 
@@ -321,11 +338,13 @@ class DegTables:
         self.base_key = base_key
         self.keys: list[str] = []
         self.conn = sqlite3.connect(":memory:", check_same_thread=False)
-        self.conn.execute("CREATE TABLE deg (key TEXT, view TEXT, cluster TEXT, rank INTEGER, gene TEXT, "
-                          "logfc REAL, padj REAL, pct1 REAL, pct2 REAL, neighbors TEXT)")
+        self.conn.execute(
+            "CREATE TABLE deg (key TEXT, view TEXT, cluster TEXT, rank INTEGER, gene TEXT, "
+            "logfc REAL, padj REAL, pct1 REAL, pct2 REAL, neighbors TEXT)"
+        )
         rows = []
         for path in sorted(_glob.glob(os.path.join(outdir, "deg_*_*.csv"))):
-            name = os.path.basename(path)[len("deg_"):-len(".csv")]
+            name = os.path.basename(path)[len("deg_") : -len(".csv")]
             view, key = name.split("_", 1)
             if view not in ("global", "local"):
                 continue
@@ -338,8 +357,20 @@ class DegTables:
             for c, sub in df.groupby("group", sort=False):
                 nbs = str(sub["neighbors"].iloc[0]) if "neighbors" in sub and pd.notna(sub["neighbors"].iloc[0]) else ""
                 for rank, r in enumerate(sub.itertuples(index=False), 1):
-                    rows.append((key, view, str(c), rank, str(r.names), float(r.logfoldchanges),
-                                 float(r.pvals_adj), float(r.pct1), float(r.pct2), nbs))
+                    rows.append(
+                        (
+                            key,
+                            view,
+                            str(c),
+                            rank,
+                            str(r.names),
+                            float(r.logfoldchanges),
+                            float(r.pvals_adj),
+                            float(r.pct1),
+                            float(r.pct2),
+                            nbs,
+                        )
+                    )
         self.conn.executemany("INSERT INTO deg VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
         self.conn.execute("CREATE INDEX ix_ckv ON deg(key, view, cluster, rank)")
         self.conn.execute("CREATE INDEX ix_gene ON deg(gene)")
@@ -349,7 +380,7 @@ class DegTables:
         # them in SQL as soon as they see one table exists, and several are large
         self.extra_tables: dict[str, tuple[int, list[str]]] = {}  # name -> (rows, columns)
         for path in sorted(_glob.glob(os.path.join(outdir, "*.csv"))):
-            stem = os.path.basename(path)[:-len(".csv")]
+            stem = os.path.basename(path)[: -len(".csv")]
             if stem.startswith("deg_"):
                 continue
             name = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in stem)
@@ -359,15 +390,21 @@ class DegTables:
                 continue
             if df.empty or df.shape[1] == 0:
                 continue
-            df.columns = ["".join(ch if ch.isalnum() or ch == "_" else "_" for ch in str(c)) or f"c{i}"
-                          for i, c in enumerate(df.columns)]
+            df.columns = [
+                "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in str(c)) or f"c{i}"
+                for i, c in enumerate(df.columns)
+            ]
             df.to_sql(name, self.conn, index=False, if_exists="replace")
             self.extra_tables[name] = (len(df), list(df.columns))
         self.conn.commit()
 
         def _authorizer(action, *_):
-            return sqlite3.SQLITE_OK if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ,
-                                                   sqlite3.SQLITE_FUNCTION) else sqlite3.SQLITE_DENY
+            return (
+                sqlite3.SQLITE_OK
+                if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION)
+                else sqlite3.SQLITE_DENY
+            )
+
         self.conn.set_authorizer(_authorizer)
 
     def _fmt_rows(self, rows, header):
@@ -375,16 +412,28 @@ class DegTables:
         groups = {}
         for key, view, cluster, rank, gene, logfc, padj, pct1, pct2, nbs in rows:
             ref = "rest" if view == "global" else "PAGA nbrs " + nbs.replace("|", ",")
-            groups.setdefault((view, cluster, ref), []).append(f"{gene} #{rank} {logfc:.1f} {padj:.0e} {pct1:.2f}/{pct2:.2f}")
+            groups.setdefault((view, cluster, ref), []).append(
+                f"{gene} #{rank} {logfc:.1f} {padj:.0e} {pct1:.2f}/{pct2:.2f}"
+            )
         lines = [header]
         for (view, cluster, ref), items in groups.items():
             lines.append(f"  {view} cluster {cluster} vs {ref}: " + ", ".join(items))
         return "\n".join(lines)
 
-    def lookup(self, cluster="", gene="", view="both", key="", top_n=20, min_logfc=None, max_padj=None,
-               min_pct1=None, max_pct2=None):
+    def lookup(
+        self,
+        cluster="",
+        gene="",
+        view="both",
+        key="",
+        top_n=20,
+        min_logfc=None,
+        max_padj=None,
+        min_pct1=None,
+        max_pct2=None,
+    ):
         cluster, gene, key = str(cluster or "").strip(), str(gene or "").strip(), str(key or "").strip()
-        view = (str(view or "both").strip().lower() or "both")
+        view = str(view or "both").strip().lower() or "both"
         if view not in ("global", "local", "both"):
             return "view must be global | local | both"
         if not cluster and not gene:
@@ -394,19 +443,26 @@ class DegTables:
             return f"no precomputed tables for key {key!r}; available: {self.keys} (a subclustered key has none — use check_deg)"
         where, params = ["key = ?"], [key]
         if view != "both":
-            where.append("view = ?"); params.append(view)
+            where.append("view = ?")
+            params.append(view)
         if cluster:
-            where.append("cluster = ?"); params.append(cluster)
+            where.append("cluster = ?")
+            params.append(cluster)
         if gene:
-            where.append("upper(gene) = ?"); params.append(gene.upper())
+            where.append("upper(gene) = ?")
+            params.append(gene.upper())
         if min_logfc:
-            where.append("logfc >= ?"); params.append(float(min_logfc))
+            where.append("logfc >= ?")
+            params.append(float(min_logfc))
         if max_padj is not None and 0 < float(max_padj) < 1:
-            where.append("padj <= ?"); params.append(float(max_padj))
+            where.append("padj <= ?")
+            params.append(float(max_padj))
         if min_pct1:
-            where.append("pct1 >= ?"); params.append(float(min_pct1))
+            where.append("pct1 >= ?")
+            params.append(float(min_pct1))
         if max_pct2 is not None and 0 < float(max_pct2) < 1:
-            where.append("pct2 <= ?"); params.append(float(max_pct2))
+            where.append("pct2 <= ?")
+            params.append(float(max_pct2))
         filters = _filter_desc(min_logfc, max_padj, min_pct1, max_pct2)
         top_n = max(1, min(int(top_n or 20), 200))
         sql = f"SELECT * FROM deg WHERE {' AND '.join(where)} ORDER BY view, rank"
@@ -427,11 +483,16 @@ class DegTables:
             if gene and not cluster:
                 return f"{what} is not among any cluster's top-50 markers in {key} ({view}); use check_genes for its expression per cluster"
             return f"nothing for {what} in {key} ({view}); clusters present: {self.clusters(key)}"
-        head = (f"precomputed DEG, {key}, " + (f"cluster {cluster}" if cluster else f"gene {gene}")
-                + (f" ∩ gene {gene}" if cluster and gene else "") + f", view={view}"
-                + (f" [{filters}]" if filters else "") + f": {len(rows)} row(s)"
-                + (f" of {n_total} passing" if n_total != len(rows) else "")
-                + " (tables hold each cluster's top-50 per view; for other references or deeper lists use check_deg):")
+        head = (
+            f"precomputed DEG, {key}, "
+            + (f"cluster {cluster}" if cluster else f"gene {gene}")
+            + (f" ∩ gene {gene}" if cluster and gene else "")
+            + f", view={view}"
+            + (f" [{filters}]" if filters else "")
+            + f": {len(rows)} row(s)"
+            + (f" of {n_total} passing" if n_total != len(rows) else "")
+            + " (tables hold each cluster's top-50 per view; for other references or deeper lists use check_deg):"
+        )
         return self._fmt_rows(rows, head)
 
     def schema_text(self):
@@ -442,8 +503,12 @@ class DegTables:
         return "\n".join(lines)
 
     def clusters(self, key):
-        return [r[0] for r in self.conn.execute(
-            "SELECT DISTINCT cluster FROM deg WHERE key = ? ORDER BY CAST(cluster AS REAL), cluster", [key])]
+        return [
+            r[0]
+            for r in self.conn.execute(
+                "SELECT DISTINCT cluster FROM deg WHERE key = ? ORDER BY CAST(cluster AS REAL), cluster", [key]
+            )
+        ]
 
     def sql(self, query, max_rows=200):
         q = str(query or "").strip().rstrip(";").strip()
@@ -478,12 +543,16 @@ class DegTables:
         for view in ("global", "local"):
             rows = self.conn.execute(
                 "SELECT gene, logfc, pct1, pct2, neighbors FROM deg WHERE key=? AND view=? AND cluster=? "
-                "AND rank<=? ORDER BY rank", [key, view, str(cluster), n]).fetchall()
+                "AND rank<=? ORDER BY rank",
+                [key, view, str(cluster), n],
+            ).fetchall()
             if not rows:
                 continue
             ref = "rest" if view == "global" else "PAGA nbrs " + rows[0][4].replace("|", ",")
-            lines.append(f"  top {view} markers (vs {ref}, precomputed; gene logFC pct1/pct2): "
-                         + ", ".join(f"{g} {lf:.1f} {p1:.2f}/{p2:.2f}" for g, lf, p1, p2, _ in rows))
+            lines.append(
+                f"  top {view} markers (vs {ref}, precomputed; gene logFC pct1/pct2): "
+                + ", ".join(f"{g} {lf:.1f} {p1:.2f}/{p2:.2f}" for g, lf, p1, p2, _ in rows)
+            )
         return "\n".join(lines)
 
 
@@ -504,7 +573,7 @@ class DegCache:
     def __init__(self, ad, outdir, remove_mask, label="check_deg"):
         self.ad, self.outdir, self.mask, self.label = ad, outdir, np.asarray(remove_mask, dtype=bool), label
         self._memo = {}  # (key, cluster, ref) -> (df, complete)
-        self._csv = {}   # (key, view) -> DataFrame | None
+        self._csv = {}  # (key, view) -> DataFrame | None
         self._paga = {}  # key -> {cluster: [neighbours]}
         self.tables_usable = bool(np.array_equal(_load_removal_mask(outdir, ad), self.mask))
         self.n_computed = self.n_precomputed = self.n_memo = 0
@@ -564,8 +633,13 @@ class DegCache:
             kept = _filter_deg(df, min_logfc, max_padj, min_pct1, max_pct2)
             print(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: computed after filtering", flush=True)
         complete = self._memo[mk][1]
-        text = _format_deg(cluster, ref_desc, kept.head(top_n), len(kept) if complete else None,
-                           _filter_desc(min_logfc, max_padj, min_pct1, max_pct2))
+        text = _format_deg(
+            cluster,
+            ref_desc,
+            kept.head(top_n),
+            len(kept) if complete else None,
+            _filter_desc(min_logfc, max_padj, min_pct1, max_pct2),
+        )
         return text if complete else text + "\n(cached ranked prefix; more genes may pass)"
 
 
@@ -575,8 +649,9 @@ def _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
     remove_mask cells — same DEG-only exclusion as check_deg / the
     precomputed deg_global_*/deg_local_* CSVs."""
     parent_mask = (ad.obs[key].astype(str) == cluster).values
-    sc.tl.leiden(ad, restrict_to=(key, [cluster]), resolution=resolution,
-                 key_added=new_key, flavor="igraph", n_iterations=2)
+    sc.tl.leiden(
+        ad, restrict_to=(key, [cluster]), resolution=resolution, key_added=new_key, flavor="igraph", n_iterations=2
+    )
     sub_labels = ad.obs[new_key][parent_mask].astype(str)
     subs = _cluster_order(sub_labels)
     if len(subs) < 2:
@@ -615,14 +690,13 @@ _PROPOSAL_SCHEMA_DOC = """{
   "overall": "<overall assessment of the integration>"
 }"""
 
-_VERDICTS = ("real", "artifact-doublet", "artifact-lowquality", "artifact-batch",
-             "artifact-ambient", "ambiguous")
+_VERDICTS = ("real", "artifact-doublet", "artifact-lowquality", "artifact-batch", "artifact-ambient", "ambiguous")
 
 
 def _validate_proposal(proposal, clusters, obs):
     problems = []
     if not isinstance(proposal, dict):
-        return [f'proposal must be a JSON object, got {type(proposal).__name__}']
+        return [f"proposal must be a JSON object, got {type(proposal).__name__}"]
     entries = proposal.get("clusters")
     if not isinstance(entries, list) or not entries:
         problems.append('missing "clusters" list')
@@ -637,18 +711,21 @@ def _validate_proposal(proposal, clusters, obs):
             problems.append(f"cluster entry missing {missing}: {e}")
             continue
         if e["verdict"] not in _VERDICTS:
-            problems.append(f'verdict must be one of {_VERDICTS}: {e}')
+            problems.append(f"verdict must be one of {_VERDICTS}: {e}")
         if e["action"] not in ("keep", "flag", "drop"):
-            problems.append(f'action must be keep|flag|drop: {e}')
+            problems.append(f"action must be keep|flag|drop: {e}")
         if e["confidence"] not in ("high", "medium", "low"):
-            problems.append(f'confidence must be high|medium|low: {e}')
+            problems.append(f"confidence must be high|medium|low: {e}")
         if not isinstance(e["tests"], dict) or not all(
-                isinstance(e["tests"].get(k), str) and e["tests"][k].strip()
-                for k in ("markers", "qc", "composition", "geometry", "stability")):
-            problems.append(f'tests must provide non-empty text for markers/qc/composition/geometry/stability '
-                            f'(explain unavailable evidence explicitly): {e}')
+            isinstance(e["tests"].get(k), str) and e["tests"][k].strip()
+            for k in ("markers", "qc", "composition", "geometry", "stability")
+        ):
+            problems.append(
+                f"tests must provide non-empty text for markers/qc/composition/geometry/stability "
+                f"(explain unavailable evidence explicitly): {e}"
+            )
         if not isinstance(e["rationale"], str) or not e["rationale"].strip():
-            problems.append(f'rationale must be non-empty text: {e}')
+            problems.append(f"rationale must be non-empty text: {e}")
         cluster = str(e.get("cluster"))
         if cluster not in clusters:
             problems.append(f"unknown cluster entry: {cluster!r}")
@@ -703,9 +780,7 @@ def _apply_proposal(ad, key, proposal):
                 mask &= _OPS[a["op"]](ad.obs[a["metric"]].to_numpy(dtype=float), float(a["value"]))
                 action[mask] = verb
     ad.obs["_msp_action"] = pd.Categorical(action, categories=["keep", "flag", "drop"])
-    ad.obs["_msp_verdict"] = lab.map(
-        {str(e["cluster"]): e["verdict"] for e in proposal["clusters"]}
-    ).astype("category")
+    ad.obs["_msp_verdict"] = lab.map({str(e["cluster"]): e["verdict"] for e in proposal["clusters"]}).astype("category")
 
 
 def _plot_verdicts(ad, figdir):
@@ -716,12 +791,14 @@ def _plot_verdicts(ad, figdir):
     act = ad.obs["_msp_action"].astype(str).values
     base = 120000 / ad.n_obs
     fig, ax = umap_axes(ad)
-    for name, color, size in (("keep", "#d3d3d3", base), ("flag", "#b8860b", 1.5 * base),
-                              ("drop", "#8b0000", 1.5 * base)):
+    for name, color, size in (
+        ("keep", "#d3d3d3", base),
+        ("flag", "#b8860b", 1.5 * base),
+        ("drop", "#8b0000", 1.5 * base),
+    ):
         m = act == name
         if m.any():
-            ax.scatter(xy[m, 0], xy[m, 1], s=size, c=color, linewidths=0,
-                       label=f"{name} (n={int(m.sum())})")
+            ax.scatter(xy[m, 0], xy[m, 1], s=size, c=color, linewidths=0, label=f"{name} (n={int(m.sum())})")
     ax.set_title("UMAP: inspection action (proposal)")
     ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
     fig.savefig(os.path.join(figdir, "inspect_umap_action.png"), dpi=UMAP_DPI)
@@ -737,13 +814,18 @@ def _file_inventory(outdir):
 
 
 def _system_prompt(outdir, cluster_key, clusters, batch_col, species, language, n_batches=None):
-    context = (f"Context — species: {species}." if species else
-               "No species context was provided — infer cautiously and say so.")
+    context = (
+        f"Context — species: {species}."
+        if species
+        else "No species context was provided — infer cautiously and say so."
+    )
     context += f" Sample/batch column: {batch_col!r}."
     if n_batches is not None and n_batches < 2:
-        context += (" THIS DATASET HAS A SINGLE SAMPLE (harmony was skipped): test (c) composition carries no "
-                    "information — n_samples=1 and share=1.00 are expected for every cluster, never evidence of "
-                    "a batch artifact, and the verdict artifact-batch is unavailable; decide on (a), (b), (d), (e).")
+        context += (
+            " THIS DATASET HAS A SINGLE SAMPLE (harmony was skipped): test (c) composition carries no "
+            "information — n_samples=1 and share=1.00 are expected for every cluster, never evidence of "
+            "a batch artifact, and the verdict artifact-batch is unavailable; decide on (a), (b), (d), (e)."
+        )
     return f"""You are a single-cell RNA-seq integration QC expert. The working directory is an \
 msp (multi-sample pipeline) integration output. Task: put EVERY integrated cluster \
 ({cluster_key}, {len(clusters)} clusters: {clusters}) through the five-test battery and submit \
@@ -817,8 +899,9 @@ Principles: output language {language} (gene symbols excepted). Weak evidence �
 contamination (decontX evidence exists for that)."""
 
 
-async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, language,
-                     model, effort, max_turns, remove_mask):
+async def _run_agent(
+    ad, outdir, cluster_key, other_keys, batch_col, species, language, model, effort, max_turns, remove_mask
+):
     from .harness import ToolSpec, run_agent
 
     state = {"key": cluster_key, "n_sub": 0}
@@ -827,10 +910,24 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
     print(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}", flush=True)
 
     async def deg_lookup(args):
-        return {"content": [{"type": "text", "text": tables.lookup(
-            args.get("cluster", ""), args.get("gene", ""), args.get("view", "both"), args.get("key", ""),
-            args.get("top_n") or 20, args.get("min_logfc"), args.get("max_padj"), args.get("min_pct1"),
-            args.get("max_pct2"))}]}
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": tables.lookup(
+                        args.get("cluster", ""),
+                        args.get("gene", ""),
+                        args.get("view", "both"),
+                        args.get("key", ""),
+                        args.get("top_n") or 20,
+                        args.get("min_logfc"),
+                        args.get("max_padj"),
+                        args.get("min_pct1"),
+                        args.get("max_pct2"),
+                    ),
+                }
+            ]
+        }
 
     async def deg_sql(args):
         return {"content": [{"type": "text", "text": tables.sql(args.get("query", ""))}]}
@@ -848,14 +945,17 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
         return {"content": [{"type": "text", "text": _qc_table(ad, state["key"], batch_col)}]}
 
     async def check_stability(args):
-        return {"content": [{"type": "text",
-                             "text": _stability_table(ad, str(args["cluster"]), state["key"], other_keys)}]}
+        return {
+            "content": [{"type": "text", "text": _stability_table(ad, str(args["cluster"]), state["key"], other_keys)}]
+        }
 
     async def check_deg(args):
         c = str(args["cluster"])
         if c not in current_clusters():
-            return {"content": [{"type": "text", "text": f"unknown cluster {c!r}; current: {current_clusters()}"}],
-                    "is_error": True}
+            return {
+                "content": [{"type": "text", "text": f"unknown cluster {c!r}; current: {current_clusters()}"}],
+                "is_error": True,
+            }
         reference = str(args.get("reference") or "rest").strip() or "rest"
         try:
             ref = _parse_reference(reference, current_clusters())
@@ -863,15 +963,31 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
                 raise ValueError("reference must exclude the target cluster")
         except ValueError as exc:
             return {"content": [{"type": "text", "text": str(exc)}], "is_error": True}
-        return {"content": [{"type": "text", "text": deg.table(
-            state["key"], c, reference, int(args.get("top_n") or 20), args.get("min_logfc"), args.get("max_padj"),
-            args.get("min_pct1"), args.get("max_pct2"))}]}
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": deg.table(
+                        state["key"],
+                        c,
+                        reference,
+                        int(args.get("top_n") or 20),
+                        args.get("min_logfc"),
+                        args.get("max_padj"),
+                        args.get("min_pct1"),
+                        args.get("max_pct2"),
+                    ),
+                }
+            ]
+        }
 
     async def subcluster(args):
         c = str(args["cluster"])
         if c not in current_clusters():
-            return {"content": [{"type": "text", "text": f"unknown cluster {c!r}; current: {current_clusters()}"}],
-                    "is_error": True}
+            return {
+                "content": [{"type": "text", "text": f"unknown cluster {c!r}; current: {current_clusters()}"}],
+                "is_error": True,
+            }
         new_key = f"inspect_sub{state['n_sub'] + 1}"
         n, text = _subcluster_once(ad, state["key"], c, float(args["resolution"]), new_key, remove_mask)
         if n >= 2:
@@ -884,13 +1000,15 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
         try:
             proposal = json.loads(args["proposal_json"])
         except (json.JSONDecodeError, TypeError) as e:
-            return {"content": [{"type": "text", "text": f"JSON parse error, fix and resubmit: {e}"}],
-                    "is_error": True}
+            return {"content": [{"type": "text", "text": f"JSON parse error, fix and resubmit: {e}"}], "is_error": True}
         problems = _validate_proposal(proposal, current_clusters(), ad.obs)
         if problems:
-            return {"content": [{"type": "text",
-                                 "text": "validation failed, fix and resubmit:\n- " + "\n- ".join(problems)}],
-                    "is_error": True}
+            return {
+                "content": [
+                    {"type": "text", "text": "validation failed, fix and resubmit:\n- " + "\n- ".join(problems)}
+                ],
+                "is_error": True,
+            }
         proposal["cluster_key"] = state["key"]
         path = os.path.join(outdir, "inspection_proposal.json")
         with open(path, "w") as fh:
@@ -898,51 +1016,104 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
         return {"content": [{"type": "text", "text": f"saved to {path}"}], "_submitted": proposal}
 
     tools = [
-        ToolSpec("deg_lookup", _DEG_TOOL_DOC,
-                 {"cluster": str, "gene": str, "view": str, "key": str, "top_n": int, "min_logfc": float, "max_padj": float, "min_pct1": float, "max_pct2": float}, deg_lookup),
+        ToolSpec(
+            "deg_lookup",
+            _DEG_TOOL_DOC,
+            {
+                "cluster": str,
+                "gene": str,
+                "view": str,
+                "key": str,
+                "top_n": int,
+                "min_logfc": float,
+                "max_padj": float,
+                "min_pct1": float,
+                "max_pct2": float,
+            },
+            deg_lookup,
+        ),
         ToolSpec("deg_sql", _DEG_SQL_DOC, {"query": str}, deg_sql),
-        ToolSpec("check_genes",
-                 "Per-cluster mean expression and expressing-cell fraction for the given genes "
-                 "(case-insensitive). Use to verify markers.", {"genes": list}, check_genes),
-        ToolSpec("check_qc_scores",
-                 "Per-cluster QC (median|p90) + composition (n_samples, dominant-sample share, "
-                 "inherited flag/drop fractions). No arguments.", {}, check_qc_scores),
-        ToolSpec("check_stability",
-                 "How one cluster decomposes across the other clustering resolutions — test (e). "
-                 "A one-resolution splinter dissolves elsewhere.", {"cluster": str}, check_stability),
-        ToolSpec("check_deg",
-                 "On-demand DEG (wilcoxon) for the CURRENT working clustering, including any subcluster "
-                 "splits already made — use this once a cluster you're investigating has an id the "
-                 "precomputed deg_global_*/deg_local_* CSVs never saw. reference='rest' (default) is "
-                 "one-vs-rest against every other current cluster, same semantics as deg_global_*. Pass "
-                 "a comma-separated list of other cluster ids as reference instead for a pooled-group "
-                 'comparison. A single exact ID such as 5,1 is accepted; CSV-quote pooled subcluster IDs '
-                 '(e.g. "5,0","5,1"). Such pooled comparisons use the same '
-                 "semantics as deg_local_*. Thresholds (0/empty = off): min_logfc, max_padj, min_pct1, "
-                 "max_pct2 — ask for exactly the gene list you need (e.g. min_logfc=1, max_padj=1e-10). "
-                 "Results are cached per (cluster, reference); one-vs-rest on the base clustering is answered "
-                 "from the precomputed table.",
-                 {"cluster": str, "reference": str, "top_n": int, "min_logfc": float, "max_padj": float,
-                  "min_pct1": float, "max_pct2": float}, check_deg),
-        ToolSpec("subcluster",
-                 "Split one heterogeneous cluster with leiden restrict_to at the given resolution "
-                 '(0.3-1.0 typical). New ids look like "5,0"; all tools and the final submission '
-                 "follow the refined clustering.", {"cluster": str, "resolution": float}, subcluster),
-        ToolSpec("submit_inspection",
-                 "Submit the final verdicts (mandatory; the run completes only after validation "
-                 "passes). proposal_json is a JSON string with this schema:\n" + _PROPOSAL_SCHEMA_DOC,
-                 {"proposal_json": str}, submit_inspection),
+        ToolSpec(
+            "check_genes",
+            "Per-cluster mean expression and expressing-cell fraction for the given genes "
+            "(case-insensitive). Use to verify markers.",
+            {"genes": list},
+            check_genes,
+        ),
+        ToolSpec(
+            "check_qc_scores",
+            "Per-cluster QC (median|p90) + composition (n_samples, dominant-sample share, "
+            "inherited flag/drop fractions). No arguments.",
+            {},
+            check_qc_scores,
+        ),
+        ToolSpec(
+            "check_stability",
+            "How one cluster decomposes across the other clustering resolutions — test (e). "
+            "A one-resolution splinter dissolves elsewhere.",
+            {"cluster": str},
+            check_stability,
+        ),
+        ToolSpec(
+            "check_deg",
+            "On-demand DEG (wilcoxon) for the CURRENT working clustering, including any subcluster "
+            "splits already made — use this once a cluster you're investigating has an id the "
+            "precomputed deg_global_*/deg_local_* CSVs never saw. reference='rest' (default) is "
+            "one-vs-rest against every other current cluster, same semantics as deg_global_*. Pass "
+            "a comma-separated list of other cluster ids as reference instead for a pooled-group "
+            "comparison. A single exact ID such as 5,1 is accepted; CSV-quote pooled subcluster IDs "
+            '(e.g. "5,0","5,1"). Such pooled comparisons use the same '
+            "semantics as deg_local_*. Thresholds (0/empty = off): min_logfc, max_padj, min_pct1, "
+            "max_pct2 — ask for exactly the gene list you need (e.g. min_logfc=1, max_padj=1e-10). "
+            "Results are cached per (cluster, reference); one-vs-rest on the base clustering is answered "
+            "from the precomputed table.",
+            {
+                "cluster": str,
+                "reference": str,
+                "top_n": int,
+                "min_logfc": float,
+                "max_padj": float,
+                "min_pct1": float,
+                "max_pct2": float,
+            },
+            check_deg,
+        ),
+        ToolSpec(
+            "subcluster",
+            "Split one heterogeneous cluster with leiden restrict_to at the given resolution "
+            '(0.3-1.0 typical). New ids look like "5,0"; all tools and the final submission '
+            "follow the refined clustering.",
+            {"cluster": str, "resolution": float},
+            subcluster,
+        ),
+        ToolSpec(
+            "submit_inspection",
+            "Submit the final verdicts (mandatory; the run completes only after validation "
+            "passes). proposal_json is a JSON string with this schema:\n" + _PROPOSAL_SCHEMA_DOC,
+            {"proposal_json": str},
+            submit_inspection,
+        ),
     ]
     result = await run_agent(
-        tools=tools, submit_tool="submit_inspection",
+        tools=tools,
+        submit_tool="submit_inspection",
         prompt="Inspect this msp integration directory following the workflow in the system "
-               "prompt exactly, and finish by submitting via submit_inspection.",
-        system_prompt=_system_prompt(outdir, cluster_key,
-                                     _cluster_order(ad.obs[cluster_key].astype(str)),
-                                     batch_col, species, language,
-                                     n_batches=int(ad.obs[batch_col].nunique())),
-        cwd=os.path.abspath(outdir), model=model, effort=effort, max_turns=max_turns,
-        allowed_builtin=("read", "glob", "grep"), label="inspect",
+        "prompt exactly, and finish by submitting via submit_inspection.",
+        system_prompt=_system_prompt(
+            outdir,
+            cluster_key,
+            _cluster_order(ad.obs[cluster_key].astype(str)),
+            batch_col,
+            species,
+            language,
+            n_batches=int(ad.obs[batch_col].nunique()),
+        ),
+        cwd=os.path.abspath(outdir),
+        model=model,
+        effort=effort,
+        max_turns=max_turns,
+        allowed_builtin=("read", "glob", "grep"),
+        label="inspect",
         max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
     )
     if result.transcript_text:
@@ -951,8 +1122,9 @@ async def _run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, la
     return result.submitted
 
 
-def inspect_clusters(outdir, species=None, language="English", cluster_key=None,
-                     model=None, effort=None, max_turns=100):
+def inspect_clusters(
+    outdir, species=None, language="English", cluster_key=None, model=None, effort=None, max_turns=100
+):
     """Run the per-cluster inspection agent on an msp output directory.
 
     Writes inspection_proposal.json + inspection_notes.md, maps the accepted
@@ -966,21 +1138,36 @@ def inspect_clusters(outdir, species=None, language="English", cluster_key=None,
     batch_col = msp_meta.get("batch_col")
     if not batch_col:
         raise ValueError("integrated.h5ad lacks uns['msp']['batch_col'] — not an msp output?")
-    other_keys = [k for k in ad.obs.columns
-                  if k.startswith("msp_leiden_r") and k != cluster_key]
+    other_keys = [k for k in ad.obs.columns if k.startswith("msp_leiden_r") and k != cluster_key]
     species = species or (msp_meta.get("species") or None)
 
     remove_mask = _load_removal_mask(outdir, ad)
-    print(f"== {int(remove_mask.sum())}/{ad.n_obs} cells already recommend_removal "
-          "(pre-annotation filtering) — excluded from check_deg / subcluster DE", flush=True)
+    print(
+        f"== {int(remove_mask.sum())}/{ad.n_obs} cells already recommend_removal "
+        "(pre-annotation filtering) — excluded from check_deg / subcluster DE",
+        flush=True,
+    )
 
     begin_step(outdir, "inspect")
     # Do not present the previous inspection's verdicts as fresh evidence.
     for key in ("_msp_action", "_msp_verdict"):
         if key in ad.obs:
             del ad.obs[key]
-    proposal = asyncio.run(_run_agent(ad, outdir, cluster_key, other_keys, batch_col, species, language,
-                                      model or default_model(), effort, max_turns, remove_mask))
+    proposal = asyncio.run(
+        _run_agent(
+            ad,
+            outdir,
+            cluster_key,
+            other_keys,
+            batch_col,
+            species,
+            language,
+            model or default_model(),
+            effort,
+            max_turns,
+            remove_mask,
+        )
+    )
     _apply_proposal(ad, proposal["cluster_key"], proposal)
     _plot_verdicts(ad, os.path.join(outdir, "figures"))
     tmp = os.path.join(outdir, "integrated.tmp.h5ad")
@@ -1002,8 +1189,14 @@ if __name__ == "__main__":
     parser.add_argument("--max-turns", type=int, default=100)
     args = parser.parse_args()
 
-    proposal = inspect_clusters(args.outdir, species=args.species, language=args.language,
-                                cluster_key=args.cluster_key, model=args.model,
-                                effort=args.effort, max_turns=args.max_turns)
+    proposal = inspect_clusters(
+        args.outdir,
+        species=args.species,
+        language=args.language,
+        cluster_key=args.cluster_key,
+        model=args.model,
+        effort=args.effort,
+        max_turns=args.max_turns,
+    )
     for e in proposal["clusters"]:
         print(f"cluster {e['cluster']}: {e['verdict']} -> {e['action']} [{e['confidence']}]")

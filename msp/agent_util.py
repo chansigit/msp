@@ -79,8 +79,11 @@ async def run_query(prompt, options, label="agent"):
         transient_hit = None
         try:
             async for message in query(prompt=prompt, options=options):
-                if isinstance(message, ResultMessage) and getattr(message, "is_error", False) \
-                        and is_limit_error(getattr(message, "result", "")):
+                if (
+                    isinstance(message, ResultMessage)
+                    and getattr(message, "is_error", False)
+                    and is_limit_error(getattr(message, "result", ""))
+                ):
                     limit_hit = message.result
                     continue  # swallow: the retry below replaces this result
                 yield message
@@ -100,17 +103,22 @@ async def run_query(prompt, options, label="agent"):
                     f"{transient_attempts} attempts: {transient_hit}"
                 ) from None
             wait = TRANSIENT_BACKOFF_SECONDS * transient_attempts
-            print(f"== [{label}] transient agent-startup failure (attempt {transient_attempts}/"
-                  f"{MAX_TRANSIENT_ATTEMPTS}): {str(transient_hit)[:160]!r} — retrying in {wait}s",
-                  flush=True)
+            print(
+                f"== [{label}] transient agent-startup failure (attempt {transient_attempts}/"
+                f"{MAX_TRANSIENT_ATTEMPTS}): {str(transient_hit)[:160]!r} — retrying in {wait}s",
+                flush=True,
+            )
             await asyncio.sleep(wait)
             continue
         if limit_hit is None:
             return
         if waited / 3600 >= max_h:
             raise AgentLimitExhausted(f"[{label}] usage limit still in force after {waited / 3600:.1f} h: {limit_hit}")
-        print(f"== [{label}] usage/rate limit (attempt {attempt}): {str(limit_hit)[:160]!r} — "
-              f"waiting {wait_min:.0f} min, {max_h - waited / 3600:.1f} h of wait budget left", flush=True)
+        print(
+            f"== [{label}] usage/rate limit (attempt {attempt}): {str(limit_hit)[:160]!r} — "
+            f"waiting {wait_min:.0f} min, {max_h - waited / 3600:.1f} h of wait budget left",
+            flush=True,
+        )
         t0 = time.time()
         await asyncio.sleep(wait_min * 60)
         waited += time.time() - t0

@@ -21,6 +21,7 @@ import os
 import re
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -106,12 +107,12 @@ QC_ACTION_PALETTE = {"keep": "#d3d3d3", "flag": "#ff8c00", "drop": "#d62728"}
 # "recommend_removal" here are deliberately not "flag" — osp already uses
 # keep/flag/drop for a different, per-cell concept and reusing the word
 # would be confusing side by side.
-MIN_N_FOR_TEST = 5          # below this, Mann-Whitney has no real power — mark insufficient_data
-BIG_SIBLING_FRAC = 0.25     # sibling >= this fraction of its own parent's core is skipped, not a "minor" fragment
-BIG_SIBLING_N = 800         # sibling >= this many cells (absolute) is skipped too, regardless of frac_of_core
-DOUBLET_MEDIAN_THRESH = 0.2   # scrublet score, 0-1 scale
-MT_MEDIAN_THRESH = 20.0        # pct_counts_mt is already on a 0-100 scale
-DROP_PCT_THRESH = 50.0         # % of a sibling's cells already _qc_action=drop upstream (osp)
+MIN_N_FOR_TEST = 5  # below this, Mann-Whitney has no real power — mark insufficient_data
+BIG_SIBLING_FRAC = 0.25  # sibling >= this fraction of its own parent's core is skipped, not a "minor" fragment
+BIG_SIBLING_N = 800  # sibling >= this many cells (absolute) is skipped too, regardless of frac_of_core
+DOUBLET_MEDIAN_THRESH = 0.2  # scrublet score, 0-1 scale
+MT_MEDIAN_THRESH = 20.0  # pct_counts_mt is already on a 0-100 scale
+DROP_PCT_THRESH = 50.0  # % of a sibling's cells already _qc_action=drop upstream (osp)
 
 
 def _mwu_greater(sib_vals, core_vals):
@@ -175,8 +176,13 @@ def _minor_sibling_qc(ad, res, outdir):
     for _, frow in frag[frag["rank"] > 0].iterrows():
         sub, parent, n_cells = frow["subcluster"], frow["parent"], int(frow["n_cells"])
         cn = int(core_n.get(parent, 0))
-        row = {"subcluster": sub, "parent": parent, "n_cells": n_cells,
-               "core_n_cells": cn, "frac_of_core": round(n_cells / cn, 3) if cn else None}
+        row = {
+            "subcluster": sub,
+            "parent": parent,
+            "n_cells": n_cells,
+            "core_n_cells": cn,
+            "frac_of_core": round(n_cells / cn, 3) if cn else None,
+        }
         if (cn and n_cells >= BIG_SIBLING_FRAC * cn) or n_cells >= BIG_SIBLING_N:
             row["status"] = "big_sibling_skip"
             rows.append(row)
@@ -230,10 +236,8 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir, leiden_keys=(), reso
     violin_key = "standissect_product" if "standissect_product" in ad.obs else primary_key
     log_metrics = {"n_genes_by_counts", "total_counts"}  # heavy-tailed counts
     for m, _ in metrics:
-        sc.pl.violin(ad, m, groupby=violin_key, stripplot=False, rotation=90, show=False,
-                    log=m in log_metrics)
-        plt.savefig(os.path.join(figdir, f"qc_violin_{slug(m)}.png"), dpi=UMAP_DPI,
-                    bbox_inches="tight")
+        sc.pl.violin(ad, m, groupby=violin_key, stripplot=False, rotation=90, show=False, log=m in log_metrics)
+        plt.savefig(os.path.join(figdir, f"qc_violin_{slug(m)}.png"), dpi=UMAP_DPI, bbox_inches="tight")
         plt.close("all")
 
     if "_qc_action" in ad.obs:
@@ -242,9 +246,14 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir, leiden_keys=(), reso
         # inherited from OSP just like _ann_coarse — filename (no qc_
         # prefix) groups it with the OSP-inherited panels, not the
         # integrated-space QC metrics
-        save_single_umap(ad, "_qc_action", os.path.join(figdir, "umap__qc_action.png"),
-                         palette=[QC_ACTION_PALETTE[c] for c in order], legend_loc="best",
-                         na_color="#808080")  # distinct from keep, including in Scanpy's color categories
+        save_single_umap(
+            ad,
+            "_qc_action",
+            os.path.join(figdir, "umap__qc_action.png"),
+            palette=[QC_ACTION_PALETTE[c] for c in order],
+            legend_loc="best",
+            na_color="#808080",
+        )  # distinct from keep, including in Scanpy's color categories
 
     def _agg(groupby):
         g = ad.obs.groupby(groupby, observed=True)
@@ -280,8 +289,7 @@ def _qc_outputs(ad, batch_col, primary_key, outdir, figdir, leiden_keys=(), reso
 
 
 # Seurat's classic DoHeatmap palette (colorRampPalette(c("purple","black","yellow")))
-SEURAT_HEATMAP_CMAP = LinearSegmentedColormap.from_list(
-    "seurat_purple_black_yellow", ["purple", "black", "yellow"])
+SEURAT_HEATMAP_CMAP = LinearSegmentedColormap.from_list("seurat_purple_black_yellow", ["purple", "black", "yellow"])
 
 
 def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
@@ -328,9 +336,15 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
         g = g.sort_values("logfoldchanges", ascending=False).head(top_n)
         for rank, row in enumerate(g.itertuples(), start=1):
             gene_parent.setdefault(row.names, parent)  # first parent wins if a gene repeats
-            marker_rows.append({"parent": parent, "gene": row.names, "rank": rank,
-                                 "logfoldchange": round(row.logfoldchanges, 3),
-                                 "pvals_adj": row.pvals_adj})
+            marker_rows.append(
+                {
+                    "parent": parent,
+                    "gene": row.names,
+                    "rank": rank,
+                    "logfoldchange": round(row.logfoldchanges, 3),
+                    "pvals_adj": row.pvals_adj,
+                }
+            )
     pd.DataFrame(marker_rows).to_csv(os.path.join(outdir, "fractal_markers.csv"), index=False)
     # row order follows parent order (numeric, not the groupby's alpha-sort), then rank within
     # parent; de-dup a gene shared across parents by keeping its first (lowest-parent) occurrence
@@ -340,20 +354,22 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
         print("== no marker genes passed the filters — skipping heatmap", flush=True)
         return
 
-    print(f"== fractal marker dot plot ({len(markers)} genes x "
-          f"{ad.obs['standissect_product'].nunique()} clusters)", flush=True)
+    print(
+        f"== fractal marker dot plot ({len(markers)} genes x {ad.obs['standissect_product'].nunique()} clusters)",
+        flush=True,
+    )
     sub = ad[:, markers]
     X = sub.X.toarray() if hasattr(sub.X, "toarray") else np.asarray(sub.X)
     expr = pd.DataFrame(X, index=ad.obs_names, columns=markers)
     expr["cluster"] = ad.obs["standissect_product"].astype(str).values
     grp = expr.groupby("cluster")
-    avg = grp[markers].mean().T   # genes x clusters, average log1p expression
+    avg = grp[markers].mean().T  # genes x clusters, average log1p expression
     frac = grp[markers].apply(lambda d: (d > 0).mean()).T  # genes x clusters, fraction expressing
     avg.to_csv(os.path.join(outdir, "fractal_marker_avg_expr.csv"))
     frac.to_csv(os.path.join(outdir, "fractal_marker_frac_expr.csv"))
 
     z = avg.sub(avg.mean(axis=1), axis=0).div(avg.std(axis=1).replace(0, 1), axis=0).fillna(0)
-    z = z.loc[markers]           # parent-then-rank order (see marker_rows_sorted above)
+    z = z.loc[markers]  # parent-then-rank order (see marker_rows_sorted above)
     frac = frac.loc[markers]
 
     # column order from hierarchical clustering (optimal leaf ordering) — used
@@ -390,8 +406,9 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     plot_bottom = (xtick_h + legend_gap + legend_h + bottom_margin) / fig_h
     plot_h = plot_row_h / fig_h
     ax_strip = fig.add_axes((left_margin / fig_w, plot_bottom, strip_w / fig_w, plot_h))
-    ax = fig.add_axes(((left_margin + strip_w + col_gap) / fig_w, plot_bottom,
-                       plot_col_w / fig_w, plot_h), sharey=ax_strip)
+    ax = fig.add_axes(
+        ((left_margin + strip_w + col_gap) / fig_w, plot_bottom, plot_col_w / fig_w, plot_h), sharey=ax_strip
+    )
 
     strip = np.array([parent_palette[gene_parent[g]] for g in markers])[:, None, :]
     ax_strip.imshow(strip, aspect="auto")
@@ -408,8 +425,16 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
             sizes.append(frac.loc[gene, cl])
             colors.append(z.loc[gene, cl])
     max_dot_area = 200.0
-    sca = ax.scatter(xs, ys, s=np.asarray(sizes) * max_dot_area + 2, c=colors,
-                     cmap=SEURAT_HEATMAP_CMAP, vmin=-2.5, vmax=2.5, edgecolor="none")
+    sca = ax.scatter(
+        xs,
+        ys,
+        s=np.asarray(sizes) * max_dot_area + 2,
+        c=colors,
+        cmap=SEURAT_HEATMAP_CMAP,
+        vmin=-2.5,
+        vmax=2.5,
+        edgecolor="none",
+    )
     for x in range(1, n_clusters):  # thin separators between columns only
         ax.axvline(x - 0.5, color="#dddddd", linewidth=0.6, zorder=0)
     ax.set_xlim(-0.5, n_clusters - 0.5)
@@ -431,12 +456,14 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     # legend_h/bottom_margin band reserved above — no negative coordinates,
     # so there's no bbox_inches="tight" guesswork; every element's text stays
     # within its own axes' [0,1] range so nothing depends on overflow room
-    cax = fig.add_axes(((left_margin + strip_w + col_gap) / fig_w,
-                        (bottom_margin + 0.4) / fig_h, 1.6 / fig_w, 0.15 / fig_h))
+    cax = fig.add_axes(
+        ((left_margin + strip_w + col_gap) / fig_w, (bottom_margin + 0.4) / fig_h, 1.6 / fig_w, 0.15 / fig_h)
+    )
     fig.colorbar(sca, cax=cax, orientation="horizontal", label="z-score")
 
-    lax = fig.add_axes(((left_margin + strip_w + col_gap + 2.1) / fig_w, bottom_margin / fig_h,
-                        2.2 / fig_w, legend_h / fig_h))
+    lax = fig.add_axes(
+        ((left_margin + strip_w + col_gap + 2.1) / fig_w, bottom_margin / fig_h, 2.2 / fig_w, legend_h / fig_h)
+    )
     lax.set_xlim(0, 4)
     lax.set_ylim(0, 1)
     lax.axis("off")
@@ -458,16 +485,37 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
 # than one broad gene list. Human symbols; matched case-insensitively
 # (dataset gene names uppercased before lookup) so mouse data works too.
 STRESS_GENES_CORE = [
-    "HSPA1A", "HSPA1B", "HSPA8", "HSPB1", "HSP90AA1", "HSP90AB1",
-    "HSPH1", "HSPE1", "DNAJA1", "DNAJB1", "DNAJB4",
-    "FOS", "FOSB", "JUN", "JUNB", "JUND", "EGR1", "EGR2", "ATF3", "NR4A1",
-    "PPP1R15A", "ZFP36", "IER2", "IER3", "DUSP1",
+    "HSPA1A",
+    "HSPA1B",
+    "HSPA8",
+    "HSPB1",
+    "HSP90AA1",
+    "HSP90AB1",
+    "HSPH1",
+    "HSPE1",
+    "DNAJA1",
+    "DNAJB1",
+    "DNAJB4",
+    "FOS",
+    "FOSB",
+    "JUN",
+    "JUNB",
+    "JUND",
+    "EGR1",
+    "EGR2",
+    "ATF3",
+    "NR4A1",
+    "PPP1R15A",
+    "ZFP36",
+    "IER2",
+    "IER3",
+    "DUSP1",
 ]
 STRESS_GENE_SET = set(STRESS_GENES_CORE)
 STRESS_HIT_THRESHOLD = 3  # a cluster is "stress" if MORE than this many top genes hit
-STRESS_CHECK_TOP_N = 10   # matches what the report displays, independent of top_n_de
-MIN_DE_GROUP_SIZE = 10    # clusters smaller than this are excluded from DE comparisons
-                          # (both global one-vs-rest and local vs-PAGA-neighbors views)
+STRESS_CHECK_TOP_N = 10  # matches what the report displays, independent of top_n_de
+MIN_DE_GROUP_SIZE = 10  # clusters smaller than this are excluded from DE comparisons
+# (both global one-vs-rest and local vs-PAGA-neighbors views)
 
 
 def _is_stress_gene(symbol) -> bool:
@@ -494,18 +542,22 @@ def _build_removal_mask(ad, msq_df, cell_outliers_df, outdir):
     remove_set = set()
     if msq_df is not None and "recommend_removal" in msq_df.columns:
         remove_set = set(msq_df.loc[msq_df["recommend_removal"] == True, "subcluster"])  # noqa: E712
-    from_fragments = (ad.obs["standissect_product"].astype(str).isin(remove_set).values
-                      if "standissect_product" in ad.obs
-                      else np.zeros(ad.n_obs, dtype=bool))
+    from_fragments = (
+        ad.obs["standissect_product"].astype(str).isin(remove_set).values
+        if "standissect_product" in ad.obs
+        else np.zeros(ad.n_obs, dtype=bool)
+    )
     if cell_outliers_df is not None and "recommend_removal" in cell_outliers_df.columns:
         from_cells = cell_outliers_df["recommend_removal"].reindex(ad.obs_names).fillna(False).values
     else:
         from_cells = np.zeros(ad.n_obs, dtype=bool)
-    from_osp_drop = (ad.obs["_qc_action"].astype(str).values == "drop"
-                     if "_qc_action" in ad.obs else np.zeros(ad.n_obs, dtype=bool))
+    from_osp_drop = (
+        ad.obs["_qc_action"].astype(str).values == "drop" if "_qc_action" in ad.obs else np.zeros(ad.n_obs, dtype=bool)
+    )
     mask = from_fragments | from_cells | from_osp_drop
     pd.DataFrame({"cell": ad.obs_names, "recommend_removal": mask}).to_csv(
-        os.path.join(outdir, "preannotation_removal.csv"), index=False)
+        os.path.join(outdir, "preannotation_removal.csv"), index=False
+    )
     return mask
 
 
@@ -515,10 +567,15 @@ def _preannotation_removal_umap(ad, remove_mask, figdir):
     never remove' actually selected. Computation-only: the column lives on
     ad.obs just long enough to plot, never persisted to the written h5ad."""
     ad.obs["_preannotation_removal"] = pd.Categorical(
-        np.where(remove_mask, "remove", "keep"), categories=["keep", "remove"])
-    save_single_umap(ad, "_preannotation_removal",
-                     os.path.join(figdir, "umap_preannotation_removal.png"),
-                     palette=["#cccccc", "#c0392b"], legend_loc="best")
+        np.where(remove_mask, "remove", "keep"), categories=["keep", "remove"]
+    )
+    save_single_umap(
+        ad,
+        "_preannotation_removal",
+        os.path.join(figdir, "umap_preannotation_removal.png"),
+        palette=["#cccccc", "#c0392b"],
+        legend_loc="best",
+    )
     del ad.obs["_preannotation_removal"]
 
 
@@ -552,8 +609,10 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
     keep_mask = ~remove_mask
     n_excluded = int((~keep_mask).sum())
     ad_excl = ad[keep_mask].copy()
-    print(f"== cluster annotations: excluding {n_excluded} recommend_removal cells "
-          f"({ad_excl.n_obs}/{ad.n_obs} remain)", flush=True)
+    print(
+        f"== cluster annotations: excluding {n_excluded} recommend_removal cells ({ad_excl.n_obs}/{ad.n_obs} remain)",
+        flush=True,
+    )
 
     res_to_key = dict(zip(resolutions, leiden_keys))
     target = [(r, res_to_key[r]) for r in (1.0, 2.0) if r in res_to_key]
@@ -578,11 +637,18 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
             picked = [cats[j] for j in order if j != i and conn[i, j] > 0][:3]
             top3[c] = picked
             for rank, nb in enumerate(picked, start=1):
-                neighbor_rows.append({"cluster": c, "neighbor": nb, "rank": rank,
-                                      "connectivity": round(float(conn[i, cats.index(nb)]), 4)})
+                neighbor_rows.append(
+                    {
+                        "cluster": c,
+                        "neighbor": nb,
+                        "rank": rank,
+                        "connectivity": round(float(conn[i, cats.index(nb)]), 4),
+                    }
+                )
         # Keep the existing columns even when this graph has no positive edges.
         pd.DataFrame(neighbor_rows, columns=["cluster", "neighbor", "rank", "connectivity"]).to_csv(
-            os.path.join(outdir, f"paga_neighbors_{key}.csv"), index=False)
+            os.path.join(outdir, f"paga_neighbors_{key}.csv"), index=False
+        )
 
         # wilcoxon needs >=2 cells per group to run at all, but a cluster that
         # tiny (can survive this far when it's PAGA-connected enough not to get
@@ -591,8 +657,11 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         valid_groups = [c for c in cats if sizes.get(c, 0) >= MIN_DE_GROUP_SIZE]
         if len(valid_groups) < len(cats):
             skipped = [c for c in cats if c not in valid_groups]
-            print(f"== cluster annotations: skipping global DE for undersized "
-                  f"(<{MIN_DE_GROUP_SIZE} cells) cluster(s) {skipped} in {key}", flush=True)
+            print(
+                f"== cluster annotations: skipping global DE for undersized "
+                f"(<{MIN_DE_GROUP_SIZE} cells) cluster(s) {skipped} in {key}",
+                flush=True,
+            )
         if not valid_groups:
             continue
         plan.append({"key": key, "cats": cats, "valid": valid_groups, "top3": top3, "sizes": sizes})
@@ -602,8 +671,9 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
     def run_global(item):
         key = item["key"]
         slot = f"_rgg_{key}"
-        sc.tl.rank_genes_groups(ad_excl, key, groups=item["valid"], method="wilcoxon", use_raw=True,
-                                pts=True, key_added=slot)
+        sc.tl.rank_genes_groups(
+            ad_excl, key, groups=item["valid"], method="wilcoxon", use_raw=True, pts=True, key_added=slot
+        )
         gdf = sc.get.rank_genes_groups_df(ad_excl, group=None, key=slot)
         del ad_excl.uns[slot]
         # Scanpy omits group when only one group qualifies for testing.
@@ -619,8 +689,7 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         sub = ad_excl[ad_excl.obs[key].isin([c, *neighbors])].copy()
         if int((sub.obs[key] == c).sum()) < MIN_DE_GROUP_SIZE:
             return None
-        sc.tl.rank_genes_groups(sub, key, groups=[c], reference="rest",
-                                method="wilcoxon", use_raw=True, pts=True)
+        sc.tl.rank_genes_groups(sub, key, groups=[c], reference="rest", method="wilcoxon", use_raw=True, pts=True)
         ldf = sc.get.rank_genes_groups_df(sub, group=c)
         ldf = ldf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
         # rank_genes_groups_df drops the "group" column when `group` is a scalar
@@ -646,35 +715,57 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         key = item["key"]
         gdf = next(res for it, view, c, res in results if it is item and view == "global")
         gdf.groupby("group", observed=True).head(top_n_de).reset_index(drop=True).to_csv(
-            os.path.join(outdir, f"deg_global_{key}.csv"), index=False)
-        for c, sub in gdf.groupby("group", observed=True).head(STRESS_CHECK_TOP_N).groupby(
-                "group", observed=True):
+            os.path.join(outdir, f"deg_global_{key}.csv"), index=False
+        )
+        for c, sub in gdf.groupby("group", observed=True).head(STRESS_CHECK_TOP_N).groupby("group", observed=True):
             hits = _stress_hits(sub["names"].tolist())
-            stress_rows.append({"key": key, "cluster": c, "view": "global", "n_hits": len(hits),
-                                "hit_genes": "|".join(hits), "stress": len(hits) > STRESS_HIT_THRESHOLD})
+            stress_rows.append(
+                {
+                    "key": key,
+                    "cluster": c,
+                    "view": "global",
+                    "n_hits": len(hits),
+                    "hit_genes": "|".join(hits),
+                    "stress": len(hits) > STRESS_HIT_THRESHOLD,
+                }
+            )
         local_rows = []
         for it, view, c, ldf in results:
             if it is not item or view != "local" or ldf is None:
                 continue
             hits = _stress_hits(ldf.head(STRESS_CHECK_TOP_N)["names"].tolist())
-            stress_rows.append({"key": key, "cluster": c, "view": "local", "n_hits": len(hits),
-                                "hit_genes": "|".join(hits), "stress": len(hits) > STRESS_HIT_THRESHOLD})
+            stress_rows.append(
+                {
+                    "key": key,
+                    "cluster": c,
+                    "view": "local",
+                    "n_hits": len(hits),
+                    "hit_genes": "|".join(hits),
+                    "stress": len(hits) > STRESS_HIT_THRESHOLD,
+                }
+            )
             local_rows.append(ldf.head(top_n_de))
         if local_rows:
-            pd.concat(local_rows, ignore_index=True).to_csv(
-                os.path.join(outdir, f"deg_local_{key}.csv"), index=False)
+            pd.concat(local_rows, ignore_index=True).to_csv(os.path.join(outdir, f"deg_local_{key}.csv"), index=False)
 
     if stress_rows:
         stress_df = pd.DataFrame(stress_rows)
         # a cluster is recommend_removal overall if EITHER its global or its
         # local view hit the stress threshold — not judged per-view
-        overall = (stress_df.groupby(["key", "cluster"])["stress"].any()
-                   .reset_index().rename(columns={"stress": "recommend_removal"}))
+        overall = (
+            stress_df.groupby(["key", "cluster"])["stress"]
+            .any()
+            .reset_index()
+            .rename(columns={"stress": "recommend_removal"})
+        )
         stress_df = stress_df.merge(overall, on=["key", "cluster"])
         stress_df.to_csv(os.path.join(outdir, "stress_clusters.csv"), index=False)
         n_removal = int(overall["recommend_removal"].sum())
-        print(f"== cluster annotations: {n_removal}/{len(overall)} (key, cluster) pairs "
-              f"recommend_removal (stress signature)", flush=True)
+        print(
+            f"== cluster annotations: {n_removal}/{len(overall)} (key, cluster) pairs "
+            f"recommend_removal (stress signature)",
+            flush=True,
+        )
 
 
 CELL_OUTLIER_METRICS = ("doublet_score", "decontX_contamination")
@@ -735,8 +826,11 @@ def _cell_level_outliers(ad, leiden_keys, resolutions, outdir):
     summary_df.to_csv(os.path.join(outdir, "cell_outlier_summary.csv"), index=False)
 
     n_removal = int(df["recommend_removal"].sum())
-    print(f"== cell-level outliers: {n_removal}/{len(df)} cells recommend_removal "
-          f"(doublet/ambient, MAD+floor, r1.0 or r2.0)", flush=True)
+    print(
+        f"== cell-level outliers: {n_removal}/{len(df)} cells recommend_removal "
+        f"(doublet/ambient, MAD+floor, r1.0 or r2.0)",
+        flush=True,
+    )
     return df
 
 
@@ -757,17 +851,17 @@ def _leiden_cluster_qc_violins(ad, leiden_keys, resolutions, figdir):
         for m in metrics:
             med = g[m].median()
             mad = g[m].apply(lambda s: (s - s.median()).abs().median())
-            cutoff = pd.concat([med + CELL_OUTLIER_MAD_K * mad,
-                                pd.Series(CELL_OUTLIER_HARD_FLOOR, index=med.index)],
-                               axis=1).max(axis=1)
+            cutoff = pd.concat(
+                [med + CELL_OUTLIER_MAD_K * mad, pd.Series(CELL_OUTLIER_HARD_FLOOR, index=med.index)], axis=1
+            ).max(axis=1)
 
             fig, ax = plt.subplots(figsize=(max(6, len(order) * 0.5), 4))
-            sns.violinplot(data=ad.obs, x=key, y=m, order=order, cut=0, inner="quartile",
-                           color="#cfe3f7", linewidth=0.8, ax=ax)
+            sns.violinplot(
+                data=ad.obs, x=key, y=m, order=order, cut=0, inner="quartile", color="#cfe3f7", linewidth=0.8, ax=ax
+            )
             for xi, cl in enumerate(order):
                 if cl in cutoff.index:
-                    ax.hlines(cutoff.loc[cl], xi - 0.4, xi + 0.4, colors="#c0392b",
-                             linewidth=2, zorder=5)
+                    ax.hlines(cutoff.loc[cl], xi - 0.4, xi + 0.4, colors="#c0392b", linewidth=2, zorder=5)
             ax.set_title(f"{m} by {key} (red = per-cluster outlier cutoff)")
             ax.set_xlabel(key)
             ax.tick_params(axis="x", rotation=90)
@@ -776,23 +870,54 @@ def _leiden_cluster_qc_violins(ad, leiden_keys, resolutions, figdir):
             plt.close(fig)
 
 
-def run_multi_sample_pipeline(inputs, batch_col, outdir, species=None,
-                              resolutions=(0.3, 1.0, 2.0), n_top_genes=2000,
-                              n_pcs=50, n_neighbors=15, counts_layer="counts",
-                              top_n_de=50, harmony_kwargs=None):
+def run_multi_sample_pipeline(
+    inputs,
+    batch_col,
+    outdir,
+    species=None,
+    resolutions=(0.3, 1.0, 2.0),
+    n_top_genes=2000,
+    n_pcs=50,
+    n_neighbors=15,
+    counts_layer="counts",
+    top_n_de=50,
+    harmony_kwargs=None,
+):
     """Load osp per-sample outputs, merge, and run integrate_adata on the
     result — see there for the parameters. Returns (ad, summary)."""
     os.makedirs(outdir, exist_ok=True)
     ad = load_and_merge(inputs, batch_col, counts_layer=counts_layer)
-    return integrate_adata(ad, batch_col, outdir, species=species, resolutions=resolutions,
-                           n_top_genes=n_top_genes, n_pcs=n_pcs, n_neighbors=n_neighbors,
-                           counts_layer=counts_layer, top_n_de=top_n_de,
-                           harmony_kwargs=harmony_kwargs, inputs=inputs)
+    return integrate_adata(
+        ad,
+        batch_col,
+        outdir,
+        species=species,
+        resolutions=resolutions,
+        n_top_genes=n_top_genes,
+        n_pcs=n_pcs,
+        n_neighbors=n_neighbors,
+        counts_layer=counts_layer,
+        top_n_de=top_n_de,
+        harmony_kwargs=harmony_kwargs,
+        inputs=inputs,
+    )
 
 
-def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 2.0),
-                    n_top_genes=2000, n_pcs=50, n_neighbors=15, counts_layer="counts",
-                    top_n_de=50, harmony_kwargs=None, inputs=(), meta_extra=None):
+def integrate_adata(
+    ad,
+    batch_col,
+    outdir,
+    species=None,
+    resolutions=(0.3, 1.0, 2.0),
+    n_top_genes=2000,
+    n_pcs=50,
+    n_neighbors=15,
+    counts_layer="counts",
+    top_n_de=50,
+    harmony_kwargs=None,
+    inputs=(),
+    meta_extra=None,
+):
     """The integration core on an in-memory AnnData: X is reset from
     layers[counts_layer] (so any prior normalization/embedding on the object
     is discarded), then normalize → HVG per batch → PCA → harmony → neighbors
@@ -870,9 +995,13 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
     # GPU auto-detect (same order as harmonypy's own get_device); MSP_DEVICE
     # env overrides (cpu|cuda|mps)
     device = os.environ.get("MSP_DEVICE") or None
-    auto = ("cuda" if torch.cuda.is_available() else
-            "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
-            else "cpu")
+    auto = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
+        else "cpu"
+    )
     if n_samples < 2:
         # nothing to correct across: one sample / one batch level. The rest of
         # the chain (neighbors, leiden, UMAP, QC tables, agents) runs unchanged
@@ -881,10 +1010,14 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
         Z = np.array(ad.obsm["X_pca"], copy=True)
         harmony_record = "skipped: single batch"
     else:
-        print(f"== harmony on {device or auto}{'' if device else ' (auto-detected)'}"
-              + (f", overrides {harmony_kwargs}" if harmony_kwargs else ", harmonypy defaults"), flush=True)
-        ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col,
-                                   random_state=0, device=device, **harmony_kwargs)
+        print(
+            f"== harmony on {device or auto}{'' if device else ' (auto-detected)'}"
+            + (f", overrides {harmony_kwargs}" if harmony_kwargs else ", harmonypy defaults"),
+            flush=True,
+        )
+        ho = harmonypy.run_harmony(
+            ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col, random_state=0, device=device, **harmony_kwargs
+        )
         Z = np.asarray(ho.Z_corr)
         if Z.shape[0] != ad.n_obs:
             Z = Z.T
@@ -935,9 +1068,11 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
     _leiden_cluster_qc_violins(ad, leiden_keys, resolutions, figdir)
 
     remove_mask = _build_removal_mask(ad, msq_df, cell_outliers_df, outdir)
-    print(f"== pre-annotation filtering: {int(remove_mask.sum())}/{ad.n_obs} cells "
-          "recommend_removal (minor-sibling fragments ∪ cell-level outliers ∪ osp _qc_action=drop)",
-          flush=True)
+    print(
+        f"== pre-annotation filtering: {int(remove_mask.sum())}/{ad.n_obs} cells "
+        "recommend_removal (minor-sibling fragments ∪ cell-level outliers ∪ osp _qc_action=drop)",
+        flush=True,
+    )
     _preannotation_removal_umap(ad, remove_mask, figdir)
 
     print("== cluster annotations (PAGA + global/local DEG)", flush=True)
@@ -955,14 +1090,13 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
         # what actually reached harmonypy.run_harmony beyond its defaults
         # (empty dict = harmonypy defaults: theta=2/covariate, lamb=1,
         # sigma=0.1, nclust=min(round(N/30),100), max_iter_harmony=10)
-        "harmony": harmony_record,   # kwargs beyond harmonypy defaults, or "skipped: single batch"
+        "harmony": harmony_record,  # kwargs beyond harmonypy defaults, or "skipped: single batch"
         "n_batches": int(n_samples),
         **(meta_extra or {}),
     }
 
     print("== figures", flush=True)
-    save_single_umap(ad, batch_col, os.path.join(figdir, f"umap_{slug(batch_col)}.png"),
-                     legend_fontsize=6)
+    save_single_umap(ad, batch_col, os.path.join(figdir, f"umap_{slug(batch_col)}.png"), legend_fontsize=6)
     for color in leiden_keys:  # cluster ids on the clusters, repelled apart
         save_single_umap(ad, color, os.path.join(figdir, f"umap_{slug(color)}.png"), repel=True)
     # inherited per-sample annotation — coarse only (the fine labels are far
@@ -970,14 +1104,21 @@ def integrate_adata(ad, batch_col, outdir, species=None, resolutions=(0.3, 1.0, 
     if "_ann_coarse" in ad.obs:
         # many near-duplicate labels across samples — needs a much bigger
         # canvas for repel to actually separate them
-        save_single_umap(ad, "_ann_coarse", os.path.join(figdir, "umap__ann_coarse.png"),
-                         repel=True, repel_fontsize=7, figsize=(14, 14))
+        save_single_umap(
+            ad,
+            "_ann_coarse",
+            os.path.join(figdir, "umap__ann_coarse.png"),
+            repel=True,
+            repel_fontsize=7,
+            figsize=(14, 14),
+        )
 
     # the product clustering itself: every (parent, umap_cluster) cell as its
     # own category, labeled and repelled just like the leiden panels — no
     # main/minor distinction, standissect-lite only detects, msp.inspect judges
-    save_single_umap(ad, "standissect_product", os.path.join(figdir, "standissect_product.png"),
-                     repel=True, repel_fontsize=7)
+    save_single_umap(
+        ad, "standissect_product", os.path.join(figdir, "standissect_product.png"), repel=True, repel_fontsize=7
+    )
 
     print("== QC figures/tables", flush=True)
     _qc_outputs(ad, batch_col, primary_key, outdir, figdir, leiden_keys, resolutions)

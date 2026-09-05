@@ -22,20 +22,29 @@ from msp.steps import begin_step, complete_step, step_pending
 def integrated_data():
     data = ad.AnnData(
         np.ones((20, 3)),
-        obs=pd.DataFrame({
-            "batch": ["A"] * 10 + ["B"] * 10,
-            "msp_leiden_r1.0": pd.Categorical(["0"] * 20),
-            "msp_leiden_r2.0": pd.Categorical(["0"] * 10 + ["1"] * 10),
-            "_msp_action": pd.Categorical(["keep"] * 20),
-            "_msp_verdict": pd.Categorical(["real"] * 20),
-        }, index=[f"cell{i}" for i in range(20)]),
+        obs=pd.DataFrame(
+            {
+                "batch": ["A"] * 10 + ["B"] * 10,
+                "msp_leiden_r1.0": pd.Categorical(["0"] * 20),
+                "msp_leiden_r2.0": pd.Categorical(["0"] * 10 + ["1"] * 10),
+                "_msp_action": pd.Categorical(["keep"] * 20),
+                "_msp_verdict": pd.Categorical(["real"] * 20),
+            },
+            index=[f"cell{i}" for i in range(20)],
+        ),
     )
     data.layers["counts"] = data.X.copy()
     data.obsm["X_umap"] = np.arange(40).reshape(20, 2).astype(float)
     data.uns["msp"] = {
-        "batch_col": "batch", "species": "", "resolutions": [0.3, 1.0, 2.0],
-        "n_top_genes": 2000, "n_pcs_requested": 50, "n_neighbors": 15,
-        "harmony": {}, "inputs": ["input.h5ad"], "n_batches": 2,
+        "batch_col": "batch",
+        "species": "",
+        "resolutions": [0.3, 1.0, 2.0],
+        "n_top_genes": 2000,
+        "n_pcs_requested": 50,
+        "n_neighbors": 15,
+        "harmony": {},
+        "inputs": ["input.h5ad"],
+        "n_batches": 2,
     }
     return data
 
@@ -49,10 +58,18 @@ def inspection_proposal():
 
 def annotation_proposal(label):
     return {
-        "cluster_key": "msp_leiden_r2.0", "merged_groups": [], "overall": label,
+        "cluster_key": "msp_leiden_r2.0",
+        "merged_groups": [],
+        "overall": label,
         "clusters": [
-            {"cluster_id": c, "coarse_label": label, "fine_label": f"{label}-{c}",
-             "action": "keep", "merge_target": None, "evidence": {}}
+            {
+                "cluster_id": c,
+                "coarse_label": label,
+                "fine_label": f"{label}-{c}",
+                "action": "keep",
+                "merge_target": None,
+                "evidence": {},
+            }
             for c in ("0", "1")
         ],
     }
@@ -87,6 +104,7 @@ def completed_run(tmp_path):
 
 def install_agents(monkeypatch, calls):
     """Replace model work and plotting, keeping the public data-writing paths."""
+
     async def inspect_agent(data, outdir, *args):
         calls.append("inspect")
         assert "_msp_action" not in data.obs and "_msp_verdict" not in data.obs
@@ -118,10 +136,22 @@ def install_agents(monkeypatch, calls):
 
 
 def run_cli(outdir, monkeypatch, *extra):
-    monkeypatch.setattr(sys, "argv", [
-        "msp", "input.h5ad", "--batch-col", "batch", "--outdir", str(outdir),
-        "--annotate", "--model", "test-model", *extra,
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "msp",
+            "input.h5ad",
+            "--batch-col",
+            "batch",
+            "--outdir",
+            str(outdir),
+            "--annotate",
+            "--model",
+            "test-model",
+            *extra,
+        ],
+    )
     runpy.run_module("msp.__main__", run_name="__main__")
 
 
@@ -134,6 +164,7 @@ def test_integration_rerun_invalidates_all_outputs(completed_run, monkeypatch):
     (root / "figures" / "umap_msp_leiden_r9.0.png").write_bytes(b"stale resolution")
     (root / "deg_local_msp_leiden_r9.0.csv").write_text("stale DE")
     data = integrated_data()
+
     # Fail immediately after invalidation, before any new numerical work.
     def fail_normalize(*args, **kwargs):
         raise RuntimeError("interrupted integration")
@@ -142,8 +173,13 @@ def test_integration_rerun_invalidates_all_outputs(completed_run, monkeypatch):
     with pytest.raises(RuntimeError, match="interrupted integration"):
         integrate.integrate_adata(data, "batch", root)
     assert step_pending(root, "integrate")
-    for name in ("integrated.h5ad", "annotated.h5ad", "inspection_proposal.json",
-                 "annotation_proposal.json", "deg_local_msp_leiden_r9.0.csv"):
+    for name in (
+        "integrated.h5ad",
+        "annotated.h5ad",
+        "inspection_proposal.json",
+        "annotation_proposal.json",
+        "deg_local_msp_leiden_r9.0.csv",
+    ):
         assert not (root / name).exists()
         assert len(list((root / ".msp-history").glob(f"*/{name}"))) == 1
     assert not (root / "figures" / "umap_msp_leiden_r9.0.png").exists()
@@ -282,8 +318,7 @@ def test_report_only_never_clears_pending(completed_run, monkeypatch):
 
 def test_interrupted_archive_preserves_files_and_blocks_resume(completed_run, monkeypatch):
     original = {
-        name: (completed_run / name).read_bytes()
-        for name in ("report.html", "integrated.h5ad", "annotated.h5ad")
+        name: (completed_run / name).read_bytes() for name in ("report.html", "integrated.h5ad", "annotated.h5ad")
     }
     replace = steps.os.replace
     moves = []
@@ -330,25 +365,37 @@ def test_completed_integration_allows_external_annotation_report(completed_run, 
     monkeypatch.setattr(integrate.sc.pp, "neighbors", lambda *args, **kwargs: None)
     monkeypatch.setattr(integrate.sc.tl, "leiden", leiden)
     monkeypatch.setattr(integrate.sc.tl, "umap", umap)
-    monkeypatch.setattr(integrate, "PCA", lambda **kwargs: SimpleNamespace(
-        fit_transform=lambda x: np.zeros((len(x), kwargs["n_components"]))
-    ))
+    monkeypatch.setattr(
+        integrate,
+        "PCA",
+        lambda **kwargs: SimpleNamespace(fit_transform=lambda x: np.zeros((len(x), kwargs["n_components"]))),
+    )
     data.obs["batch"] = "A"  # One batch takes the existing Harmony skip branch.
     # Isolate numerical libraries from this filesystem recovery test.
     monkeypatch.setitem(sys.modules, "harmonypy", SimpleNamespace())
-    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
-        cuda=SimpleNamespace(is_available=lambda: False), backends=SimpleNamespace(mps=None)
-    ))
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False), backends=SimpleNamespace(mps=None)),
+    )
     partition = SimpleNamespace(
         labels=pd.DataFrame({"subcluster": ["c0_0"] * data.n_obs}, index=data.obs_names),
-        fragments=pd.DataFrame({"subcluster": ["c0_0"]}), overlap=pd.DataFrame(),
+        fragments=pd.DataFrame({"subcluster": ["c0_0"]}),
+        overlap=pd.DataFrame(),
     )
-    monkeypatch.setitem(sys.modules, "standissect_lite", SimpleNamespace(
-        dissect_partition=lambda *args, **kwargs: partition
-    ))
-    for name in ("_minor_sibling_qc", "_cell_level_outliers", "_leiden_cluster_qc_violins",
-                 "_preannotation_removal_umap", "_cluster_annotations", "save_single_umap",
-                 "_qc_outputs", "_fractal_marker_heatmap"):
+    monkeypatch.setitem(
+        sys.modules, "standissect_lite", SimpleNamespace(dissect_partition=lambda *args, **kwargs: partition)
+    )
+    for name in (
+        "_minor_sibling_qc",
+        "_cell_level_outliers",
+        "_leiden_cluster_qc_violins",
+        "_preannotation_removal_umap",
+        "_cluster_annotations",
+        "save_single_umap",
+        "_qc_outputs",
+        "_fractal_marker_heatmap",
+    ):
         monkeypatch.setattr(integrate, name, lambda *args, **kwargs: None)
     monkeypatch.setattr(integrate, "_build_removal_mask", lambda *args: np.zeros(data.n_obs, dtype=bool))
 

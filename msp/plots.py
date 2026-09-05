@@ -13,11 +13,12 @@ from __future__ import annotations
 import re
 
 import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import textwrap
 
 import matplotlib.patheffects as pe
+import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
@@ -75,18 +76,34 @@ def _repel_on_data_labels(ad, color_col, ax, fontsize=12, fontweight="bold"):
         cat = str(cat)
         m = (lab == cat).values
         cx, cy = float(xy[m, 0].mean()), float(xy[m, 1].mean())
-        wrapped = ("\n".join(textwrap.wrap(cat, width=14, break_long_words=False,
-                                          break_on_hyphens=False))
-                  if len(cat) > 14 else cat)
-        texts.append(ax.text(cx, cy, wrapped, fontsize=fontsize, fontweight=fontweight,
-                             ha="center", va="center",
-                             path_effects=[pe.withStroke(linewidth=3, foreground="white")]))
-    adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="#888888", lw=0.7),
-               expand=(1.2, 1.4), force_text=(0.5, 0.7), max_move=200)
+        wrapped = (
+            "\n".join(textwrap.wrap(cat, width=14, break_long_words=False, break_on_hyphens=False))
+            if len(cat) > 14
+            else cat
+        )
+        texts.append(
+            ax.text(
+                cx,
+                cy,
+                wrapped,
+                fontsize=fontsize,
+                fontweight=fontweight,
+                ha="center",
+                va="center",
+                path_effects=[pe.withStroke(linewidth=3, foreground="white")],
+            )
+        )
+    adjust_text(
+        texts,
+        ax=ax,
+        arrowprops=dict(arrowstyle="-", color="#888888", lw=0.7),
+        expand=(1.2, 1.4),
+        force_text=(0.5, 0.7),
+        max_move=200,
+    )
 
 
-def save_single_umap(ad, color_col, out_path, repel=False, repel_fontsize=12,
-                     figsize=None, **kwargs):
+def save_single_umap(ad, color_col, out_path, repel=False, repel_fontsize=12, figsize=None, **kwargs):
     """One UMAP colored by one column, saved to its own file (osp's
     _save_single_umap conventions verbatim). repel=True: draw with no
     scanpy legend and place collision-free on-data labels via adjustText
@@ -123,13 +140,11 @@ def save_single_umap(ad, color_col, out_path, repel=False, repel_fontsize=12,
         # nothing is clipped — bbox_to_anchor is axes-relative, so it tracks
         # the axes automatically once the figure is resized
         fig.canvas.draw()
-        bbox_in = legend.get_window_extent(fig.canvas.get_renderer()) \
-            .transformed(fig.dpi_scale_trans.inverted())
+        bbox_in = legend.get_window_extent(fig.canvas.get_renderer()).transformed(fig.dpi_scale_trans.inverted())
         needed_w = _LEFT_IN + _AXES_W_IN + bbox_in.width + 0.25
         if needed_w > fig.get_figwidth():
             fig.set_size_inches(needed_w, fig.get_figheight())
-            ax.set_position([_LEFT_IN / needed_w, UMAP_AXES_RECT[1],
-                             _AXES_W_IN / needed_w, UMAP_AXES_RECT[3]])
+            ax.set_position([_LEFT_IN / needed_w, UMAP_AXES_RECT[1], _AXES_W_IN / needed_w, UMAP_AXES_RECT[3]])
 
     fig.savefig(out_path, dpi=UMAP_DPI)
     plt.close(fig)

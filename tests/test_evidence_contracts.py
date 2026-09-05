@@ -19,29 +19,49 @@ from msp.steps import step_pending
 
 
 def data_with_clusters(labels=("0", "1")):
-    data = ad.AnnData(np.ones((len(labels), 2)), obs=pd.DataFrame({
-        "batch": pd.Categorical(["A"] * len(labels)),
-        annotate.BASE_KEY: pd.Categorical(labels),
-        annotate.PARENT_KEY: pd.Categorical(["0"] * len(labels)),
-        "doublet_score": np.linspace(0, 1, len(labels)),
-    }, index=[f"cell{i}" for i in range(len(labels))]))
+    data = ad.AnnData(
+        np.ones((len(labels), 2)),
+        obs=pd.DataFrame(
+            {
+                "batch": pd.Categorical(["A"] * len(labels)),
+                annotate.BASE_KEY: pd.Categorical(labels),
+                annotate.PARENT_KEY: pd.Categorical(["0"] * len(labels)),
+                "doublet_score": np.linspace(0, 1, len(labels)),
+            },
+            index=[f"cell{i}" for i in range(len(labels))],
+        ),
+    )
     data.obsm["X_umap"] = np.arange(len(labels) * 2).reshape(-1, 2).astype(float)
     data.uns["msp"] = {"batch_col": "batch"}
     return data
 
 
 def inspection_entry(cluster="0"):
-    return {"cluster": cluster, "verdict": "real", "action": "keep", "confidence": "medium",
-            "tests": dict.fromkeys(("markers", "qc", "composition", "geometry", "stability"),
-                                   "Evidence unavailable in this synthetic fixture; retain for review."),
-            "rationale": "Synthetic fixture for host validation."}
+    return {
+        "cluster": cluster,
+        "verdict": "real",
+        "action": "keep",
+        "confidence": "medium",
+        "tests": dict.fromkeys(
+            ("markers", "qc", "composition", "geometry", "stability"),
+            "Evidence unavailable in this synthetic fixture; retain for review.",
+        ),
+        "rationale": "Synthetic fixture for host validation.",
+    }
 
 
 def annotation_entry(cluster="0", **updates):
-    return {"cluster_id": cluster, "coarse_label": "Immune", "fine_label": f"Type {cluster}",
-            "merge_target": None, "action": "keep", "confidence": "low",
-            "evidence": dict.fromkeys(("distinctness", "markers", "merge"), "Insufficient evidence; defer."),
-            "rationale": "Retain this uncertain population for review.", **updates}
+    return {
+        "cluster_id": cluster,
+        "coarse_label": "Immune",
+        "fine_label": f"Type {cluster}",
+        "merge_target": None,
+        "action": "keep",
+        "confidence": "low",
+        "evidence": dict.fromkeys(("distinctness", "markers", "merge"), "Insufficient evidence; defer."),
+        "rationale": "Retain this uncertain population for review.",
+        **updates,
+    }
 
 
 def test_merge_preserves_partial_metadata_counts_and_h5ad_roundtrip(tmp_path):
@@ -109,9 +129,16 @@ def test_minor_fragment_qc_uses_only_available_measurements():
 
 def test_filtered_deg_cache_falls_back_once_then_reuses_complete_table(tmp_path, monkeypatch):
     data = data_with_clusters()
-    frame = pd.DataFrame({"group": ["0"] * 60, "names": [f"G{i}" for i in range(60)],
-                          "logfoldchanges": [0.1] * 50 + [3.0] * 10,
-                          "pvals_adj": [0.01] * 60, "pct1": [0.9] * 60, "pct2": [0.1] * 60})
+    frame = pd.DataFrame(
+        {
+            "group": ["0"] * 60,
+            "names": [f"G{i}" for i in range(60)],
+            "logfoldchanges": [0.1] * 50 + [3.0] * 10,
+            "pvals_adj": [0.01] * 60,
+            "pct1": [0.9] * 60,
+            "pct2": [0.1] * 60,
+        }
+    )
     frame.iloc[:50].to_csv(tmp_path / f"deg_global_{annotate.BASE_KEY}.csv", index=False)
     calls = []
 
@@ -130,10 +157,15 @@ def test_filtered_deg_cache_falls_back_once_then_reuses_complete_table(tmp_path,
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("reference,expected", [
-    ("5,1", ("5,1",)), ('"5,0","5,1"', ("5,0", "5,1")),
-    ("1,2", ("1", "2")), ("rest", "rest"),
-])
+@pytest.mark.parametrize(
+    "reference,expected",
+    [
+        ("5,1", ("5,1",)),
+        ('"5,0","5,1"', ("5,0", "5,1")),
+        ("1,2", ("1", "2")),
+        ("rest", "rest"),
+    ],
+)
 def test_reference_preserves_subcluster_ids(reference, expected):
     assert inspect._parse_reference(reference, ["1", "2", "5", "5,0", "5,1"]) == expected
 
@@ -145,33 +177,62 @@ def test_ambiguous_reference_requests_quoted_ids():
         inspect._parse_reference("missing", ["0"])
 
 
-@pytest.mark.parametrize("field,value", [
-    ("confidence", "certain"), ("tests", None), ("tests", dict.fromkeys(
-        ("markers", "qc", "composition", "geometry", "stability"))),
-    ("rationale", " "), ("cluster", "unknown"), ("cluster", []),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("confidence", "certain"),
+        ("tests", None),
+        ("tests", dict.fromkeys(("markers", "qc", "composition", "geometry", "stability"))),
+        ("rationale", " "),
+        ("cluster", "unknown"),
+        ("cluster", []),
+    ],
+)
 def test_inspection_rejects_invalid_evidence(field, value):
     entry = inspection_entry()
     entry[field] = value
     assert inspect._validate_proposal({"clusters": [entry]}, ["0"], data_with_clusters().obs)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("metric", []), ("op", {}), ("value", float("nan")), ("value", float("inf")),
-    ("value", True), ("value", None), ("reason", None), ("note", ""),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("metric", []),
+        ("op", {}),
+        ("value", float("nan")),
+        ("value", float("inf")),
+        ("value", True),
+        ("value", None),
+        ("reason", None),
+        ("note", ""),
+    ],
+)
 def test_cell_rules_return_errors_instead_of_raising(field, value):
-    rule = {"cluster": "0", "metric": "doublet_score", "op": ">", "value": 0.5,
-            "action": "drop", "reason": "doublet", "note": "High score with mixed markers."}
+    rule = {
+        "cluster": "0",
+        "metric": "doublet_score",
+        "op": ">",
+        "value": 0.5,
+        "action": "drop",
+        "reason": "doublet",
+        "note": "High score with mixed markers.",
+    }
     rule[field] = value
-    assert inspect._validate_proposal({"clusters": [inspection_entry()], "cell_actions": [rule]},
-                                      ["0"], data_with_clusters().obs)
+    assert inspect._validate_proposal(
+        {"clusters": [inspection_entry()], "cell_actions": [rule]}, ["0"], data_with_clusters().obs
+    )
 
 
-@pytest.mark.parametrize("field,value", [
-    ("evidence", {"distinctness": None, "markers": None, "merge": None}),
-    ("rationale", None), ("rationale", []), ("merge_target", {}), ("confidence", []),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("evidence", {"distinctness": None, "markers": None, "merge": None}),
+        ("rationale", None),
+        ("rationale", []),
+        ("merge_target", {}),
+        ("confidence", []),
+    ],
+)
 def test_annotation_rejects_empty_or_malformed_evidence(field, value):
     entry = annotation_entry(**{field: value})
     assert annotate._validate_cluster(entry, ["0"])
@@ -188,8 +249,10 @@ def test_merge_and_drop_defenses_remain_enforced():
     entries["0"].update(action="remove", remove_reason="other")
     assert any("action=remove" in p for p in annotate._validate_final(entries, ["0", "1"]))
     data = data_with_clusters()
-    proposal = {"clusters": [inspection_entry("0"), inspection_entry("1")], "cell_actions": [
-        {"cluster": "0", "action": "flag", "metric": "doublet_score", "op": ">=", "value": 0}]}
+    proposal = {
+        "clusters": [inspection_entry("0"), inspection_entry("1")],
+        "cell_actions": [{"cluster": "0", "action": "flag", "metric": "doublet_score", "op": ">=", "value": 0}],
+    }
     proposal["clusters"][0]["action"] = "drop"
     inspect._apply_proposal(data, annotate.BASE_KEY, proposal)
     assert data.obs["_msp_action"].tolist() == ["drop", "keep"]
@@ -199,8 +262,7 @@ def test_inspection_tool_allows_correction_and_subcluster_reference(tmp_path, mo
     data = data_with_clusters(("5,0", "5,1"))
     proposal = {"clusters": [inspection_entry(c) for c in ("5,0", "5,1")]}
     refs = []
-    frame = pd.DataFrame({"names": ["G"], "logfoldchanges": [2.0], "pvals_adj": [0.01],
-                          "pct1": [0.9], "pct2": [0.1]})
+    frame = pd.DataFrame({"names": ["G"], "logfoldchanges": [2.0], "pvals_adj": [0.01], "pct1": [0.9], "pct2": [0.1]})
 
     def compute(data, key, cluster, reference, mask):
         refs.append(reference)
@@ -220,8 +282,21 @@ def test_inspection_tool_allows_correction_and_subcluster_reference(tmp_path, mo
 
     monkeypatch.setattr(inspect, "_deg_frame", compute)
     monkeypatch.setattr(harness, "run_agent", run_agent)
-    result = asyncio.run(inspect._run_agent(data, tmp_path, annotate.BASE_KEY, [], "batch", None,
-                         "English", "test-model", None, 10, np.zeros(2, dtype=bool)))
+    result = asyncio.run(
+        inspect._run_agent(
+            data,
+            tmp_path,
+            annotate.BASE_KEY,
+            [],
+            "batch",
+            None,
+            "English",
+            "test-model",
+            None,
+            10,
+            np.zeros(2, dtype=bool),
+        )
+    )
     assert len(result["clusters"]) == 2
     assert refs == [("5,1",)]
 
@@ -258,13 +333,26 @@ def test_all_removed_annotation_delivers_empty_h5ad_and_real_plots(tmp_path, mon
 def test_report_renders_inspection_evidence_and_escapes_model_text(tmp_path):
     entry = inspection_entry()
     entry["tests"]["markers"] = "<script>not executable</script>"
-    proposal = {"clusters": [entry], "overall": "Review required", "cell_actions": [
-        {"cluster": "0", "metric": "doublet_score", "op": ">", "value": 0.5,
-         "action": "drop", "reason": "doublet", "note": "mixed markers"}]}
+    proposal = {
+        "clusters": [entry],
+        "overall": "Review required",
+        "cell_actions": [
+            {
+                "cluster": "0",
+                "metric": "doublet_score",
+                "op": ">",
+                "value": 0.5,
+                "action": "drop",
+                "reason": "doublet",
+                "note": "mixed markers",
+            }
+        ],
+    }
     (tmp_path / "inspection_proposal.json").write_text(json.dumps(proposal))
     (tmp_path / "inspection_notes.md").write_text("<b>Detailed inspection notes</b>")
     report = generate_report(tmp_path)
     from pathlib import Path
+
     text = Path(report).read_text()
     assert 'href="#inspection"' in text and "Five-test evidence" in text
     assert "Cell-level action rules" in text and "mixed markers" in text

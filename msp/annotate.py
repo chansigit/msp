@@ -43,16 +43,24 @@ import os
 import sys
 
 import matplotlib
+
 matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
 import scanpy as sc
 
-from .inspect import (  # _load_paga_neighbors re-exported for zmip
-    _DEG_SQL_DOC, _DEG_TOOL_DOC, DegCache, DegTables, _cluster_order, _file_inventory, _gene_table,
-    _load_paga_neighbors, _load_removal_mask,
-)
 from .harness import AgentIncompleteError, default_model
+from .inspect import (  # _load_paga_neighbors re-exported for zmip
+    _DEG_SQL_DOC,
+    _DEG_TOOL_DOC,
+    DegCache,
+    DegTables,
+    _cluster_order,
+    _file_inventory,
+    _gene_table,
+    _load_paga_neighbors,
+    _load_removal_mask,
+)
 from .report import generate_report
 from .steps import begin_step, complete_step, require_upstream_ready
 
@@ -65,6 +73,7 @@ _STANHUE_DIR = os.path.expanduser("~/.claude/skills/stanhue/scripts")
 
 # ---------------------------------------------------------------- evidence
 
+
 def _prior_label_columns(ad, batch_col):
     """obs columns that look like categorical cell labels shipped with the
     data (author annotations, osp's _ann_coarse/_ann_fine). Detected, not
@@ -73,9 +82,20 @@ def _prior_label_columns(ad, batch_col):
     columns), (ii) boolean-like, or (iii) a sample-identity column (every
     level lives in exactly one sample and there are no more levels than
     samples — 'orig.ident', 'project', 'source_unit' and friends)."""
-    deny_prefix = ("msp_", "_msp", "leiden", "qc_", "_qc", "inspect_", "standissect",
-                   "decontX_clusters", "predicted_doublet", "low_quality", "original_cluster",
-                   "recommended_disposition")
+    deny_prefix = (
+        "msp_",
+        "_msp",
+        "leiden",
+        "qc_",
+        "_qc",
+        "inspect_",
+        "standissect",
+        "decontX_clusters",
+        "predicted_doublet",
+        "low_quality",
+        "original_cluster",
+        "recommended_disposition",
+    )
     n_batches = ad.obs[batch_col].nunique()
     out = []
     for c in ad.obs.columns:
@@ -109,18 +129,24 @@ def _cluster_context(ad, cluster, batch_col, prior_cols, paga, pre_agent_removed
         return f"unknown cluster {cluster!r}"
     sub = ad.obs.loc[m]
     n = int(m.sum())
-    lines = [f"cluster {cluster} ({BASE_KEY}): n={n} cells, "
-             f"{int(pre_agent_removed[m].sum())} ({100 * pre_agent_removed[m].mean():.1f}%) already slated for "
-             "removal before this step (preannotation filtering ∪ inspect drop)"]
+    lines = [
+        f"cluster {cluster} ({BASE_KEY}): n={n} cells, "
+        f"{int(pre_agent_removed[m].sum())} ({100 * pre_agent_removed[m].mean():.1f}%) already slated for "
+        "removal before this step (preannotation filtering ∪ inspect drop)"
+    ]
     if PARENT_KEY in ad.obs:
         par = sub[PARENT_KEY].astype(str).value_counts()
-        lines.append(f"  {PARENT_KEY} parent composition: " +
-                     ", ".join(f"{i}:{v} ({100 * v / n:.0f}%)" for i, v in par.head(5).items()))
+        lines.append(
+            f"  {PARENT_KEY} parent composition: "
+            + ", ".join(f"{i}:{v} ({100 * v / n:.0f}%)" for i, v in par.head(5).items())
+        )
         main_parent = par.index[0]
         sib = ad.obs.loc[(ad.obs[PARENT_KEY].astype(str) == main_parent).values, BASE_KEY].astype(str).value_counts()
         sib = sib.drop(cluster, errors="ignore")
-        lines.append(f"  siblings under parent {main_parent} ({BASE_KEY}): " +
-                     (", ".join(f"{i}:{v}" for i, v in sib.items()) if len(sib) else "none — this cluster IS the parent"))
+        lines.append(
+            f"  siblings under parent {main_parent} ({BASE_KEY}): "
+            + (", ".join(f"{i}:{v}" for i, v in sib.items()) if len(sib) else "none — this cluster IS the parent")
+        )
     if cluster in paga:
         lines.append(f"  PAGA nearest neighbours ({BASE_KEY}): {', '.join(paga[cluster])}")
     if tables is not None:
@@ -128,17 +154,34 @@ def _cluster_context(ad, cluster, batch_col, prior_cols, paga, pre_agent_removed
         if mk:
             lines.append(mk)
     vc = sub[batch_col].value_counts(normalize=True)
-    lines.append(f"  samples: {sub[batch_col].nunique()}/{ad.obs[batch_col].nunique()} present, "
-                 f"dominant sample share {vc.iloc[0]:.2f} ({vc.index[0]})")
-    qc = [c for c in ("doublet_score", "decontX_contamination", "pct_counts_mt", "n_genes_by_counts",
-                      "total_counts", "dissociation_score") if c in ad.obs]
+    lines.append(
+        f"  samples: {sub[batch_col].nunique()}/{ad.obs[batch_col].nunique()} present, "
+        f"dominant sample share {vc.iloc[0]:.2f} ({vc.index[0]})"
+    )
+    qc = [
+        c
+        for c in (
+            "doublet_score",
+            "decontX_contamination",
+            "pct_counts_mt",
+            "n_genes_by_counts",
+            "total_counts",
+            "dissociation_score",
+        )
+        if c in ad.obs
+    ]
     lines.append("  QC medians: " + ", ".join(f"{c}={sub[c].median():.3g}" for c in qc))
-    for col, name in (("_msp_verdict", "inspect verdict"), ("_msp_action", "inspect action"),
-                      ("_qc_action", "osp per-sample qc action")):
+    for col, name in (
+        ("_msp_verdict", "inspect verdict"),
+        ("_msp_action", "inspect action"),
+        ("_qc_action", "osp per-sample qc action"),
+    ):
         if col in ad.obs:
             cc = sub[col].dropna().astype(str).value_counts(normalize=True)
-            lines.append(f"  {name} composition (observed cells; {sub[col].isna().sum()} missing): "
-                         + (", ".join(f"{i}:{v:.2f}" for i, v in cc.items()) or "unavailable"))
+            lines.append(
+                f"  {name} composition (observed cells; {sub[col].isna().sum()} missing): "
+                + (", ".join(f"{i}:{v:.2f}" for i, v in cc.items()) or "unavailable")
+            )
     if prior_cols:
         lines.append("  prior label compositions (reference only, NOT ground truth; top 5 per column):")
         for c in prior_cols:
@@ -175,8 +218,16 @@ def _validate_cluster(e, clusters):
     problems = []
     if not isinstance(e, dict):
         return [f"cluster entry must be an object: {e!r}"]
-    for k in ("cluster_id", "coarse_label", "fine_label", "merge_target", "action", "confidence",
-              "evidence", "rationale"):
+    for k in (
+        "cluster_id",
+        "coarse_label",
+        "fine_label",
+        "merge_target",
+        "action",
+        "confidence",
+        "evidence",
+        "rationale",
+    ):
         if k not in e:
             problems.append(f"missing field {k!r}")
     if problems:
@@ -202,9 +253,12 @@ def _validate_cluster(e, clusters):
             problems.append("merge_target cannot be the cluster itself")
     ev = e["evidence"]
     if not isinstance(ev, dict) or not all(
-            isinstance(ev.get(k), str) and ev[k].strip() for k in ("distinctness", "markers", "merge")):
-        problems.append("evidence must provide non-empty text for distinctness / markers / merge; "
-                        "explain unavailable evidence explicitly")
+        isinstance(ev.get(k), str) and ev[k].strip() for k in ("distinctness", "markers", "merge")
+    ):
+        problems.append(
+            "evidence must provide non-empty text for distinctness / markers / merge; "
+            "explain unavailable evidence explicitly"
+        )
     if not isinstance(e["rationale"], str) or not e["rationale"].strip():
         problems.append("rationale must be non-empty text")
     return problems
@@ -259,8 +313,10 @@ def _validate_final(entries, clusters):
         mt = str(mt)
         tgt = entries[mt]
         if tgt["action"] == "remove" and e["action"] != "remove":
-            problems.append(f"cluster {c} merges into {mt}, but {mt} is action=remove — either remove {c} too "
-                            f"or drop the merge_target")
+            problems.append(
+                f"cluster {c} merges into {mt}, but {mt} is action=remove — either remove {c} too "
+                f"or drop the merge_target"
+            )
     comp = _components(entries)
     seen = set()
     for c, members in comp.items():
@@ -272,9 +328,11 @@ def _validate_final(entries, clusters):
         for field in ("coarse_label", "fine_label"):
             vals = {entries[m][field].strip() for m in kept}
             if len(vals) > 1:
-                problems.append(f"merged group {'+'.join(members)} disagrees on {field}: "
-                                + "; ".join(f"{m}={entries[m][field]!r}" for m in kept)
-                                + " — resubmit them with one shared label")
+                problems.append(
+                    f"merged group {'+'.join(members)} disagrees on {field}: "
+                    + "; ".join(f"{m}={entries[m][field]!r}" for m in kept)
+                    + " — resubmit them with one shared label"
+                )
     # one fine label ↔ one coarse label, and fine-label equality == merge
     by_fine = {}
     for c, e in entries.items():
@@ -284,16 +342,21 @@ def _validate_final(entries, clusters):
     for fine, members in by_fine.items():
         coarse = {entries[m]["coarse_label"].strip() for m in members}
         if len(coarse) > 1:
-            problems.append(f"fine label {fine!r} sits under several coarse labels {sorted(coarse)} "
-                            f"(clusters {members}) — one fine label belongs to exactly one coarse label")
+            problems.append(
+                f"fine label {fine!r} sits under several coarse labels {sorted(coarse)} "
+                f"(clusters {members}) — one fine label belongs to exactly one coarse label"
+            )
         comps = {tuple(comp[m]) for m in members}
         if len(comps) > 1:
-            problems.append(f"clusters {members} share fine label {fine!r} but are not merged — either "
-                            "set merge_target between them (same population) or give them distinct fine labels")
+            problems.append(
+                f"clusters {members} share fine label {fine!r} but are not merged — either "
+                "set merge_target between them (same population) or give them distinct fine labels"
+            )
     return problems
 
 
 # ---------------------------------------------------------------- apply
+
 
 def _apply(ad, proposal, pre_removed, pre_sources):
     """obs columns on the FULL object: msp_ann_cluster (merged id, members
@@ -310,11 +373,17 @@ def _apply(ad, proposal, pre_removed, pre_sources):
     agent_remove = base.isin([c for c, e in entries.items() if e["action"] == "remove"]).values
     removed = pre_removed | agent_remove
     ad.obs["msp_ann_action"] = pd.Categorical(np.where(removed, "remove", "keep"), categories=["keep", "remove"])
-    archive = pd.DataFrame({"cell": ad.obs_names, BASE_KEY: base.values,
-                            **{k: v for k, v in pre_sources.items()},
-                            "annotate_remove": agent_remove,
-                            "remove_reason": base.map({c: e.get("remove_reason") for c, e in entries.items()
-                                                       if e["action"] == "remove"}).values})
+    archive = pd.DataFrame(
+        {
+            "cell": ad.obs_names,
+            BASE_KEY: base.values,
+            **{k: v for k, v in pre_sources.items()},
+            "annotate_remove": agent_remove,
+            "remove_reason": base.map(
+                {c: e.get("remove_reason") for c, e in entries.items() if e["action"] == "remove"}
+            ).values,
+        }
+    )
     return archive.loc[removed].reset_index(drop=True)
 
 
@@ -332,18 +401,17 @@ def _palette(ad, col):
 
 
 def _plot(ad_full, ad_kept, figdir):
-    from .plots import UMAP_DPI, save_single_umap, umap_axes
     import matplotlib.pyplot as plt
 
+    from .plots import UMAP_DPI, save_single_umap, umap_axes
+
     os.makedirs(figdir, exist_ok=True)
-    for col, fname in (("msp_ann_coarse", "annotation_umap_coarse.png"),
-                       ("msp_ann_fine", "annotation_umap_fine.png")):
+    for col, fname in (("msp_ann_coarse", "annotation_umap_coarse.png"), ("msp_ann_fine", "annotation_umap_fine.png")):
         ad_kept.obs[col] = ad_kept.obs[col].cat.remove_unused_categories()
         if ad_kept.n_obs == 0:
             # Preserve the usual figure files and full-run coordinate scale.
             fig, ax = umap_axes(ad_full)
-            ax.text(0.5, 0.5, "No cells retained after annotation", ha="center", va="center",
-                    transform=ax.transAxes)
+            ax.text(0.5, 0.5, "No cells retained after annotation", ha="center", va="center", transform=ax.transAxes)
             ax.set_title(f"UMAP: {col} (0 cells)")
             fig.savefig(os.path.join(figdir, fname), dpi=UMAP_DPI)
             plt.close(fig)
@@ -352,9 +420,14 @@ def _plot(ad_full, ad_kept, figdir):
         if pal:
             ad_kept.uns[f"{col}_colors"] = pal
         n = ad_kept.obs[col].nunique()
-        save_single_umap(ad_kept, col, os.path.join(figdir, fname), repel=True,
-                         repel_fontsize=9 if n > 15 else 11,
-                         figsize=(9, 9) if n > 15 else None)
+        save_single_umap(
+            ad_kept,
+            col,
+            os.path.join(figdir, fname),
+            repel=True,
+            repel_fontsize=9 if n > 15 else 11,
+            figsize=(9, 9) if n > 15 else None,
+        )
 
     xy = np.asarray(ad_full.obsm["X_umap"])
     act = ad_full.obs["msp_ann_action"].astype(str).values
@@ -372,15 +445,21 @@ def _plot(ad_full, ad_kept, figdir):
 
 # ---------------------------------------------------------------- agent
 
+
 def _system_prompt(outdir, clusters, batch_col, species, prior_cols, language, n_batches=None):
-    context = (f"Context — species: {species}." if species else
-               "No species context was provided — infer cautiously and say so.")
+    context = (
+        f"Context — species: {species}."
+        if species
+        else "No species context was provided — infer cautiously and say so."
+    )
     context += f" Sample/batch column: {batch_col!r}."
     if n_batches is not None and n_batches < 2:
-        context += (" THIS DATASET HAS A SINGLE SAMPLE (harmony was skipped): the per-cluster sample lines are "
-                    "trivially 1/1 present, share 1.00 — never use sample composition as evidence for or against "
-                    "an identity, a merge or a removal; rely on markers, QC axes, PAGA neighbourhood and priors.")
-    priors = (", ".join(prior_cols) if prior_cols else "none detected")
+        context += (
+            " THIS DATASET HAS A SINGLE SAMPLE (harmony was skipped): the per-cluster sample lines are "
+            "trivially 1/1 present, share 1.00 — never use sample composition as evidence for or against "
+            "an identity, a merge or a removal; rely on markers, QC axes, PAGA neighbourhood and priors."
+        )
+    priors = ", ".join(prior_cols) if prior_cols else "none detected"
     return f"""You are a single-cell RNA-seq cell-type annotation expert. The working directory is an \
 msp (multi-sample pipeline) integration output that has already been through per-cluster QC \
 inspection. Task: annotate EVERY cluster of the base clustering {BASE_KEY} \
@@ -451,8 +530,9 @@ contamination (decontX evidence exists for that). Respect the inspection verdict
 dedicated QC pass; you annotate identity and decide merges."""
 
 
-async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga, pre_agent_removed,
-                     language, model, effort, max_turns):
+async def _run_agent(
+    ad, outdir, clusters, batch_col, species, prior_cols, paga, pre_agent_removed, language, model, effort, max_turns
+):
     from .harness import ToolSpec, run_agent
 
     entries = {}
@@ -461,15 +541,36 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
     print(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}", flush=True)
 
     async def cluster_context(args):
-        return {"content": [{"type": "text",
-                             "text": _cluster_context(ad, str(args["cluster"]), batch_col, prior_cols, paga,
-                                                      pre_agent_removed, tables)}]}
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": _cluster_context(
+                        ad, str(args["cluster"]), batch_col, prior_cols, paga, pre_agent_removed, tables
+                    ),
+                }
+            ]
+        }
 
     async def deg_lookup(args):
-        return {"content": [{"type": "text", "text": tables.lookup(
-            args.get("cluster", ""), args.get("gene", ""), args.get("view", "both"), args.get("key", ""),
-            args.get("top_n") or 20, args.get("min_logfc"), args.get("max_padj"), args.get("min_pct1"),
-            args.get("max_pct2"))}]}
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": tables.lookup(
+                        args.get("cluster", ""),
+                        args.get("gene", ""),
+                        args.get("view", "both"),
+                        args.get("key", ""),
+                        args.get("top_n") or 20,
+                        args.get("min_logfc"),
+                        args.get("max_padj"),
+                        args.get("min_pct1"),
+                        args.get("max_pct2"),
+                    ),
+                }
+            ]
+        }
 
     async def deg_sql(args):
         return {"content": [{"type": "text", "text": tables.sql(args.get("query", ""))}]}
@@ -485,8 +586,10 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
 
         c = str(args["cluster"])
         if c not in clusters:
-            return {"content": [{"type": "text", "text": f"unknown cluster {c!r}; base clusters: {clusters}"}],
-                    "is_error": True}
+            return {
+                "content": [{"type": "text", "text": f"unknown cluster {c!r}; base clusters: {clusters}"}],
+                "is_error": True,
+            }
         reference = str(args.get("reference") or "rest").strip() or "rest"
         try:
             ref = _parse_reference(reference, clusters)
@@ -494,87 +597,162 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
                 raise ValueError("reference must exclude the target cluster")
         except ValueError as exc:
             return {"content": [{"type": "text", "text": str(exc)}], "is_error": True}
-        return {"content": [{"type": "text", "text": deg.table(
-            BASE_KEY, c, reference, int(args.get("top_n") or 20), args.get("min_logfc"), args.get("max_padj"),
-            args.get("min_pct1"), args.get("max_pct2"))}]}
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": deg.table(
+                        BASE_KEY,
+                        c,
+                        reference,
+                        int(args.get("top_n") or 20),
+                        args.get("min_logfc"),
+                        args.get("max_padj"),
+                        args.get("min_pct1"),
+                        args.get("max_pct2"),
+                    ),
+                }
+            ]
+        }
 
     async def submit_cluster(args):
         try:
             e = json.loads(args["cluster_json"])
         except (json.JSONDecodeError, TypeError) as exc:
-            return {"content": [{"type": "text", "text": f"JSON parse error, fix and resubmit: {exc}"}],
-                    "is_error": True}
+            return {
+                "content": [{"type": "text", "text": f"JSON parse error, fix and resubmit: {exc}"}],
+                "is_error": True,
+            }
         problems = _validate_cluster(e, clusters)
         if problems:
-            return {"content": [{"type": "text", "text": "invalid, fix and resubmit:\n- " + "\n- ".join(problems)}],
-                    "is_error": True}
+            return {
+                "content": [{"type": "text", "text": "invalid, fix and resubmit:\n- " + "\n- ".join(problems)}],
+                "is_error": True,
+            }
         e["cluster_id"] = str(e["cluster_id"])
         if e["merge_target"] is not None:
             e["merge_target"] = str(e["merge_target"])
         entries[e["cluster_id"]] = e
         left = [c for c in clusters if c not in entries]
-        print(f"== submitted cluster {e['cluster_id']}: {e['coarse_label']} / {e['fine_label']} "
-              f"[{e['action']}{', merge→' + e['merge_target'] if e['merge_target'] else ''}]", flush=True)
-        return {"content": [{"type": "text",
-                             "text": f"recorded cluster {e['cluster_id']}; {len(entries)}/{len(clusters)} submitted"
-                                     + (f", remaining: {left}" if left else " — all covered, call finalize_annotation")}]}
+        print(
+            f"== submitted cluster {e['cluster_id']}: {e['coarse_label']} / {e['fine_label']} "
+            f"[{e['action']}{', merge→' + e['merge_target'] if e['merge_target'] else ''}]",
+            flush=True,
+        )
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"recorded cluster {e['cluster_id']}; {len(entries)}/{len(clusters)} submitted"
+                    + (f", remaining: {left}" if left else " — all covered, call finalize_annotation"),
+                }
+            ]
+        }
 
     async def finalize_annotation(args):
         problems = _validate_final(entries, clusters)
         if problems:
-            return {"content": [{"type": "text",
-                                 "text": "not final yet, fix and call again:\n- " + "\n- ".join(problems)}],
-                    "is_error": True}
+            return {
+                "content": [{"type": "text", "text": "not final yet, fix and call again:\n- " + "\n- ".join(problems)}],
+                "is_error": True,
+            }
         comp = _components(entries)
         groups = sorted({tuple(v) for v in comp.values() if len(v) > 1}, key=lambda t: float(t[0]))
-        proposal = {"cluster_key": BASE_KEY, "parent_key": PARENT_KEY,
-                    "clusters": [entries[c] for c in clusters],
-                    "merged_groups": ["+".join(g) for g in groups],
-                    "overall": str(args.get("overall") or "")}
+        proposal = {
+            "cluster_key": BASE_KEY,
+            "parent_key": PARENT_KEY,
+            "clusters": [entries[c] for c in clusters],
+            "merged_groups": ["+".join(g) for g in groups],
+            "overall": str(args.get("overall") or ""),
+        }
         path = os.path.join(outdir, "annotation_proposal.json")
         with open(path, "w") as fh:
             json.dump(proposal, fh, ensure_ascii=False, indent=2)
         return {"content": [{"type": "text", "text": f"accepted; saved to {path}"}], "_submitted": proposal}
 
     tools = [
-        ToolSpec("cluster_context",
-                 "Non-expression context for one base cluster: size, share already slated for removal, "
-                 "r1.0 parent composition and r2.0 siblings, PAGA neighbours, sample composition, QC "
-                 "medians, inspection verdict composition, prior label compositions.", {"cluster": str},
-                 cluster_context),
-        ToolSpec("deg_lookup", _DEG_TOOL_DOC,
-                 {"cluster": str, "gene": str, "view": str, "key": str, "top_n": int, "min_logfc": float, "max_padj": float, "min_pct1": float, "max_pct2": float}, deg_lookup),
+        ToolSpec(
+            "cluster_context",
+            "Non-expression context for one base cluster: size, share already slated for removal, "
+            "r1.0 parent composition and r2.0 siblings, PAGA neighbours, sample composition, QC "
+            "medians, inspection verdict composition, prior label compositions.",
+            {"cluster": str},
+            cluster_context,
+        ),
+        ToolSpec(
+            "deg_lookup",
+            _DEG_TOOL_DOC,
+            {
+                "cluster": str,
+                "gene": str,
+                "view": str,
+                "key": str,
+                "top_n": int,
+                "min_logfc": float,
+                "max_padj": float,
+                "min_pct1": float,
+                "max_pct2": float,
+            },
+            deg_lookup,
+        ),
         ToolSpec("deg_sql", _DEG_SQL_DOC, {"query": str}, deg_sql),
-        ToolSpec("check_genes",
-                 f"Per-{BASE_KEY}-cluster mean expression and expressing-cell fraction for the given genes "
-                 "(case-insensitive). Use to verify markers.", {"genes": list}, check_genes),
-        ToolSpec("check_deg",
-                 f"On-demand DEG (wilcoxon) for one {BASE_KEY} cluster. reference='rest' (default) is "
-                 "one-vs-rest (deg_global semantics); a comma-separated list of cluster ids is a pooled "
-                 "reference group (e.g. its siblings under the r1.0 parent, or one specific neighbour). "
-                 "Cells already slated for removal are excluded, like the precomputed tables. Thresholds "
-                 "(0/empty = off): min_logfc, max_padj, min_pct1, max_pct2 — ask for exactly the gene list you "
-                 "need. Cached per (cluster, reference); one-vs-rest and vs-the-3-PAGA-neighbours come from the "
-                 "precomputed tables.",
-                 {"cluster": str, "reference": str, "top_n": int, "min_logfc": float, "max_padj": float,
-                  "min_pct1": float, "max_pct2": float}, check_deg),
-        ToolSpec("submit_cluster",
-                 "Submit (or resubmit — last one wins) the annotation of ONE base cluster. cluster_json is a "
-                 "JSON string with this schema:\n" + _CLUSTER_SCHEMA_DOC, {"cluster_json": str}, submit_cluster),
-        ToolSpec("finalize_annotation",
-                 "Validate all submissions together (coverage, merge graph consistency, label hierarchy) "
-                 "and finish the run. overall is a short overall assessment of the dataset's populations.",
-                 {"overall": str}, finalize_annotation),
+        ToolSpec(
+            "check_genes",
+            f"Per-{BASE_KEY}-cluster mean expression and expressing-cell fraction for the given genes "
+            "(case-insensitive). Use to verify markers.",
+            {"genes": list},
+            check_genes,
+        ),
+        ToolSpec(
+            "check_deg",
+            f"On-demand DEG (wilcoxon) for one {BASE_KEY} cluster. reference='rest' (default) is "
+            "one-vs-rest (deg_global semantics); a comma-separated list of cluster ids is a pooled "
+            "reference group (e.g. its siblings under the r1.0 parent, or one specific neighbour). "
+            "Cells already slated for removal are excluded, like the precomputed tables. Thresholds "
+            "(0/empty = off): min_logfc, max_padj, min_pct1, max_pct2 — ask for exactly the gene list you "
+            "need. Cached per (cluster, reference); one-vs-rest and vs-the-3-PAGA-neighbours come from the "
+            "precomputed tables.",
+            {
+                "cluster": str,
+                "reference": str,
+                "top_n": int,
+                "min_logfc": float,
+                "max_padj": float,
+                "min_pct1": float,
+                "max_pct2": float,
+            },
+            check_deg,
+        ),
+        ToolSpec(
+            "submit_cluster",
+            "Submit (or resubmit — last one wins) the annotation of ONE base cluster. cluster_json is a "
+            "JSON string with this schema:\n" + _CLUSTER_SCHEMA_DOC,
+            {"cluster_json": str},
+            submit_cluster,
+        ),
+        ToolSpec(
+            "finalize_annotation",
+            "Validate all submissions together (coverage, merge graph consistency, label hierarchy) "
+            "and finish the run. overall is a short overall assessment of the dataset's populations.",
+            {"overall": str},
+            finalize_annotation,
+        ),
     ]
     try:
         result = await run_agent(
-            tools=tools, submit_tool="finalize_annotation",
+            tools=tools,
+            submit_tool="finalize_annotation",
             prompt="Annotate this msp integration directory following the workflow in the system prompt "
-                   "exactly: one Task per base cluster, submit_cluster for each, then finalize_annotation.",
-            system_prompt=_system_prompt(outdir, clusters, batch_col, species, prior_cols, language,
-                                         n_batches=int(ad.obs[batch_col].nunique())),
-            cwd=os.path.abspath(outdir), model=model, effort=effort, max_turns=max_turns,
-            allowed_builtin=("read", "glob", "grep", "tasks"), label="annotate",
+            "exactly: one Task per base cluster, submit_cluster for each, then finalize_annotation.",
+            system_prompt=_system_prompt(
+                outdir, clusters, batch_col, species, prior_cols, language, n_batches=int(ad.obs[batch_col].nunique())
+            ),
+            cwd=os.path.abspath(outdir),
+            model=model,
+            effort=effort,
+            max_turns=max_turns,
+            allowed_builtin=("read", "glob", "grep", "tasks"),
+            label="annotate",
             max_buffer_size=50_000_000,  # figure Reads exceed the 1MB default pipe buffer
         )
     except AgentIncompleteError as e:
@@ -586,6 +764,7 @@ async def _run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
 
 
 # ---------------------------------------------------------------- entry
+
 
 def annotate_clusters(outdir, species=None, language="English", model=None, effort=None, max_turns=200):
     """Run the annotation agent on an msp output directory (after msp.inspect).
@@ -612,25 +791,44 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     if "_msp_action" in ad.obs:
         pre_sources["inspect_drop"] = (ad.obs["_msp_action"].astype(str) == "drop").to_numpy()
     else:
-        print("== no obs['_msp_action'] — msp.inspect has not run; only preannotation removals inherited",
-              flush=True)
+        print("== no obs['_msp_action'] — msp.inspect has not run; only preannotation removals inherited", flush=True)
     pre_agent_removed = np.logical_or.reduce(list(pre_sources.values()))
-    print(f"== {int(pre_agent_removed.sum())}/{ad.n_obs} cells already slated for removal "
-          f"({', '.join(f'{k}={int(v.sum())}' for k, v in pre_sources.items())})", flush=True)
+    print(
+        f"== {int(pre_agent_removed.sum())}/{ad.n_obs} cells already slated for removal "
+        f"({', '.join(f'{k}={int(v.sum())}' for k, v in pre_sources.items())})",
+        flush=True,
+    )
 
     prior_cols = _prior_label_columns(ad, batch_col)
     print(f"== prior label columns detected: {prior_cols}", flush=True)
     paga = _load_paga_neighbors(outdir, BASE_KEY)
 
     begin_step(outdir, "annotate")
-    proposal = asyncio.run(_run_agent(ad, outdir, clusters, batch_col, species, prior_cols, paga,
-                                      pre_agent_removed, language, model or default_model(), effort, max_turns))
+    proposal = asyncio.run(
+        _run_agent(
+            ad,
+            outdir,
+            clusters,
+            batch_col,
+            species,
+            prior_cols,
+            paga,
+            pre_agent_removed,
+            language,
+            model or default_model(),
+            effort,
+            max_turns,
+        )
+    )
 
     archive = _apply(ad, proposal, pre_agent_removed, pre_sources)
     archive.to_csv(os.path.join(outdir, "annotation_removed.csv"), index=False)
     kept = ad[(ad.obs["msp_ann_action"] == "keep").values].copy()
-    print(f"== removed {len(archive)} cells (agent-marked clusters: "
-          f"{int(archive['annotate_remove'].sum())}); annotated.h5ad keeps {kept.n_obs}/{ad.n_obs}", flush=True)
+    print(
+        f"== removed {len(archive)} cells (agent-marked clusters: "
+        f"{int(archive['annotate_remove'].sum())}); annotated.h5ad keeps {kept.n_obs}/{ad.n_obs}",
+        flush=True,
+    )
     _plot(ad, kept, os.path.join(outdir, "figures"))
     tmp = os.path.join(outdir, "annotated.tmp.h5ad")
     kept.write_h5ad(tmp)
@@ -650,11 +848,19 @@ if __name__ == "__main__":
     parser.add_argument("--max-turns", type=int, default=200)
     args = parser.parse_args()
 
-    proposal = annotate_clusters(args.outdir, species=args.species, language=args.language,
-                                 model=args.model, effort=args.effort, max_turns=args.max_turns)
+    proposal = annotate_clusters(
+        args.outdir,
+        species=args.species,
+        language=args.language,
+        model=args.model,
+        effort=args.effort,
+        max_turns=args.max_turns,
+    )
     for e in proposal["clusters"]:
         tail = f" merge→{e['merge_target']}" if e["merge_target"] else ""
-        print(f"cluster {e['cluster_id']}: {e['coarse_label']} / {e['fine_label']} "
-              f"[{e['action']}, {e['confidence']}]{tail}")
+        print(
+            f"cluster {e['cluster_id']}: {e['coarse_label']} / {e['fine_label']} "
+            f"[{e['action']}, {e['confidence']}]{tail}"
+        )
     if proposal["merged_groups"]:
         print("merged groups: " + ", ".join(proposal["merged_groups"]))

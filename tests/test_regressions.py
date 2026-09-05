@@ -64,13 +64,13 @@ def test_cli_resume_after_h5ad_roundtrip(tmp_path, monkeypatch, harmony, metadat
 
 
 def test_removal_mask_preserves_cell_ids_and_alignment(tmp_path):
-    data = ad.AnnData(
-        np.ones((4, 2)), obs=pd.DataFrame(index=["NA", "002", "001", "unlisted"])
-    )
-    pd.DataFrame({
-        "cell": ["001", "002", "NA"],
-        "recommend_removal": [True, False, True],
-    }).to_csv(tmp_path / "preannotation_removal.csv", index=False)
+    data = ad.AnnData(np.ones((4, 2)), obs=pd.DataFrame(index=["NA", "002", "001", "unlisted"]))
+    pd.DataFrame(
+        {
+            "cell": ["001", "002", "NA"],
+            "recommend_removal": [True, False, True],
+        }
+    ).to_csv(tmp_path / "preannotation_removal.csv", index=False)
 
     np.testing.assert_array_equal(_load_removal_mask(tmp_path, data), [True, False, True, False])
 
@@ -88,9 +88,7 @@ def test_empty_paga_neighbors(tmp_path, contents):
 
 
 def test_paga_reader_preserves_ids_and_rank_order(tmp_path):
-    (tmp_path / "paga_neighbors_k.csv").write_text(
-        "cluster,neighbor,rank,connectivity\n001,003,2,0.2\n001,002,1,0.8\n"
-    )
+    (tmp_path / "paga_neighbors_k.csv").write_text("cluster,neighbor,rank,connectivity\n001,003,2,0.2\n001,002,1,0.8\n")
     assert _load_paga_neighbors(tmp_path, "k") == {"001": ["002", "003"]}
 
 
@@ -121,15 +119,20 @@ def test_cluster_annotations_preserve_csv_contract(tmp_path, monkeypatch, second
     monkeypatch.setattr(sc.pp, "neighbors", lambda *args, **kwargs: None)
     monkeypatch.setattr(sc.tl, "paga", paga)
     monkeypatch.setattr(resources, "available_cpus", lambda: 1)
-    integrate._cluster_annotations(
-        data, np.zeros(data.n_obs, dtype=bool), ["k"], [1.0], tmp_path
-    )
+    integrate._cluster_annotations(data, np.zeros(data.n_obs, dtype=bool), ["k"], [1.0], tmp_path)
 
     global_df = pd.read_csv(tmp_path / "deg_global_k.csv", dtype={"group": str})
     expected_groups = {"0"} if second_size < 10 else {"0", "1"}
     assert set(global_df["group"]) == expected_groups
     assert set(global_df.columns) == {
-        "group", "names", "scores", "logfoldchanges", "pvals", "pvals_adj", "pct1", "pct2"
+        "group",
+        "names",
+        "scores",
+        "logfoldchanges",
+        "pvals",
+        "pvals_adj",
+        "pct1",
+        "pct2",
     }
     assert global_df.groupby("group").size().to_dict() == dict.fromkeys(expected_groups, data.n_vars)
     assert data.n_obs == 12 + second_size
@@ -144,14 +147,16 @@ def test_cluster_annotations_preserve_csv_contract(tmp_path, monkeypatch, second
 
 
 def test_deg_lookup_limits_each_view_after_filtering(tmp_path):
-    rows = pd.DataFrame({
-        "group": ["0"] * 4,
-        "names": ["G0", "G1", "G2", "G3"],
-        "logfoldchanges": [0.1, 2.0, 3.0, 4.0],
-        "pvals_adj": [0.01] * 4,
-        "pct1": [0.8] * 4,
-        "pct2": [0.1] * 4,
-    })
+    rows = pd.DataFrame(
+        {
+            "group": ["0"] * 4,
+            "names": ["G0", "G1", "G2", "G3"],
+            "logfoldchanges": [0.1, 2.0, 3.0, 4.0],
+            "pvals_adj": [0.01] * 4,
+            "pct1": [0.8] * 4,
+            "pct2": [0.1] * 4,
+        }
+    )
     for view in ("global", "local"):
         rows.to_csv(tmp_path / f"deg_{view}_k.csv", index=False)
     tables = DegTables(tmp_path, base_key="k")

@@ -15,21 +15,42 @@ from pathlib import Path
 STEPS = ("integrate", "inspect", "annotate")
 _OUTPUTS = {
     "integrate": (
-        "integrated.h5ad", "integrated.tmp.h5ad", "integration_summary.csv",
-        "per_sample_qc.csv", "cluster_qc_*.csv", "fragments_*.csv", "overlap_*.csv",
-        "minor_sibling_qc.csv", "cell_outliers.csv", "cell_outlier_summary.csv",
-        "preannotation_removal.csv", "deg_global_*.csv", "deg_local_*.csv",
-        "paga_neighbors_*.csv", "stress_clusters.csv", "de_parent_core_vs_core.csv",
-        "fractal_*.csv", "figures/umap_*.png", "figures/qc_*.png",
-        "figures/standissect_*.png", "figures/leiden_qc_violin_*.png", "figures/fractal_*.png",
+        "integrated.h5ad",
+        "integrated.tmp.h5ad",
+        "integration_summary.csv",
+        "per_sample_qc.csv",
+        "cluster_qc_*.csv",
+        "fragments_*.csv",
+        "overlap_*.csv",
+        "minor_sibling_qc.csv",
+        "cell_outliers.csv",
+        "cell_outlier_summary.csv",
+        "preannotation_removal.csv",
+        "deg_global_*.csv",
+        "deg_local_*.csv",
+        "paga_neighbors_*.csv",
+        "stress_clusters.csv",
+        "de_parent_core_vs_core.csv",
+        "fractal_*.csv",
+        "figures/umap_*.png",
+        "figures/qc_*.png",
+        "figures/standissect_*.png",
+        "figures/leiden_qc_violin_*.png",
+        "figures/fractal_*.png",
     ),
     "inspect": (
-        "inspection_proposal.json", "inspection_notes.md", "figures/inspect_*.png",
+        "inspection_proposal.json",
+        "inspection_notes.md",
+        "figures/inspect_*.png",
         "integrated.tmp.h5ad",
     ),
     "annotate": (
-        "annotated.h5ad", "annotated.tmp.h5ad", "annotation_proposal.json",
-        "annotation_notes.md", "annotation_*.csv", "figures/annotation_*.png",
+        "annotated.h5ad",
+        "annotated.tmp.h5ad",
+        "annotation_proposal.json",
+        "annotation_notes.md",
+        "annotation_*.csv",
+        "figures/annotation_*.png",
     ),
 }
 
@@ -37,12 +58,12 @@ _OUTPUTS = {
 def step_pending(outdir, step):
     """An interrupted ancestor also prevents this step from being current."""
     root = Path(outdir) / ".msp-state"
-    return any((root / f"{name}.pending").exists() for name in STEPS[:STEPS.index(step) + 1])
+    return any((root / f"{name}.pending").exists() for name in STEPS[: STEPS.index(step) + 1])
 
 
 def require_upstream_ready(outdir, step):
     """Refuse downstream work after an interrupted upstream rerun."""
-    for upstream in STEPS[:STEPS.index(step)]:
+    for upstream in STEPS[: STEPS.index(step)]:
         if step_pending(outdir, upstream):
             raise RuntimeError(f"{upstream} is incomplete in {outdir}; rerun it before {step}")
 
@@ -62,7 +83,7 @@ def begin_step(outdir, step):
     state.mkdir(parents=True, exist_ok=True)
     (state / f"{step}.pending").touch()
 
-    affected = STEPS[STEPS.index(step):]
+    affected = STEPS[STEPS.index(step) :]
     paths = {root / "report.html", root / "report.html.tmp"}
     for name in affected:
         for pattern in _OUTPUTS[name]:

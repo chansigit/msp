@@ -155,8 +155,10 @@ def _img(path: str, cls: str = "") -> str:
     ext = os.path.splitext(path)[1].lstrip(".") or "png"
     name = html.escape(os.path.basename(path))
     cls_attr = f' class="{cls}"' if cls else ""
-    return (f'<figure{cls_attr}><img class="fig" src="data:image/{ext};base64,{b64}" '
-            f'alt="{name}"><figcaption>{name}</figcaption></figure>')
+    return (
+        f'<figure{cls_attr}><img class="fig" src="data:image/{ext};base64,{b64}" '
+        f'alt="{name}"><figcaption>{name}</figcaption></figure>'
+    )
 
 
 def _tabs(group_id: str, items: list[tuple[str, str]]) -> str:
@@ -174,9 +176,11 @@ def _tabs(group_id: str, items: list[tuple[str, str]]) -> str:
         panels.append(f'<div class="tab-panel" id="{tid}-panel">{content}</div>')
         rules.append(f"#{tid}:checked ~ .tab-panels #{tid}-panel")
     style = f"<style>{', '.join(rules)} {{ display: block; }}</style>"
-    return ('<div class="tabset">'
-            + "".join(x for pair in zip(inputs, labels) for x in pair)
-            + f'<div class="tab-panels">{"".join(panels)}</div></div>{style}')
+    return (
+        '<div class="tabset">'
+        + "".join(x for pair in zip(inputs, labels) for x in pair)
+        + f'<div class="tab-panels">{"".join(panels)}</div></div>{style}'
+    )
 
 
 def _grid(paths: list[str]) -> str:
@@ -210,8 +214,7 @@ def _csv_table(path: str) -> str:
         return ""
     head = "".join(f"<th>{html.escape(c)}</th>" for c in rows[0])
     body = "".join(
-        "<tr>" + "".join(f"<td>{_fmt_cell(h, c)}</td>" for h, c in zip(rows[0], r)) + "</tr>"
-        for r in rows[1:]
+        "<tr>" + "".join(f"<td>{_fmt_cell(h, c)}</td>" for h, c in zip(rows[0], r)) + "</tr>" for r in rows[1:]
     )
     return f"<table><tr>{head}</tr>{body}</table>"
 
@@ -242,8 +245,7 @@ def _section_sample_decisions(outdir: str) -> str:
         + "</tr>"
         for r in rows
     )
-    return (f"<h3>Sample inclusion ({n_incl}/{len(rows)} entered integration)</h3>"
-            f"<table><tr>{head}</tr>{body}</table>")
+    return f"<h3>Sample inclusion ({n_incl}/{len(rows)} entered integration)</h3><table><tr>{head}</tr>{body}</table>"
 
 
 def _section_sample_summary(outdir: str) -> str:
@@ -269,8 +271,17 @@ def _section_minor_sibling(outdir: str) -> str:
     if not rows:
         return ""
     metric_names = sorted({c[: -len("_median")] for c in rows[0] if c.endswith("_median")})
-    head_cols = ("subcluster", "parent", "n_cells", "core_n_cells", "frac_of_core", "status",
-                 "pct_drop_upstream", "n_hits", "recommend_removal")
+    head_cols = (
+        "subcluster",
+        "parent",
+        "n_cells",
+        "core_n_cells",
+        "frac_of_core",
+        "status",
+        "pct_drop_upstream",
+        "n_hits",
+        "recommend_removal",
+    )
     head = "".join(f"<th>{c}</th>" for c in head_cols)
     body_rows = []
     for r in rows:
@@ -293,47 +304,60 @@ def _section_minor_sibling(outdir: str) -> str:
 
     detail_head = "".join(f"<th>{m}_median</th><th>{m}_significant</th>" for m in metric_names)
     detail_rows = "".join(
-        "<tr><td>" + html.escape(r["subcluster"]) + "</td>"
-        + "".join(f"<td>{html.escape(r.get(f'{m}_median') or '')}</td>"
-                  f"<td>{html.escape(r.get(f'{m}_significant') or '')}</td>" for m in metric_names)
+        "<tr><td>"
+        + html.escape(r["subcluster"])
+        + "</td>"
+        + "".join(
+            f"<td>{html.escape(r.get(f'{m}_median') or '')}</td><td>{html.escape(r.get(f'{m}_significant') or '')}</td>"
+            for m in metric_names
+        )
         + "</tr>"
-        for r in rows if r["status"] == "tested"
+        for r in rows
+        if r["status"] == "tested"
     )
-    details = ("<details><summary>per-metric values (tested siblings only)</summary>"
-               f"<table><tr><th>subcluster</th>{detail_head}</tr>{detail_rows}</table></details>")
+    details = (
+        "<details><summary>per-metric values (tested siblings only)</summary>"
+        f"<table><tr><th>subcluster</th>{detail_head}</tr>{detail_rows}</table></details>"
+    )
 
     n_removal = sum(1 for r in rows if r.get("recommend_removal") == "True")
     n_tested = sum(1 for r in rows if r["status"] == "tested")
-    hint = (f"<p class=\"hint\">Each minor sibling (standissect fragment, rank&gt;0), other than "
-            "\"big\" ones, is checked against two kinds of criteria — hitting ANY ONE marks the "
-            "whole fragment recommend_removal (dark red bold below; a candidate for msp.inspect "
-            "to verify, not an automatic removal). (1) upstream: &gt;50% of the sibling's cells "
-            "already carry _qc_action=\"drop\" from the per-sample annotation. (2) stats "
-            "(only run when the sibling has &ge;5 cells): one-sided Mann-Whitney U, sibling vs. "
-            "the pooled parent-core cells, p&lt;0.05, no multiple-testing correction, on "
-            "decontX_contamination / dissociation_score / doublet_score / pct_counts_mt — the "
-            "latter two also require the sibling's own median above an absolute floor (0.2 and "
-            "20% respectively). Siblings holding ≥25% of their own parent core's cell count, or "
-            "≥800 cells outright, are skipped as \"big\", not minor. "
-            f"{n_removal}/{len(rows)} siblings recommend_removal, {n_tested} stats-tested.</p>")
+    hint = (
+        f'<p class="hint">Each minor sibling (standissect fragment, rank&gt;0), other than '
+        '"big" ones, is checked against two kinds of criteria — hitting ANY ONE marks the '
+        "whole fragment recommend_removal (dark red bold below; a candidate for msp.inspect "
+        "to verify, not an automatic removal). (1) upstream: &gt;50% of the sibling's cells "
+        'already carry _qc_action="drop" from the per-sample annotation. (2) stats '
+        "(only run when the sibling has &ge;5 cells): one-sided Mann-Whitney U, sibling vs. "
+        "the pooled parent-core cells, p&lt;0.05, no multiple-testing correction, on "
+        "decontX_contamination / dissociation_score / doublet_score / pct_counts_mt — the "
+        "latter two also require the sibling's own median above an absolute floor (0.2 and "
+        "20% respectively). Siblings holding ≥25% of their own parent core's cell count, or "
+        '≥800 cells outright, are skipped as "big", not minor. '
+        f"{n_removal}/{len(rows)} siblings recommend_removal, {n_tested} stats-tested.</p>"
+    )
     return f"<h3>StanDissect Minor sibling fractals QC</h3>{hint}{table}{details}"
 
 
 def _section_per_cluster(outdir: str, violins: list[str], fractal_figs: list[str]) -> str:
     parts = []
     for p in sorted(glob.glob(os.path.join(outdir, "cluster_qc_standissect_product.csv"))):
-        key = os.path.basename(p)[len("cluster_qc_"):-len(".csv")]
-        parts += [f"<h3>{html.escape(key)}</h3>",
-                  '<p class="hint">flag/drop fractions carried over from per-sample '
-                  "annotation; a cluster fed by a single sample is itself a signal.</p>",
-                  _csv_table(p)]
+        key = os.path.basename(p)[len("cluster_qc_") : -len(".csv")]
+        parts += [
+            f"<h3>{html.escape(key)}</h3>",
+            '<p class="hint">flag/drop fractions carried over from per-sample '
+            "annotation; a cluster fed by a single sample is itself a signal.</p>",
+            _csv_table(p),
+        ]
     parts.append(_section_minor_sibling(outdir))
     if violins:
-        parts += ["<h3>StanDissect Per-cluster QC violins</h3>",
-                  '<p class="hint">Grouped by the standissect clusters (leiden × UMAP-fragment '
-                  "product), not the primary leiden — so a minor sibling's QC profile can be "
-                  "compared against its main core.</p>",
-                  _grid(violins)]
+        parts += [
+            "<h3>StanDissect Per-cluster QC violins</h3>",
+            '<p class="hint">Grouped by the standissect clusters (leiden × UMAP-fragment '
+            "product), not the primary leiden — so a minor sibling's QC profile can be "
+            "compared against its main core.</p>",
+            _grid(violins),
+        ]
     parts.append(_section_fractal_heatmap(outdir, fractal_figs))
 
     return _h2("per-cluster-qc") + "".join(parts) if parts else ""
@@ -354,29 +378,29 @@ def _section_leiden_qc(outdir: str, leiden_violin_figs: list[str]) -> str:
         with open(outlier_path) as f:
             outlier_rows = list(csv.DictReader(f))
 
-    parts = ['<p class="hint">Same cells as Per-cluster QC above, aggregated by the primary '
-             "leiden clustering instead of standissect fragments. Includes the cell-level "
-             "doublet/ambient-RNA outlier test: a cell is an outlier for a metric "
-             "(doublet_score or decontX_contamination) only if it clears BOTH gates together — "
-             "cluster median + 3×MAD, AND an absolute floor of 0.5 (the MAD rule alone is too "
-             "permissive in near-clean clusters where MAD itself is tiny); recommend_removal is "
-             "the OR across both metrics. Red bar on each violin = that cluster's cutoff "
-             "(max of median+3×MAD and the floor); propose-only, see cell_outliers.csv for the "
-             "full per-cell table.</p>"]
+    parts = [
+        '<p class="hint">Same cells as Per-cluster QC above, aggregated by the primary '
+        "leiden clustering instead of standissect fragments. Includes the cell-level "
+        "doublet/ambient-RNA outlier test: a cell is an outlier for a metric "
+        "(doublet_score or decontX_contamination) only if it clears BOTH gates together — "
+        "cluster median + 3×MAD, AND an absolute floor of 0.5 (the MAD rule alone is too "
+        "permissive in near-clean clusters where MAD itself is tiny); recommend_removal is "
+        "the OR across both metrics. Red bar on each violin = that cluster's cutoff "
+        "(max of median+3×MAD and the floor); propose-only, see cell_outliers.csv for the "
+        "full per-cell table.</p>"
+    ]
     tabs = []
     for p in qc_paths:
-        key = os.path.basename(p)[len("cluster_qc_"):-len(".csv")]
+        key = os.path.basename(p)[len("cluster_qc_") : -len(".csv")]
         tab_parts = [_csv_table(p)]
         krows = [r for r in outlier_rows if r.get("key") == key]
         if krows:
             head_cols = list(krows[0].keys())
             head = "".join(f"<th>{html.escape(c)}</th>" for c in head_cols)
             body = "".join(
-                "<tr>" + "".join(f"<td>{html.escape(r.get(c, ''))}</td>" for c in head_cols) + "</tr>"
-                for r in krows
+                "<tr>" + "".join(f"<td>{html.escape(r.get(c, ''))}</td>" for c in head_cols) + "</tr>" for r in krows
             )
-            tab_parts += ["<h4>Cell-level doublet / ambient-RNA outliers</h4>",
-                          f"<table><tr>{head}</tr>{body}</table>"]
+            tab_parts += ["<h4>Cell-level doublet / ambient-RNA outliers</h4>", f"<table><tr>{head}</tr>{body}</table>"]
         key_figs = [fp for fp in leiden_violin_figs if os.path.basename(fp).endswith(f"_{key}.png")]
         if key_figs:
             tab_parts += ["<h4>Per-cluster cutoff violins</h4>", _grid(key_figs)]
@@ -389,31 +413,36 @@ def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
     path = os.path.join(outdir, "fractal_markers.csv")
     if not os.path.exists(path) and not fractal_figs:
         return ""
-    parts = ["<h3>Fractal marker dot plot</h3>",
-             '<p class="hint">Transcriptomic evidence for what a fractal actually is — e.g. a '
-             "doublet fractal co-expressing two parents' marker sets shows up as a column lit up "
-             "in both parents' colored rows, not just one. Each parent's CORE cells (rank 0) DE'd "
-             "one-vs-rest against every other parent's core cells (core-only, so minor siblings "
-             "never leak into either side); "
-             "per parent, top 10 markers with logFC&gt;0, padj&lt;0.05, ribosomal genes excluded. "
-             "Dot plot across every standissect cluster (cores AND fractals): dot size = fraction "
-             "of a cluster's cells expressing the gene, dot color = row-wise z-score of average "
-             "log1p expression. Columns are clustered (optimal leaf ordering) purely to order them "
-             "— no dendrogram shown. Rows are grouped by the parent they're a marker for (colored "
-             "strip), not clustered. Bold column labels = parent-core clusters; red = "
-             "recommend_removal (see StanDissect Minor sibling fractals QC above).</p>"]
+    parts = [
+        "<h3>Fractal marker dot plot</h3>",
+        '<p class="hint">Transcriptomic evidence for what a fractal actually is — e.g. a '
+        "doublet fractal co-expressing two parents' marker sets shows up as a column lit up "
+        "in both parents' colored rows, not just one. Each parent's CORE cells (rank 0) DE'd "
+        "one-vs-rest against every other parent's core cells (core-only, so minor siblings "
+        "never leak into either side); "
+        "per parent, top 10 markers with logFC&gt;0, padj&lt;0.05, ribosomal genes excluded. "
+        "Dot plot across every standissect cluster (cores AND fractals): dot size = fraction "
+        "of a cluster's cells expressing the gene, dot color = row-wise z-score of average "
+        "log1p expression. Columns are clustered (optimal leaf ordering) purely to order them "
+        "— no dendrogram shown. Rows are grouped by the parent they're a marker for (colored "
+        "strip), not clustered. Bold column labels = parent-core clusters; red = "
+        "recommend_removal (see StanDissect Minor sibling fractals QC above).</p>",
+    ]
     parts += [_img(p) for p in fractal_figs]
     if os.path.exists(path):
         with open(path) as f:
             rows = list(csv.DictReader(f))
         body = "".join(
-            "<tr><td>" + "</td><td>".join(html.escape(r[c]) for c in
-                                           ("parent", "gene", "rank", "logfoldchange", "pvals_adj")) + "</td></tr>"
+            "<tr><td>"
+            + "</td><td>".join(html.escape(r[c]) for c in ("parent", "gene", "rank", "logfoldchange", "pvals_adj"))
+            + "</td></tr>"
             for r in rows
         )
-        parts.append("<details><summary>marker gene list</summary>"
-                     "<table><tr><th>parent</th><th>gene</th><th>rank</th><th>logfoldchange</th>"
-                     f"<th>pvals_adj</th></tr>{body}</table></details>")
+        parts.append(
+            "<details><summary>marker gene list</summary>"
+            "<table><tr><th>parent</th><th>gene</th><th>rank</th><th>logfoldchange</th>"
+            f"<th>pvals_adj</th></tr>{body}</table></details>"
+        )
     return "".join(parts)
 
 
@@ -435,18 +464,20 @@ def _load_stress_lookup(outdir: str) -> dict[tuple[str, str, str], dict]:
     return lookup
 
 
-def _deg_row(cluster: str, genes: list[tuple[str, float]], stress_info: dict | None,
-             middle_td: str = "") -> str:
+def _deg_row(cluster: str, genes: list[tuple[str, float]], stress_info: dict | None, middle_td: str = "") -> str:
     info = stress_info or {}
     hit_genes = info.get("hit_genes", set())
     recommend_removal = info.get("recommend_removal", False)
     cluster_cell = html.escape(cluster)
     if recommend_removal:
-        cluster_cell += (' <span style="color:#c0392b;font-weight:bold" title="stress signature '
-                         'in this view or its global/local pair — see Cluster Annotations hint">'
-                         "[recommend_removal]</span>")
+        cluster_cell += (
+            ' <span style="color:#c0392b;font-weight:bold" title="stress signature '
+            'in this view or its global/local pair — see Cluster Annotations hint">'
+            "[recommend_removal]</span>"
+        )
     gene_html = ", ".join(
-        f'<b style="color:#c0392b">{html.escape(name)}</b> ({lfc:.1f})' if name in hit_genes
+        f'<b style="color:#c0392b">{html.escape(name)}</b> ({lfc:.1f})'
+        if name in hit_genes
         else f"{html.escape(name)} ({lfc:.1f})"
         for name, lfc in genes
     )
@@ -462,9 +493,7 @@ def _deg_global_table(path: str, top_n: int, key: str, stress_lookup: dict) -> s
         g = by_group.setdefault(r["group"], [])
         if len(g) < top_n:
             g.append((r["names"], float(r["logfoldchanges"])))
-    body = "".join(
-        _deg_row(g, genes, stress_lookup.get((key, g, "global"))) for g, genes in by_group.items()
-    )
+    body = "".join(_deg_row(g, genes, stress_lookup.get((key, g, "global"))) for g, genes in by_group.items())
     return f"<table><tr><th>cluster</th><th>top genes (logFC)</th></tr>{body}</table>"
 
 
@@ -479,8 +508,12 @@ def _deg_local_table(path: str, top_n: int, key: str, stress_lookup: dict) -> st
         if len(g) < top_n:
             g.append((r["names"], float(r["logfoldchanges"])))
     body = "".join(
-        _deg_row(g, genes, stress_lookup.get((key, g, "local")),
-                middle_td=f"<td>{html.escape(neighbors_by_group.get(g, ''))}</td>")
+        _deg_row(
+            g,
+            genes,
+            stress_lookup.get((key, g, "local")),
+            middle_td=f"<td>{html.escape(neighbors_by_group.get(g, ''))}</td>",
+        )
         for g, genes in by_group.items()
     )
     return f"<table><tr><th>cluster</th><th>neighbors</th><th>top genes (logFC)</th></tr>{body}</table>"
@@ -492,16 +525,18 @@ def _section_deg(outdir: str, top_n: int = 10, preannotation_figs: list[str] | N
         return ""
     parts = []
     if preannotation_figs:
-        parts += ["<h3>Pre-annotation filtering</h3>",
-                  '<p class="hint">Every cell proposed for removal before Cluster Annotations '
-                  "runs — the union of three sources: whole standissect fragments flagged by "
-                  "StanDissect Minor sibling fractals QC, individual cells flagged by the "
-                  "cell-level doublet / ambient-RNA outlier test above, and cells osp itself "
-                  "already proposed dropping per-sample (_qc_action==\"drop\", inherited from "
-                  "persample annotation — their cross-sample clustering here is evidence to "
-                  "weigh, not evidence to discard). Red = recommend_removal, grey = kept. "
-                  "Computation-only: excluded from the DEG/PAGA analyses below, never dropped "
-                  "from the data.</p>"]
+        parts += [
+            "<h3>Pre-annotation filtering</h3>",
+            '<p class="hint">Every cell proposed for removal before Cluster Annotations '
+            "runs — the union of three sources: whole standissect fragments flagged by "
+            "StanDissect Minor sibling fractals QC, individual cells flagged by the "
+            "cell-level doublet / ambient-RNA outlier test above, and cells osp itself "
+            'already proposed dropping per-sample (_qc_action=="drop", inherited from '
+            "persample annotation — their cross-sample clustering here is evidence to "
+            "weigh, not evidence to discard). Red = recommend_removal, grey = kept. "
+            "Computation-only: excluded from the DEG/PAGA analyses below, never dropped "
+            "from the data.</p>",
+        ]
         parts.append('<div class="trio">' + "".join(_img(p) for p in preannotation_figs) + "</div>")
     parts += [
         '<p class="hint">Cells marked recommend_removal above (see Pre-annotation filtering) '
@@ -510,17 +545,18 @@ def _section_deg(outdir: str, top_n: int = 10, preannotation_figs: list[str] | N
         "other cluster (one-vs-rest). Local view: cluster vs its 3 nearest neighbors by PAGA "
         "connectivity, pooled into one reference group — a sharper comparison when neighbors "
         "are transcriptionally close and get washed out by the global one-vs-rest. A (key, "
-        "cluster) is marked <b style=\"color:#c0392b\">[recommend_removal]</b> when EITHER its "
+        'cluster) is marked <b style="color:#c0392b">[recommend_removal]</b> when EITHER its '
         "global or local view has more than 3 of its displayed top genes in the conservative "
         "heat-shock/AP-1 dissociation-stress core panel (STRESS_GENES_CORE) or mitochondrial "
         "(MT-*) — the verdict is merged, so both the global and local rows for that cluster show "
         "it even if only one of the two actually crossed the threshold. Flagged only, nothing is "
-        "removed from the data (see stress_clusters.csv for per-view hit genes).</p>"]
+        "removed from the data (see stress_clusters.csv for per-view hit genes).</p>"
+    ]
 
     stress_lookup = _load_stress_lookup(outdir)
     tabs = []
     for p in global_paths:
-        key = os.path.basename(p)[len("deg_global_"):-len(".csv")]
+        key = os.path.basename(p)[len("deg_global_") : -len(".csv")]
         tabs.append((f"{key} — global", _deg_global_table(p, top_n, key, stress_lookup)))
         local_p = os.path.join(outdir, f"deg_local_{key}.csv")
         if os.path.exists(local_p):
@@ -539,32 +575,43 @@ def _section_inspection(outdir: str, inspection_figs: list[str]) -> str:
 
     def table(entries, columns):
         head = "".join(f"<th>{html.escape(c)}</th>" for c in columns)
-        body = "".join("<tr>" + "".join(
-            f"<td>{html.escape(str(e[c]) if e.get(c) is not None else '')}</td>"
-            for c in columns) + "</tr>" for e in entries)
+        body = "".join(
+            "<tr>"
+            + "".join(f"<td>{html.escape(str(e[c]) if e.get(c) is not None else '')}</td>" for c in columns)
+            + "</tr>"
+            for e in entries
+        )
         return f"<table><tr>{head}</tr>{body}</table>"
 
-    parts = ['<p class="hint">Inspection proposes keep, flag, or drop actions; it does not remove cells. '
-             'Annotation applies removals and records their sources.</p>',
-             '<div class="trio">' + "".join(_img(p) for p in inspection_figs) + "</div>",
-             "<h3>Per-cluster verdicts and actions</h3>",
-             table(prop.get("clusters", []), ("cluster", "verdict", "action", "confidence", "rationale"))]
+    parts = [
+        '<p class="hint">Inspection proposes keep, flag, or drop actions; it does not remove cells. '
+        "Annotation applies removals and records their sources.</p>",
+        '<div class="trio">' + "".join(_img(p) for p in inspection_figs) + "</div>",
+        "<h3>Per-cluster verdicts and actions</h3>",
+        table(prop.get("clusters", []), ("cluster", "verdict", "action", "confidence", "rationale")),
+    ]
     evidence = []
     for entry in prop.get("clusters", []):
         tests = entry.get("tests")
         evidence.append({**(tests if isinstance(tests, dict) else {}), "cluster": entry.get("cluster")})
-    parts += ["<h3>Five-test evidence</h3>",
-              table(evidence, ("cluster", "markers", "qc", "composition", "geometry", "stability"))]
+    parts += [
+        "<h3>Five-test evidence</h3>",
+        table(evidence, ("cluster", "markers", "qc", "composition", "geometry", "stability")),
+    ]
     if prop.get("cell_actions"):
-        parts += ["<h3>Cell-level action rules</h3>", table(prop["cell_actions"],
-                  ("cluster", "metric", "op", "value", "action", "reason", "note"))]
+        parts += [
+            "<h3>Cell-level action rules</h3>",
+            table(prop["cell_actions"], ("cluster", "metric", "op", "value", "action", "reason", "note")),
+        ]
     if prop.get("overall"):
         parts.append(f"<p><b>Overall:</b> {html.escape(str(prop['overall']))}</p>")
     notes = os.path.join(outdir, "inspection_notes.md")
     if os.path.exists(notes):
         with open(notes) as f:
-            parts.append('<details><summary>Inspection notes</summary>'
-                         f'<pre class="notes">{html.escape(f.read())}</pre></details>')
+            parts.append(
+                "<details><summary>Inspection notes</summary>"
+                f'<pre class="notes">{html.escape(f.read())}</pre></details>'
+            )
     return _h2("inspection") + "".join(parts)
 
 
@@ -579,54 +626,78 @@ def _section_annotation(outdir: str, annotation_figs: list[str]) -> str:
         prop = json.load(f)
     key = prop.get("cluster_key", "msp_leiden_r2.0")
     by_name = {os.path.basename(p): p for p in annotation_figs}
-    parts = [f'<p class="hint">Per-cluster identity on {html.escape(key)}: coarse (lineage) and fine '
-             "(subtype) labels, explicit merge decisions (merged clusters share one label), and "
-             "clusters judged noise/low-quality. Removal here is real: removed cells = pre-annotation "
-             "filtering ∪ inspection drop ∪ agent-removed clusters, archived per cell with sources in "
-             "annotation_removed.csv; annotated.h5ad holds the survivors, integrated.h5ad is untouched.</p>"]
+    parts = [
+        f'<p class="hint">Per-cluster identity on {html.escape(key)}: coarse (lineage) and fine '
+        "(subtype) labels, explicit merge decisions (merged clusters share one label), and "
+        "clusters judged noise/low-quality. Removal here is real: removed cells = pre-annotation "
+        "filtering ∪ inspection drop ∪ agent-removed clusters, archived per cell with sources in "
+        "annotation_removed.csv; annotated.h5ad holds the survivors, integrated.h5ad is untouched.</p>"
+    ]
     labelled = [by_name[n] for n in ("annotation_umap_coarse.png", "annotation_umap_fine.png") if n in by_name]
     if labelled:
-        parts += ["<h3>Annotated UMAPs (removed cells excluded)</h3>",
-                  '<div class="trio">' + "".join(_img(p) for p in labelled) + "</div>"]
+        parts += [
+            "<h3>Annotated UMAPs (removed cells excluded)</h3>",
+            '<div class="trio">' + "".join(_img(p) for p in labelled) + "</div>",
+        ]
     if "annotation_umap_removed.png" in by_name:
-        parts += ["<h3>Removed cells (all sources)</h3>",
-                  '<div class="trio">' + _img(by_name["annotation_umap_removed.png"]) + "</div>"]
+        parts += [
+            "<h3>Removed cells (all sources)</h3>",
+            '<div class="trio">' + _img(by_name["annotation_umap_removed.png"]) + "</div>",
+        ]
         rm = os.path.join(outdir, "annotation_removed.csv")
         if os.path.exists(rm):
             with open(rm) as f:
                 rows = list(csv.DictReader(f))
             srcs = [c for c in (rows[0].keys() if rows else []) if c not in ("cell", key, "remove_reason")]
             counts = {c: sum(r.get(c) == "True" for r in rows) for c in srcs}
-            parts.append("<p>" + html.escape(f"{len(rows)} cells removed — by source (a cell may have several): "
-                                             + ", ".join(f"{c}={n}" for c, n in counts.items())) + "</p>")
-    cols = ("cluster_id", "coarse_label", "fine_label", "merge_target", "action", "remove_reason",
-            "confidence", "rationale")
+            parts.append(
+                "<p>"
+                + html.escape(
+                    f"{len(rows)} cells removed — by source (a cell may have several): "
+                    + ", ".join(f"{c}={n}" for c, n in counts.items())
+                )
+                + "</p>"
+            )
+    cols = (
+        "cluster_id",
+        "coarse_label",
+        "fine_label",
+        "merge_target",
+        "action",
+        "remove_reason",
+        "confidence",
+        "rationale",
+    )
     head = "".join(f"<th>{c}</th>" for c in cols)
     body = "".join(
         "<tr>" + "".join(f"<td>{html.escape('' if e.get(c) is None else str(e.get(c)))}</td>" for c in cols) + "</tr>"
         for e in prop.get("clusters", [])
     )
-    parts += ['<div id="annotation-tables">', "<h3>Per-cluster decisions</h3>",
-              f"<table><tr>{head}</tr>{body}</table>"]
+    parts += ['<div id="annotation-tables">', "<h3>Per-cluster decisions</h3>", f"<table><tr>{head}</tr>{body}</table>"]
     if prop.get("merged_groups"):
         parts.append("<p><b>Merged groups:</b> " + html.escape(", ".join(prop["merged_groups"])) + "</p>")
     ev_rows = "".join(
         f"<tr><td>{html.escape(str(e.get('cluster_id')))}</td>"
-        + "".join(f"<td>{html.escape(str(e.get('evidence', {}).get(t, '')))}</td>"
-                  for t in ("distinctness", "markers", "merge"))
+        + "".join(
+            f"<td>{html.escape(str(e.get('evidence', {}).get(t, '')))}</td>"
+            for t in ("distinctness", "markers", "merge")
+        )
         + "</tr>"
         for e in prop.get("clusters", [])
     )
-    parts.append("<details><summary>reasoning chain per cluster</summary>"
-                 "<table><tr><th>cluster</th><th>1. distinctness</th><th>2. markers</th>"
-                 f"<th>3. merge</th></tr>{ev_rows}</table></details>")
+    parts.append(
+        "<details><summary>reasoning chain per cluster</summary>"
+        "<table><tr><th>cluster</th><th>1. distinctness</th><th>2. markers</th>"
+        f"<th>3. merge</th></tr>{ev_rows}</table></details>"
+    )
     if prop.get("overall"):
         parts.append(f"<p><b>Overall:</b> {html.escape(prop['overall'])}</p>")
     notes = os.path.join(outdir, "annotation_notes.md")
     if os.path.exists(notes):
         with open(notes) as f:
-            parts.append("<details><summary>agent notes</summary>"
-                         f'<pre class="notes">{html.escape(f.read())}</pre></details>')
+            parts.append(
+                f'<details><summary>agent notes</summary><pre class="notes">{html.escape(f.read())}</pre></details>'
+            )
     parts.append("</div>")
     return _h2("annotation") + "".join(parts)
 
@@ -642,25 +713,30 @@ def _section_umaps(umap_figs: list[str], standissect_figs: list[str], qc_figs: l
     samples = [p for p in rest if p not in leiden]
     parts = [_h2("umaps")]
     if ann:
-        parts += ["<h3>Inherited annotations from One-sample Pipeline (OSP)</h3>",
-                  '<div class="trio">' + "".join(_img(p) for p in ann) + "</div>"]
+        parts += [
+            "<h3>Inherited annotations from One-sample Pipeline (OSP)</h3>",
+            '<div class="trio">' + "".join(_img(p) for p in ann) + "</div>",
+        ]
     if samples:
         # natural image size: the sample legend carries long names — never
         # squeeze this panel into a fixed grid cell
         parts += ["<h3>Samples</h3>"] + [_img(p, cls="natural") for p in samples]
     if leiden:
-        parts += ["<h3>Leiden clusterings</h3>",
-                  '<div class="trio">' + "".join(_img(p) for p in leiden) + "</div>"]
+        parts += ["<h3>Leiden clusterings</h3>", '<div class="trio">' + "".join(_img(p) for p in leiden) + "</div>"]
     if standissect_figs:
-        parts += ["<h3>standissect clusters</h3>",
-                  '<div class="trio">' + "".join(_img(p) for p in standissect_figs) + "</div>"]
+        parts += [
+            "<h3>standissect clusters</h3>",
+            '<div class="trio">' + "".join(_img(p) for p in standissect_figs) + "</div>",
+        ]
     if qc_figs:
         qc_umaps = [p for p in qc_figs if "umap" in os.path.basename(p)]
         other = [p for p in qc_figs if p not in qc_umaps and "violin" not in os.path.basename(p)]
-        parts += ["<h3>QC metrics</h3>",
-                  '<p class="hint">One metric per panel; pct_counts_mt uses a fixed color '
-                  "ceiling (vmax=20) — the scale never autoscales.</p>",
-                  _grid(qc_umaps)]
+        parts += [
+            "<h3>QC metrics</h3>",
+            '<p class="hint">One metric per panel; pct_counts_mt uses a fixed color '
+            "ceiling (vmax=20) — the scale never autoscales.</p>",
+            _grid(qc_umaps),
+        ]
         parts += [_grid(other)]
     return "".join(parts)
 
@@ -685,7 +761,8 @@ def _number_sections(section_htmls):
     leave a gap (same mechanism as osp.report); also anchor every h3
     subsection and nest it under its parent in the TOC."""
     present = [
-        (anchor, label) for anchor, label in _SECTION_LABELS.items()
+        (anchor, label)
+        for anchor, label in _SECTION_LABELS.items()
         if any(f'<h2 id="{anchor}">{label}</h2>' in s for s in section_htmls)
     ]
     numbered = {anchor: f"{i}. {label}" for i, (anchor, label) in enumerate(present, start=1)}
@@ -694,8 +771,7 @@ def _number_sections(section_htmls):
     for s in section_htmls:
         sec_anchor = next((a for a, l in present if f'<h2 id="{a}">{l}</h2>' in s), None)
         for anchor, label in present:
-            s = s.replace(f'<h2 id="{anchor}">{label}</h2>',
-                          f'<h2 id="{anchor}">{numbered[anchor]}</h2>', 1)
+            s = s.replace(f'<h2 id="{anchor}">{label}</h2>', f'<h2 id="{anchor}">{numbered[anchor]}</h2>', 1)
         subs = []
         if sec_anchor:
             s, subs = _add_subsection_anchors(s, sec_anchor)
@@ -708,9 +784,11 @@ def _number_sections(section_htmls):
         parts.append(f'<a href="#{anchor}">{html.escape(numbered[anchor])}</a>')
         subs = toc_by_anchor.get(anchor, [])
         if subs:
-            parts.append('<div class="toc-sub">' + "".join(
-                f'<a href="#{sid}">{html.escape(text)}</a>' for sid, text in subs
-            ) + "</div>")
+            parts.append(
+                '<div class="toc-sub">'
+                + "".join(f'<a href="#{sid}">{html.escape(text)}</a>' for sid, text in subs)
+                + "</div>"
+            )
     toc = "".join(parts)
     return numbered_htmls, (f'<nav class="toc">{toc}</nav>' if toc else "")
 
@@ -757,9 +835,17 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     leiden_violin_figs = [p for p in figs if os.path.basename(p).startswith("leiden_qc_violin_")]
     annotation_figs = [p for p in figs if os.path.basename(p).startswith("annotation_")]
     inspection_figs = [p for p in figs if os.path.basename(p).startswith("inspect_")]
-    umap_figs = [p for p in figs if p not in qc_figs and not os.path.basename(p).startswith("inspect_")
-                 and p not in standissect_figs and p not in fractal_figs and p not in preannotation_figs
-                 and p not in leiden_violin_figs and p not in annotation_figs]
+    umap_figs = [
+        p
+        for p in figs
+        if p not in qc_figs
+        and not os.path.basename(p).startswith("inspect_")
+        and p not in standissect_figs
+        and p not in fractal_figs
+        and p not in preannotation_figs
+        and p not in leiden_violin_figs
+        and p not in annotation_figs
+    ]
 
     violins = [p for p in qc_figs if "violin" in os.path.basename(p)]
     qc_figs = [p for p in qc_figs if p not in violins]
@@ -781,15 +867,19 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
             sections.append(_section_annotation(outdir, annotation_figs))
     sections, toc = _number_sections(sections)
 
-    header = (f"<h1>{html.escape(title)}</h1>"
-              f'<p class="meta">source dir: {html.escape(os.path.abspath(outdir))}</p>')
+    header = f'<h1>{html.escape(title)}</h1><p class="meta">source dir: {html.escape(os.path.abspath(outdir))}</p>'
     if pending:
-        header += ('<p class="hint">Incomplete steps: ' + ", ".join(pending)
-                   + ". Only completed upstream results are shown.</p>")
+        header += (
+            '<p class="hint">Incomplete steps: '
+            + ", ".join(pending)
+            + ". Only completed upstream results are shown.</p>"
+        )
     body = f'{header}<div class="layout">{toc}<div class="content">{"".join(sections)}</div></div>'
-    html_doc = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                f"<title>{html.escape(title)}</title><style>{CSS}</style></head>"
-                f"<body>{body}{TOC_PIN_SCRIPT}</body></html>")
+    html_doc = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        f"<title>{html.escape(title)}</title><style>{CSS}</style></head>"
+        f"<body>{body}{TOC_PIN_SCRIPT}</body></html>"
+    )
     # Write beside the final report and replace it only after the complete HTML
     # document has been serialized; resume must never mistake a truncated file
     # for a finished report.

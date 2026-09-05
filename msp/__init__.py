@@ -31,5 +31,4 @@ from .integrate import integrate_adata, load_and_merge, run_multi_sample_pipelin
 from .plots import save_single_umap
 from .report import generate_report
 
-__all__ = ["integrate_adata", "load_and_merge", "run_multi_sample_pipeline", "generate_report",
-           "save_single_umap"]
+__all__ = ["integrate_adata", "load_and_merge", "run_multi_sample_pipeline", "generate_report", "save_single_umap"]

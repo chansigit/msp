@@ -17,42 +17,71 @@ from .integrate import integrate_adata, run_multi_sample_pipeline
 from .report import generate_report, write_report_context
 from .steps import step_pending
 
-parser = argparse.ArgumentParser(prog="msp", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+parser = argparse.ArgumentParser(prog="msp", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("inputs", nargs="*", help="per-sample clustered.h5ad files (osp outputs)")
-parser.add_argument("--from-h5ad", default=None, metavar="H5AD",
-                    help="instead of per-sample inputs: one already-merged h5ad with layers['counts'] "
-                         "(e.g. a previous round's annotated_zmip.h5ad) — re-integrated from scratch via "
-                         "integrate_adata; prior obs columns ride along as annotation evidence")
+parser.add_argument(
+    "--from-h5ad",
+    default=None,
+    metavar="H5AD",
+    help="instead of per-sample inputs: one already-merged h5ad with layers['counts'] "
+    "(e.g. a previous round's annotated_zmip.h5ad) — re-integrated from scratch via "
+    "integrate_adata; prior obs columns ride along as annotation evidence",
+)
 parser.add_argument("--batch-col", required=True, help="obs column naming the sample/batch")
 parser.add_argument("--outdir", required=True)
 parser.add_argument("--species", default=None, help="stored in uns['msp']; context for the agents")
-parser.add_argument("--resolutions", type=float, nargs="+", default=[0.3, 1.0, 2.0],
-                    help="leiden resolutions; 1.0 and 2.0 must be present for inspect/annotate")
+parser.add_argument(
+    "--resolutions",
+    type=float,
+    nargs="+",
+    default=[0.3, 1.0, 2.0],
+    help="leiden resolutions; 1.0 and 2.0 must be present for inspect/annotate",
+)
 parser.add_argument("--n-top-genes", type=int, default=2000)
 parser.add_argument("--n-pcs", type=int, default=50)
 parser.add_argument("--n-neighbors", type=int, default=15)
-parser.add_argument("--harmony", action="append", default=[], metavar="KEY=VALUE",
-                    help="harmonypy.run_harmony override, repeatable: e.g. --harmony theta=1 "
-                         "--harmony lamb=-1 --harmony max_iter_harmony=20 --harmony sigma=0.2 "
-                         "(defaults: theta=2, lamb=1, sigma=0.1, nclust=min(N/30,100), "
-                         "max_iter_harmony=10, max_iter_kmeans=20)")
-parser.add_argument("--inspect", action="store_true",
-                    help="after integration, run the per-cluster QC inspection agent (msp.inspect)")
-parser.add_argument("--annotate", action="store_true",
-                    help="after inspection, run the cell-type annotation agent (msp.annotate); "
-                         "implies --inspect")
+parser.add_argument(
+    "--harmony",
+    action="append",
+    default=[],
+    metavar="KEY=VALUE",
+    help="harmonypy.run_harmony override, repeatable: e.g. --harmony theta=1 "
+    "--harmony lamb=-1 --harmony max_iter_harmony=20 --harmony sigma=0.2 "
+    "(defaults: theta=2, lamb=1, sigma=0.1, nclust=min(N/30,100), "
+    "max_iter_harmony=10, max_iter_kmeans=20)",
+)
+parser.add_argument(
+    "--inspect", action="store_true", help="after integration, run the per-cluster QC inspection agent (msp.inspect)"
+)
+parser.add_argument(
+    "--annotate",
+    action="store_true",
+    help="after inspection, run the cell-type annotation agent (msp.annotate); implies --inspect",
+)
 parser.add_argument("--language", default="English", help='agent prose language (default "English")')
-parser.add_argument("--harness", choices=["deepseek", "openai", "claude"], default=None,
-                    help="agent runtime backend (default: HARNESS env, then openai)")
-parser.add_argument("--model", default=None, help='model id for the selected HARNESS backend')
-parser.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"],
-                    help="reasoning effort for the agents (models that support it)")
-parser.add_argument("--max-turns", type=int, default=None,
-                    help="agent turn budget (defaults: inspect 100, annotate 200)")
-parser.add_argument("--report-context", default=None, metavar="TEXT",
-                    help='where this run sits, for report titles (e.g. "round 2 · fu2022-meniscus"); '
-                         "persisted in <outdir>/report_context.txt so later report refreshes keep it")
+parser.add_argument(
+    "--harness",
+    choices=["deepseek", "openai", "claude"],
+    default=None,
+    help="agent runtime backend (default: HARNESS env, then openai)",
+)
+parser.add_argument("--model", default=None, help="model id for the selected HARNESS backend")
+parser.add_argument(
+    "--effort",
+    default=None,
+    choices=["low", "medium", "high", "xhigh", "max"],
+    help="reasoning effort for the agents (models that support it)",
+)
+parser.add_argument(
+    "--max-turns", type=int, default=None, help="agent turn budget (defaults: inspect 100, annotate 200)"
+)
+parser.add_argument(
+    "--report-context",
+    default=None,
+    metavar="TEXT",
+    help='where this run sits, for report titles (e.g. "round 2 · fu2022-meniscus"); '
+    "persisted in <outdir>/report_context.txt so later report refreshes keep it",
+)
 parser.add_argument("--force", action="store_true", help="redo steps whose outputs already exist")
 args = parser.parse_args()
 
@@ -72,6 +101,7 @@ write_report_context(out, args.report_context)
 
 def _parse_kv(items):
     """KEY=VALUE → {key: number|list|str}; comma-separated values become lists."""
+
     def conv(v):
         for cast in (int, float):
             try:
@@ -79,6 +109,7 @@ def _parse_kv(items):
             except ValueError:
                 pass
         return v
+
     out = {}
     for it in items:
         if "=" not in it:
@@ -119,8 +150,7 @@ def _integration_matches():
             meta = plain(integrated.uns.get("msp", {}))
         finally:
             integrated.file.close()
-        expected_harmony = ("skipped: single batch"
-                            if meta.get("n_batches") == 1 else harmony_kwargs)
+        expected_harmony = "skipped: single batch" if meta.get("n_batches") == 1 else harmony_kwargs
         expected = {
             "batch_col": args.batch_col,
             "species": args.species or "",
@@ -138,8 +168,14 @@ def _integration_matches():
 
 
 if args.force or step_pending(out, "integrate") or not _done("integrated.h5ad") or not _integration_matches():
-    kw = dict(species=args.species, resolutions=tuple(args.resolutions), n_top_genes=args.n_top_genes,
-              n_pcs=args.n_pcs, n_neighbors=args.n_neighbors, harmony_kwargs=harmony_kwargs)
+    kw = dict(
+        species=args.species,
+        resolutions=tuple(args.resolutions),
+        n_top_genes=args.n_top_genes,
+        n_pcs=args.n_pcs,
+        n_neighbors=args.n_neighbors,
+        harmony_kwargs=harmony_kwargs,
+    )
     if args.from_h5ad:
         import scanpy as sc
 
