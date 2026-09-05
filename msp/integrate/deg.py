@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import logging
 import os
+from copy import deepcopy
 
+import anndata as an
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -65,6 +67,18 @@ def _stress_hits(names) -> list[str]:
     return [n for n in names if _is_stress_gene(n)]
 
 
+def _global_deg_workspace(ad):
+    """Private mutable metadata with shared, read-only expression matrices.
+
+    Scanpy's use_raw Wilcoxon reads X/raw.X and writes obs/uns metadata.
+    Do not copy counts layers or graph arrays for every global task.
+    """
+    work = an.AnnData(X=ad.X, obs=ad.obs.copy(), var=ad.var.copy(), uns=deepcopy(ad.uns))
+    if ad.raw is not None:
+        work.raw = an.AnnData(X=ad.raw.X, obs=ad.obs.copy(), var=ad.raw.var.copy())
+    return work
+
+
 def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_n_de=50):
     """Cluster Annotations: for the r1.0 and r2.0 leiden clusterings, two DE
     views per cluster — global (one-vs-rest, as before) and local (one-vs-
@@ -86,8 +100,8 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
     this process may actually use (msp.resources): on a 59k-cell object the
     stage dropped from ~5 min to ~2.3 min. Outputs are assembled in the
     same key/cluster order as the old sequential loop, so the CSVs are
-    byte-identical; each global run gets its own uns key so the two keys
-    don't clobber each other's rank_genes_groups slot."""
+    byte-identical; every run owns its mutable metadata, so global result
+    writes cannot race with local subset copying."""
     from concurrent.futures import ThreadPoolExecutor
 
     from ..resources import available_cpus
@@ -150,14 +164,14 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
             continue
         plan.append({"key": key, "cats": cats, "valid": valid_groups, "top3": top3, "sizes": sizes})
 
-    # phase 2 (parallel): the DE runs. Global writes into ad_excl.uns under a
-    # per-key slot; local runs work on their own copies.
+    # phase 2 (parallel): ad_excl stays read-only throughout the pool.
+    # Global tasks share expression buffers but own metadata; locals own subsets.
     def run_global(item):
         key = item["key"]
         slot = f"_rgg_{key}"
-        rank_genes_groups(ad_excl, key, groups=item["valid"], method="wilcoxon", use_raw=True, pts=True, key_added=slot)
-        gdf = sc.get.rank_genes_groups_df(ad_excl, group=None, key=slot)
-        del ad_excl.uns[slot]
+        work = _global_deg_workspace(ad_excl)
+        rank_genes_groups(work, key, groups=item["valid"], method="wilcoxon", use_raw=True, pts=True, key_added=slot)
+        gdf = sc.get.rank_genes_groups_df(work, group=None, key=slot)
         # Scanpy omits group when only one group qualifies for testing.
         if "group" not in gdf and len(item["valid"]) == 1:
             gdf.insert(0, "group", item["valid"][0])

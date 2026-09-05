@@ -7,6 +7,9 @@ All notable changes to msp-sc. The format follows
 ## 0.3.3 - Unreleased
 
 ### Fixed
+- Isolate mutable AnnData metadata in parallel global DEG tasks so local
+  subset copies cannot race with Scanpy result writes. Expression matrices
+  remain shared read-only; raw gene axes and log1p settings are preserved.
 - Show optional lineage reassignment destinations, cell-ledger counts and foreign
   evidence in annotation reports, including computed signal metrics when the
   current clustering table exists. Ordinary MSP reports retain their layout.
