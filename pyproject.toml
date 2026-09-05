@@ -15,24 +15,32 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
+# Lower bounds name the oldest release with the APIs msp calls:
+#   scanpy 1.10   leiden(flavor="igraph"), rank_genes_groups(pts=True) df schema
+#   anndata 0.10  concat(join="outer", merge="same"), nullable obs round-trips
+#   pandas 2.0    groupby(observed=True) everywhere, nullable "boolean" dtype
+#   adjustText 1.0 adjust_text(expand=..., max_move=...)
 dependencies = [
     "agent-harness-bridge==0.1.0",
-    "scanpy",
-    "anndata",
-    "igraph",
-    "harmonypy==0.2.0",   # the torch-based release msp was validated on (PyPI 2.0.0 exists, untested; Z_corr orientation handled in msp.integrate)
-    "torch",
+    "scanpy>=1.10",
+    "anndata>=0.10",
+    "igraph>=0.10",
+    # the torch-based release msp was validated on (PyPI 2.0.0 exists, untested;
+    # Z_corr orientation handled in msp.integrate). harmonypy pulls in torch;
+    # msp itself never imports it.
+    "harmonypy==0.2.0",
     "standissect-lite>=0.2.0",
-    # hierarchical cell-type palette for the annotation UMAPs; not on PyPI, and
-    # its 1.0.0 wheel exposes the module as `scatter_colormap` (see msp.annotate)
-    "stanhue @ git+https://github.com/chansigit/stanhue.git",
-    "pandas",
-    "numpy",
-    "scipy",
-    "scikit-learn",
-    "matplotlib",
-    "seaborn",
-    "adjustText",
+    # hierarchical cell-type palette for the annotation UMAPs. Not on PyPI yet:
+    # switch to "stanhue>=1.1.0" as soon as it is, because PyPI rejects uploads
+    # whose dependencies are direct URL references.
+    "stanhue @ git+https://github.com/chansigit/stanhue.git@v1.1.0",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "scipy>=1.9",
+    "scikit-learn>=1.2",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "adjustText>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -66,3 +74,6 @@ filterwarnings = [
 [tool.coverage.run]
 source = ["msp"]
 omit = ["msp/harness.py"]
+
+[tool.coverage.report]
+fail_under = 80

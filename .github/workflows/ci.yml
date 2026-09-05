@@ -35,4 +35,4 @@ jobs:
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -e . pytest pytest-cov
       - name: Test
-        run: python -m pytest --cov=msp --cov-report=term-missing
+        run: python -m pytest --cov=msp --cov-report=term-missing --cov-fail-under=80

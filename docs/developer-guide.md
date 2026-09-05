@@ -6,17 +6,28 @@
 
 MSP owns integration, biological tools, proposal validation, output updates,
 and reports. [Agent Harness Bridge](https://github.com/chansigit/agent-harness-bridge)
-owns backend execution and shared agent controls; `msp.harness` re-exports
-its public objects for compatibility.
+owns backend execution and shared agent controls; import it as
+`harness_bridge`. The `msp.harness` re-export shim is deprecated and will be
+removed in 0.3.
 
 | Module | Responsibility |
 | --- | --- |
-| [`integrate.py`](../msp/integrate.py) | Load samples, integrate, cluster, compute QC and marker evidence. |
-| [`inspect.py`](../msp/inspect.py) | Inspect cluster quality, query evidence, validate and apply proposals. |
+| [`integrate/pipeline.py`](../msp/integrate/pipeline.py) | Merge samples; `integrate_adata` runs the stages: validate, reset, preprocess, embed, cluster, dissect, evidence, figures, write. |
+| [`integrate/fragments.py`](../msp/integrate/fragments.py) | Minor-sibling QC on standissect fragments; fractal marker selection and dot plot. |
+| [`integrate/outliers.py`](../msp/integrate/outliers.py) | Cell-level doublet / ambient outliers, cutoff violins, the pre-annotation removal union. |
+| [`integrate/deg.py`](../msp/integrate/deg.py) | PAGA neighbours, global / local DEG tables, dissociation-stress signature. |
+| [`integrate/qc.py`](../msp/integrate/qc.py) | QC UMAPs, violins, per-sample and per-cluster QC tables. |
+| [`evidence.py`](../msp/evidence.py) | Read-only evidence over an output directory: precomputed DEG tables (`DegTables`), cached live DEG (`DegCache`), expression / QC / stability views, removal mask, PAGA neighbours. |
+| [`agent_tools.py`](../msp/agent_tools.py) | The `deg_lookup`, `deg_sql`, and `check_genes` tools both agents share. |
+| [`inspect.py`](../msp/inspect.py) | Inspect cluster quality, subcluster, validate and apply proposals. |
 | [`annotate.py`](../msp/annotate.py) | Assign labels, resolve merges, apply removals. |
 | [`steps.py`](../msp/steps.py) | Invalidate and archive outputs; track pending stages. |
 | [`report.py`](../msp/report.py) | Build a self-contained HTML report from completed stages. |
 | [`__main__.py`](../msp/__main__.py) | Parse CLI options, check resume conditions, run stages in order. |
+
+`inspect.py` and `annotate.py` still expose the evidence helpers under their
+old underscore names (`_cluster_order`, `_load_paga_neighbors`, ...) because
+ZMIP imports them; new code should use the public names in `msp.evidence`.
 
 ## Python entry points
 
@@ -167,20 +178,23 @@ completion when driving MSP externally.
 ## Development checks
 
 Install an editable checkout and run the regression suite below. Tests cover
-evidence contracts, proposal validation, removal handling, and stage recovery;
-they do not establish biological annotation accuracy. Keep changes to shared
-backend execution in Agent Harness Bridge and changes to MSP's scientific
-behavior in this repository.
+the fragment and outlier statistics, evidence contracts, proposal validation,
+removal handling, stage recovery, report sections, and one real integration of
+a synthetic two-sample dataset (`tests/synthetic_data.py`); they do not
+establish biological annotation accuracy. Keep changes to shared backend
+execution in Agent Harness Bridge and changes to MSP's scientific behavior in
+this repository.
 
 ```bash
 python -m pip install -e ".[agent]"
-python -m pip install pytest ruff
+python -m pip install pytest pytest-cov ruff
 ruff check msp tests && ruff format --check msp tests
-python -m pytest
+python -m pytest --cov=msp
 ```
 
 Lint and test settings live in `pyproject.toml`; the GitHub Actions workflow
-runs the same commands on pushes and pull requests. The test suite treats
-`FutureWarning`s raised from `msp` as errors, so a pandas deprecation shows up
-as a failure rather than as noise. Open refactoring items are tracked in
-[TODO.md](../TODO.md).
+runs the same commands on pushes and pull requests and fails below the
+coverage floor set there. The test suite treats `FutureWarning`s raised from
+`msp` as errors, so a pandas deprecation shows up as a failure rather than as
+noise. Record user-visible changes in [CHANGELOG.md](../CHANGELOG.md); open
+items are tracked in [TODO.md](../TODO.md).
