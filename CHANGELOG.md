@@ -4,6 +4,13 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.3.2 - 2026-09-05
+
+### Fixed
+- Detect author-label columns with pandas string dtypes, including nullable
+  strings and the pandas 3 default string dtype. Preserve categorical labels
+  and the existing exclusions for sample identity, booleans and numeric columns.
+
 ## 0.3.1 - 2026-09-05
 
 - Require agent-harness-bridge >=0.2.1,<0.3 for bounded host Read support.

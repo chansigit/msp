@@ -103,7 +103,7 @@ def _prior_label_columns(ad, batch_col):
         if c == batch_col or c.startswith(deny_prefix):
             continue
         s = ad.obs[c]
-        if not (s.dtype == object or str(s.dtype) == "category"):
+        if not (pd.api.types.is_string_dtype(s.dtype) or isinstance(s.dtype, pd.CategoricalDtype)):
             continue
         n = s.nunique(dropna=True)
         if n < 2 or n > 200:
