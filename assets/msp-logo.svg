@@ -1,55 +1,65 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"
      role="img" aria-labelledby="msp-logo-title msp-logo-desc">
-  <title id="msp-logo-title">MSP — Multi-sample Pipeline</title>
-  <desc id="msp-logo-desc">Cells from three samples form a shared M-shaped structure.
-    A central ring brings their colors together, representing integration and
-    evidence-based review. The MSP wordmark is drawn as vector paths.</desc>
+  <title id="msp-logo-title">MSP — a shared cell atlas</title>
+  <desc id="msp-logo-desc">Three distinct organic populations share intertwined blue,
+    jade, and amber bands. Shape represents biological identity; the recurring
+    colors represent samples integrated into each population. Open space preserves
+    the distinction between populations. An abstract mark, not a data plot.</desc>
 
-  <!-- Square canvas; the quiet blue field keeps all three sample colors legible. -->
-  <rect width="512" height="512" rx="64" fill="#F2F7FB"/>
-  <rect x="1" y="1" width="510" height="510" rx="63" fill="none" stroke="#DFEAF2" stroke-width="2"/>
+  <defs>
+    <!-- Population contours: deliberately different, like islands in a cell atlas. -->
+    <path id="population-a" d="M79 148C82 107 116 76 158 72C202 68 246 89 265 125
+      C279 151 270 178 249 194C232 207 219 207 207 226C193 249 183 268 155 268
+      C111 268 74 211 79 148Z"/>
+    <path id="population-b" d="M366 112C408 105 446 140 449 183C452 217 436 258 408 276
+      C383 292 356 281 348 258C341 238 350 220 336 204C318 184 314 164 324 144
+      C332 127 347 116 366 112Z"/>
+    <path id="population-c" d="M174 308C201 310 216 286 244 282C279 275 304 296 326 314
+      C348 332 374 331 391 352C414 381 400 416 370 432C338 450 298 444 273 426
+      C250 409 232 400 207 404C173 411 142 408 126 385C108 359 119 326 143 313
+      C153 308 163 307 174 308Z"/>
+    <clipPath id="clip-a"><use href="#population-a"/></clipPath>
+    <clipPath id="clip-b"><use href="#population-b"/></clipPath>
+    <clipPath id="clip-c"><use href="#population-c"/></clipPath>
+  </defs>
 
-  <!-- Shared geometry connects the samples without erasing their identities. -->
-  <path d="M124 316V108L256 240L388 108V316" fill="none"
-        stroke="#DDE9F1" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Each population contains the same three sample colors. The bands bend
+       together within a population, rather than converging into one central hub. -->
+  <g transform="rotate(-35 256 256)">
+    <g clip-path="url(#clip-a)">
+      <use href="#population-a" fill="#2855BD"/>
+      <path d="M78 92C96 130 125 141 155 147C193 155 213 176 224 205C235 235 222 265 218 285"
+            fill="none" stroke="#FFFFFF" stroke-width="79"/>
+      <path d="M78 92C96 130 125 141 155 147C193 155 213 176 224 205C235 235 222 265 218 285"
+            fill="none" stroke="#20AD98" stroke-width="68"/>
+      <path d="M60 154C94 184 119 187 144 196C171 206 185 239 179 282"
+            fill="none" stroke="#FFFFFF" stroke-width="40"/>
+      <path d="M60 154C94 184 119 187 144 196C171 206 185 239 179 282"
+            fill="none" stroke="#F0B54D" stroke-width="29"/>
+    </g>
 
-  <!-- Azure sample. -->
-  <g fill="#2875D4">
-    <circle cx="124" cy="108" r="21"/>
-    <circle cx="168" cy="152" r="21"/>
-    <circle cx="124" cy="264" r="21"/>
-    <circle cx="344" cy="152" r="21"/>
-    <circle cx="388" cy="212" r="21"/>
-  </g>
+    <g clip-path="url(#clip-b)">
+      <use href="#population-b" fill="#2855BD"/>
+      <path d="M339 100C391 119 411 141 408 175C405 210 379 234 397 294"
+            fill="none" stroke="#FFFFFF" stroke-width="65"/>
+      <path d="M339 100C391 119 411 141 408 175C405 210 379 234 397 294"
+            fill="none" stroke="#20AD98" stroke-width="54"/>
+      <path d="M321 126C353 149 365 165 365 187C365 216 352 240 365 288"
+            fill="none" stroke="#FFFFFF" stroke-width="33"/>
+      <path d="M321 126C353 149 365 165 365 187C365 216 352 240 365 288"
+            fill="none" stroke="#F0B54D" stroke-width="22"/>
+    </g>
 
-  <!-- Teal sample. -->
-  <g fill="#079C91">
-    <circle cx="124" cy="160" r="21"/>
-    <circle cx="212" cy="196" r="21"/>
-    <circle cx="124" cy="316" r="21"/>
-    <circle cx="388" cy="108" r="21"/>
-    <circle cx="388" cy="264" r="21"/>
-  </g>
-
-  <!-- Amber sample. -->
-  <g fill="#E7A33C">
-    <circle cx="124" cy="212" r="21"/>
-    <circle cx="300" cy="196" r="21"/>
-    <circle cx="388" cy="160" r="21"/>
-    <circle cx="388" cy="316" r="21"/>
-  </g>
-
-  <!-- A reviewed population: distinct cells, one shared neighborhood. -->
-  <circle cx="256" cy="240" r="31" fill="#173B52"/>
-  <circle cx="256" cy="240" r="22" fill="#F2F7FB"/>
-  <circle cx="249" cy="235" r="7" fill="#2875D4"/>
-  <circle cx="263" cy="235" r="7" fill="#079C91"/>
-  <circle cx="256" cy="247" r="7" fill="#E7A33C"/>
-
-  <!-- Custom MSP lettering: no font dependency or embedded raster content. -->
-  <g fill="none" stroke="#173B52" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M159 417V369L184 397L209 369V417"/>
-    <path d="M270 374C261 367 239 366 233 377C224 394 272 391 271 405C270 422 242 421 231 413"/>
-    <path d="M296 417V369H322C349 369 349 396 322 396H296"/>
+    <g clip-path="url(#clip-c)">
+      <use href="#population-c" fill="#2855BD"/>
+      <path d="M106 365C149 386 173 365 204 357C248 345 275 352 302 375C327 397 364 411 411 392"
+            fill="none" stroke="#FFFFFF" stroke-width="69"/>
+      <path d="M106 365C149 386 173 365 204 357C248 345 275 352 302 375C327 397 364 411 411 392"
+            fill="none" stroke="#20AD98" stroke-width="58"/>
+      <path d="M118 320C151 340 174 333 199 322C233 306 263 310 288 329C322 356 346 365 405 357"
+            fill="none" stroke="#FFFFFF" stroke-width="34"/>
+      <path d="M118 320C151 340 174 333 199 322C233 306 263 310 288 329C322 356 346 365 405 357"
+            fill="none" stroke="#F0B54D" stroke-width="23"/>
+    </g>
   </g>
 </svg>
