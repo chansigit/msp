@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/msp-logo.svg" alt="MSP — Multi-sample Pipeline logo" width="200" height="200">
+</p>
+
 # MSP — Multi-sample Pipeline
 
 **Bring single-cell samples together, review their quality, and annotate cell types.**

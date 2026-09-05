@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"
+     role="img" aria-labelledby="msp-logo-title msp-logo-desc">
+  <title id="msp-logo-title">MSP — Multi-sample Pipeline</title>
+  <desc id="msp-logo-desc">Cells from three samples form a shared M-shaped structure.
+    A central ring brings their colors together, representing integration and
+    evidence-based review. The MSP wordmark is drawn as vector paths.</desc>
+
+  <!-- Square canvas; the quiet blue field keeps all three sample colors legible. -->
+  <rect width="512" height="512" rx="64" fill="#F2F7FB"/>
+  <rect x="1" y="1" width="510" height="510" rx="63" fill="none" stroke="#DFEAF2" stroke-width="2"/>
+
+  <!-- Shared geometry connects the samples without erasing their identities. -->
+  <path d="M124 316V108L256 240L388 108V316" fill="none"
+        stroke="#DDE9F1" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Azure sample. -->
+  <g fill="#2875D4">
+    <circle cx="124" cy="108" r="21"/>
+    <circle cx="168" cy="152" r="21"/>
+    <circle cx="124" cy="264" r="21"/>
+    <circle cx="344" cy="152" r="21"/>
+    <circle cx="388" cy="212" r="21"/>
+  </g>
+
+  <!-- Teal sample. -->
+  <g fill="#079C91">
+    <circle cx="124" cy="160" r="21"/>
+    <circle cx="212" cy="196" r="21"/>
+    <circle cx="124" cy="316" r="21"/>
+    <circle cx="388" cy="108" r="21"/>
+    <circle cx="388" cy="264" r="21"/>
+  </g>
+
+  <!-- Amber sample. -->
+  <g fill="#E7A33C">
+    <circle cx="124" cy="212" r="21"/>
+    <circle cx="300" cy="196" r="21"/>
+    <circle cx="388" cy="160" r="21"/>
+    <circle cx="388" cy="316" r="21"/>
+  </g>
+
+  <!-- A reviewed population: distinct cells, one shared neighborhood. -->
+  <circle cx="256" cy="240" r="31" fill="#173B52"/>
+  <circle cx="256" cy="240" r="22" fill="#F2F7FB"/>
+  <circle cx="249" cy="235" r="7" fill="#2875D4"/>
+  <circle cx="263" cy="235" r="7" fill="#079C91"/>
+  <circle cx="256" cy="247" r="7" fill="#E7A33C"/>
+
+  <!-- Custom MSP lettering: no font dependency or embedded raster content. -->
+  <g fill="none" stroke="#173B52" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M159 417V369L184 397L209 369V417"/>
+    <path d="M270 374C261 367 239 366 233 377C224 394 272 391 271 405C270 422 242 421 231 413"/>
+    <path d="M296 417V369H322C349 369 349 396 322 396H296"/>
+  </g>
+</svg>
