@@ -8,11 +8,7 @@ the dependency cleanup, the logging switch and the harmonypy 2.0 upgrade
 ## Needs a decision or an external step
 
 - [ ] **Remove `msp.harness`** in 0.4 (it warns since 0.3). ZMIP and ECA-RSI
-      import `harness_bridge` directly.
-- [ ] **ECA-RSI** still pins `agent-harness-bridge[all]==0.1.0`; it keeps
-      working (the bridge attaches its default handler when nobody configured
-      logging), but move it to `>=0.2.0,<0.3` and `configure_logging` when it
-      is next touched.
+      already import `harness_bridge` directly (both on bridge 0.2).
 
 ## Phase 3 leftovers
 
