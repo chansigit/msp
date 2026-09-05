@@ -1,6 +1,6 @@
 """
 msp.annotate — cell-type annotation of an msp integration directory with an
-agent (msp.harness: HARNESS=claude|deepseek|openai), run AFTER msp.inspect.
+agent (harness_bridge: HARNESS=claude|deepseek|openai), run AFTER msp.inspect.
 
 Unit of annotation: every cluster of the base clustering (msp_leiden_r2.0,
 the finer of the two Cluster Annotations resolutions). For each cluster the
@@ -47,18 +47,17 @@ matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
 import scanpy as sc
+from harness_bridge import AgentIncompleteError, default_model
 
-from .harness import AgentIncompleteError, default_model
-from .inspect import (  # _load_paga_neighbors re-exported for zmip
-    _DEG_SQL_DOC,
-    _DEG_TOOL_DOC,
+from .agent_tools import DEG_FILTER_ARGS, deg_filters, shared_tools, text_result
+from .evidence import (
     DegCache,
     DegTables,
-    _cluster_order,
-    _file_inventory,
-    _gene_table,
-    _load_paga_neighbors,
-    _load_removal_mask,
+    cluster_order,
+    file_inventory,
+    load_paga_neighbors,
+    load_removal_mask,
+    parse_reference,
 )
 from .report import generate_report
 from .steps import begin_step, complete_step, require_upstream_ready
@@ -282,7 +281,7 @@ def _components(entries):
         groups.setdefault(find(c), []).append(c)
     comp = {}
     for members in groups.values():
-        members = _cluster_order(members)
+        members = cluster_order(members)
         for c in members:
             comp[c] = members
     return comp
@@ -385,24 +384,14 @@ def _apply(ad, proposal, pre_removed, pre_sources):
     return archive.loc[removed].reset_index(drop=True)
 
 
-def _stanhue_colors():
-    """stanhue's palette function. The 1.0.0 wheel ships its single module as
-    ``scatter_colormap`` (the README's ``from stanhue import ...`` does not
-    resolve); accept both names so a fixed release keeps working."""
-    try:
-        from stanhue import assign_celltype_colors  # type: ignore[import-not-found]
-    except ImportError:
-        from scatter_colormap import assign_celltype_colors  # type: ignore[import-not-found]
-    return assign_celltype_colors
-
-
 def _palette(ad, col):
     """stanhue hierarchical palette (related labels share a hue family) in
     category order, or None for scanpy's default when stanhue is missing or
     fails; the fallback is announced so it never passes unnoticed. Failing
     here must not lose the annotation run that precedes it."""
     try:
-        assign_celltype_colors = _stanhue_colors()
+        from stanhue import assign_celltype_colors
+
         cmap = assign_celltype_colors(np.asarray(ad.obsm["X_umap"]), ad.obs[col].astype(str).to_numpy())
     except Exception as exc:
         print(f"== stanhue palette unavailable ({exc!r}); using scanpy's default palette for {col}", flush=True)
@@ -500,7 +489,7 @@ called 'Fibroblast' last round stays 'Fibroblast', not 'Stromal fibroblast'), an
 the evidence contradicts it — label churn between rounds is noise, not progress.
 
 All relevant files (paths relative to the working directory — Read exactly these, no guessing):
-{_file_inventory(outdir)}
+{file_inventory(outdir)}
 
 What they are:
 - deg_global_{{key}}.csv / deg_local_{{key}}.csv for key in {PARENT_KEY} and {BASE_KEY}: precomputed DEG \
@@ -543,7 +532,7 @@ dedicated QC pass; you annotate identity and decide merges."""
 async def _run_agent(
     ad, outdir, clusters, batch_col, species, prior_cols, paga, pre_agent_removed, language, model, effort, max_turns
 ):
-    from .harness import ToolSpec, run_agent
+    from harness_bridge import ToolSpec, run_agent
 
     entries = {}
     deg = DegCache(ad, outdir, pre_agent_removed, label="annotate")
@@ -551,94 +540,31 @@ async def _run_agent(
     print(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}", flush=True)
 
     async def cluster_context(args):
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": _cluster_context(
-                        ad, str(args["cluster"]), batch_col, prior_cols, paga, pre_agent_removed, tables
-                    ),
-                }
-            ]
-        }
-
-    async def deg_lookup(args):
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": tables.lookup(
-                        args.get("cluster", ""),
-                        args.get("gene", ""),
-                        args.get("view", "both"),
-                        args.get("key", ""),
-                        args.get("top_n") or 20,
-                        args.get("min_logfc"),
-                        args.get("max_padj"),
-                        args.get("min_pct1"),
-                        args.get("max_pct2"),
-                    ),
-                }
-            ]
-        }
-
-    async def deg_sql(args):
-        return {"content": [{"type": "text", "text": tables.sql(args.get("query", ""))}]}
-
-    async def check_genes(args):
-        genes = args["genes"]
-        if isinstance(genes, str):
-            genes = [g for g in genes.replace(",", " ").split() if g]
-        return {"content": [{"type": "text", "text": _gene_table(ad, genes, BASE_KEY)}]}
+        return text_result(
+            _cluster_context(ad, str(args["cluster"]), batch_col, prior_cols, paga, pre_agent_removed, tables)
+        )
 
     async def check_deg(args):
-        from .inspect import _parse_reference
-
         c = str(args["cluster"])
         if c not in clusters:
-            return {
-                "content": [{"type": "text", "text": f"unknown cluster {c!r}; base clusters: {clusters}"}],
-                "is_error": True,
-            }
+            return text_result(f"unknown cluster {c!r}; base clusters: {clusters}", is_error=True)
         reference = str(args.get("reference") or "rest").strip() or "rest"
         try:
-            ref = _parse_reference(reference, clusters)
+            ref = parse_reference(reference, clusters)
             if ref != "rest" and c in ref:
                 raise ValueError("reference must exclude the target cluster")
         except ValueError as exc:
-            return {"content": [{"type": "text", "text": str(exc)}], "is_error": True}
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": deg.table(
-                        BASE_KEY,
-                        c,
-                        reference,
-                        int(args.get("top_n") or 20),
-                        args.get("min_logfc"),
-                        args.get("max_padj"),
-                        args.get("min_pct1"),
-                        args.get("max_pct2"),
-                    ),
-                }
-            ]
-        }
+            return text_result(exc, is_error=True)
+        return text_result(deg.table(BASE_KEY, c, reference, int(args.get("top_n") or 20), **deg_filters(args)))
 
     async def submit_cluster(args):
         try:
             e = json.loads(args["cluster_json"])
         except (json.JSONDecodeError, TypeError) as exc:
-            return {
-                "content": [{"type": "text", "text": f"JSON parse error, fix and resubmit: {exc}"}],
-                "is_error": True,
-            }
+            return text_result(f"JSON parse error, fix and resubmit: {exc}", is_error=True)
         problems = _validate_cluster(e, clusters)
         if problems:
-            return {
-                "content": [{"type": "text", "text": "invalid, fix and resubmit:\n- " + "\n- ".join(problems)}],
-                "is_error": True,
-            }
+            return text_result("invalid, fix and resubmit:\n- " + "\n- ".join(problems), is_error=True)
         e["cluster_id"] = str(e["cluster_id"])
         if e["merge_target"] is not None:
             e["merge_target"] = str(e["merge_target"])
@@ -649,23 +575,15 @@ async def _run_agent(
             f"[{e['action']}{', merge→' + e['merge_target'] if e['merge_target'] else ''}]",
             flush=True,
         )
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"recorded cluster {e['cluster_id']}; {len(entries)}/{len(clusters)} submitted"
-                    + (f", remaining: {left}" if left else " — all covered, call finalize_annotation"),
-                }
-            ]
-        }
+        return text_result(
+            f"recorded cluster {e['cluster_id']}; {len(entries)}/{len(clusters)} submitted"
+            + (f", remaining: {left}" if left else " — all covered, call finalize_annotation")
+        )
 
     async def finalize_annotation(args):
         problems = _validate_final(entries, clusters)
         if problems:
-            return {
-                "content": [{"type": "text", "text": "not final yet, fix and call again:\n- " + "\n- ".join(problems)}],
-                "is_error": True,
-            }
+            return text_result("not final yet, fix and call again:\n- " + "\n- ".join(problems), is_error=True)
         comp = _components(entries)
         # Order merged groups by their first member's position in the base
         # clustering order; cluster IDs are not guaranteed to be numeric.
@@ -683,7 +601,7 @@ async def _run_agent(
         path = os.path.join(outdir, "annotation_proposal.json")
         with open(path, "w") as fh:
             json.dump(proposal, fh, ensure_ascii=False, indent=2)
-        return {"content": [{"type": "text", "text": f"accepted; saved to {path}"}], "_submitted": proposal}
+        return {**text_result(f"accepted; saved to {path}"), "_submitted": proposal}
 
     tools = [
         ToolSpec(
@@ -694,29 +612,12 @@ async def _run_agent(
             {"cluster": str},
             cluster_context,
         ),
-        ToolSpec(
-            "deg_lookup",
-            _DEG_TOOL_DOC,
-            {
-                "cluster": str,
-                "gene": str,
-                "view": str,
-                "key": str,
-                "top_n": int,
-                "min_logfc": float,
-                "max_padj": float,
-                "min_pct1": float,
-                "max_pct2": float,
-            },
-            deg_lookup,
-        ),
-        ToolSpec("deg_sql", _DEG_SQL_DOC, {"query": str}, deg_sql),
-        ToolSpec(
-            "check_genes",
+        *shared_tools(
+            tables,
+            ad,
+            lambda: BASE_KEY,
             f"Per-{BASE_KEY}-cluster mean expression and expressing-cell fraction for the given genes "
             "(case-insensitive). Use to verify markers.",
-            {"genes": list},
-            check_genes,
         ),
         ToolSpec(
             "check_deg",
@@ -727,15 +628,7 @@ async def _run_agent(
             "(0/empty = off): min_logfc, max_padj, min_pct1, max_pct2 — ask for exactly the gene list you "
             "need. Cached per (cluster, reference); one-vs-rest and vs-the-3-PAGA-neighbours come from the "
             "precomputed tables.",
-            {
-                "cluster": str,
-                "reference": str,
-                "top_n": int,
-                "min_logfc": float,
-                "max_padj": float,
-                "min_pct1": float,
-                "max_pct2": float,
-            },
+            {"cluster": str, "reference": str, **DEG_FILTER_ARGS},
             check_deg,
         ),
         ToolSpec(
@@ -802,9 +695,9 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     if not batch_col:
         raise ValueError("integrated.h5ad lacks uns['msp']['batch_col'] — not an msp output?")
     species = species or (msp_meta.get("species") or None)
-    clusters = _cluster_order(ad.obs[BASE_KEY].astype(str))
+    clusters = cluster_order(ad.obs[BASE_KEY].astype(str))
 
-    pre_sources = {"preannotation": _load_removal_mask(outdir, ad)}
+    pre_sources = {"preannotation": load_removal_mask(outdir, ad)}
     if "_msp_action" in ad.obs:
         pre_sources["inspect_drop"] = (ad.obs["_msp_action"].astype(str) == "drop").to_numpy()
     else:
@@ -818,7 +711,7 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
 
     prior_cols = _prior_label_columns(ad, batch_col)
     print(f"== prior label columns detected: {prior_cols}", flush=True)
-    paga = _load_paga_neighbors(outdir, BASE_KEY)
+    paga = load_paga_neighbors(outdir, BASE_KEY)
 
     begin_step(outdir, "annotate")
     proposal = asyncio.run(
@@ -881,6 +774,12 @@ def main(argv=None):
         )
     if proposal["merged_groups"]:
         print("merged groups: " + ", ".join(proposal["merged_groups"]))
+
+
+# ---------------------------------------------------------------- compatibility
+# zmip (msp-sc<0.3) imports this underscore name from here; the function now
+# lives in msp.evidence as load_paga_neighbors.
+_load_paga_neighbors = load_paga_neighbors
 
 
 if __name__ == "__main__":

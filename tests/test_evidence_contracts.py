@@ -6,12 +6,13 @@ import json
 from types import SimpleNamespace
 
 import anndata as ad
+import harness_bridge
 import numpy as np
 import pandas as pd
 import pytest
 
 import msp.annotate as annotate
-import msp.harness as harness
+import msp.evidence as evidence
 import msp.inspect as inspect
 from msp.integrate import _mwu_greater, _qc_outputs, load_and_merge
 from msp.report import generate_report
@@ -146,7 +147,7 @@ def test_filtered_deg_cache_falls_back_once_then_reuses_complete_table(tmp_path,
         calls.append(args)
         return frame.copy()
 
-    monkeypatch.setattr(inspect, "_deg_frame", compute)
+    monkeypatch.setattr(evidence, "deg_frame", compute)
     cache = inspect.DegCache(data, tmp_path, np.zeros(2, dtype=bool))
     cache.table(annotate.BASE_KEY, "0", "rest", 5)
     assert not calls
@@ -280,8 +281,8 @@ def test_inspection_tool_allows_correction_and_subcluster_reference(tmp_path, mo
         result = await tools["submit_inspection"]({"proposal_json": json.dumps(proposal)})
         return SimpleNamespace(submitted=result["_submitted"], transcript_text="Inspection notes")
 
-    monkeypatch.setattr(inspect, "_deg_frame", compute)
-    monkeypatch.setattr(harness, "run_agent", run_agent)
+    monkeypatch.setattr(evidence, "deg_frame", compute)
+    monkeypatch.setattr(harness_bridge, "run_agent", run_agent)
     result = asyncio.run(
         inspect._run_agent(
             data,
@@ -316,7 +317,7 @@ def test_all_removed_annotation_delivers_empty_h5ad_and_real_plots(tmp_path, mon
         result = await tools["finalize_annotation"]({"overall": "All cells removed in synthetic test."})
         return SimpleNamespace(submitted=result["_submitted"], transcript_text="All removal sources retained.")
 
-    monkeypatch.setattr(harness, "run_agent", run_agent)
+    monkeypatch.setattr(harness_bridge, "run_agent", run_agent)
     annotate.annotate_clusters(tmp_path, model="test-model")
     kept = ad.read_h5ad(tmp_path / "annotated.h5ad")
     assert kept.shape == (0, 2) and "msp_ann_action" in kept.obs
@@ -375,11 +376,10 @@ def test_palette_uses_stanhue_in_category_order_and_falls_back_loudly(monkeypatc
         calls.append((coords.shape, list(labels)))
         return {"a": "#111111", "b": "#222222"}
 
-    monkeypatch.setitem(sys.modules, "stanhue", None)  # the README name does not resolve
-    monkeypatch.setitem(sys.modules, "scatter_colormap", SimpleNamespace(assign_celltype_colors=assign_celltype_colors))
+    monkeypatch.setitem(sys.modules, "stanhue", SimpleNamespace(assign_celltype_colors=assign_celltype_colors))
     assert annotate._palette(data, "label") == ["#111111", "#222222"]
     assert calls == [((3, 2), ["b", "a", "b"])]
 
-    monkeypatch.setitem(sys.modules, "scatter_colormap", None)
+    monkeypatch.setitem(sys.modules, "stanhue", None)  # import fails
     assert annotate._palette(data, "label") is None
     assert "stanhue palette unavailable" in capsys.readouterr().out

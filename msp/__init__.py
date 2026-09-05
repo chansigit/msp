@@ -21,14 +21,28 @@ Command line:
     python -m msp.annotate msp_out          # annotation agent only (after inspect)
     python -m msp.report   msp_out          # rebuild the report only
 
-msp.inspect / msp.annotate are intentionally not imported here — they depend
-on optional agent dependencies (`pip install "msp-sc[agent]"`); use
-`from msp.inspect import inspect_clusters` / `from msp.annotate import
+msp.inspect / msp.annotate are intentionally not imported here: they need an
+agent backend (`pip install "msp-sc[agent]"` installs every supported one);
+use `from msp.inspect import inspect_clusters` / `from msp.annotate import
 annotate_clusters` when needed.
 """
+
+from importlib.metadata import PackageNotFoundError, version
 
 from .integrate import integrate_adata, load_and_merge, run_multi_sample_pipeline
 from .plots import save_single_umap
 from .report import generate_report
 
-__all__ = ["integrate_adata", "load_and_merge", "run_multi_sample_pipeline", "generate_report", "save_single_umap"]
+try:
+    __version__ = version("msp-sc")
+except PackageNotFoundError:  # running from a checkout that was never installed
+    __version__ = "0+unknown"
+
+__all__ = [
+    "__version__",
+    "integrate_adata",
+    "load_and_merge",
+    "run_multi_sample_pipeline",
+    "generate_report",
+    "save_single_umap",
+]

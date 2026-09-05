@@ -3,7 +3,7 @@ UMAP → QC/DEG tables → HTML report), end to end.
 
 With --inspect, the per-cluster QC inspection agent (msp.inspect) runs
 afterwards; with --annotate, the cell-type annotation agent (msp.annotate)
-runs after that (both need the optional agent dependencies). Completed
+runs after that (both need an agent backend: `pip install "msp-sc[agent]"`). Completed
 steps resume from their contract files; interrupted steps remain pending.
 Rerunning a step invalidates its downstream results; --force reruns the
 requested steps. Report rendering does not trigger computation.
@@ -223,7 +223,7 @@ def main(argv=None):
     print(f"report: {generate_report(out)}")
 
     if args.inspect:
-        from .harness import backend_name, default_model
+        from harness_bridge import backend_name, default_model
 
         args.model = args.model or default_model()
         print(f"[agent] harness={backend_name()} model={args.model}")

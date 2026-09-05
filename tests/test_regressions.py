@@ -12,7 +12,7 @@ from scipy import sparse
 
 import msp.integrate as integrate
 import msp.resources as resources
-from msp.inspect import DegTables, _cluster_order, _load_paga_neighbors, _load_removal_mask
+from msp.evidence import DegTables, cluster_order, load_paga_neighbors, load_removal_mask
 
 
 @pytest.mark.parametrize("harmony", [{}, {"theta": [1, 2]}])
@@ -72,30 +72,30 @@ def test_removal_mask_preserves_cell_ids_and_alignment(tmp_path):
         }
     ).to_csv(tmp_path / "preannotation_removal.csv", index=False)
 
-    np.testing.assert_array_equal(_load_removal_mask(tmp_path, data), [True, False, True, False])
+    np.testing.assert_array_equal(load_removal_mask(tmp_path, data), [True, False, True, False])
 
 
 def test_missing_removal_file_preserves_legacy_behavior(tmp_path):
     data = ad.AnnData(np.ones((2, 2)))
-    np.testing.assert_array_equal(_load_removal_mask(tmp_path, data), [False, False])
+    np.testing.assert_array_equal(load_removal_mask(tmp_path, data), [False, False])
 
 
 @pytest.mark.parametrize("contents", [None, "\n", "cluster,neighbor,rank,connectivity\n"])
 def test_empty_paga_neighbors(tmp_path, contents):
     if contents is not None:
         (tmp_path / "paga_neighbors_k.csv").write_text(contents)
-    assert _load_paga_neighbors(tmp_path, "k") == {}
+    assert load_paga_neighbors(tmp_path, "k") == {}
 
 
 def test_paga_reader_preserves_ids_and_rank_order(tmp_path):
     (tmp_path / "paga_neighbors_k.csv").write_text("cluster,neighbor,rank,connectivity\n001,003,2,0.2\n001,002,1,0.8\n")
-    assert _load_paga_neighbors(tmp_path, "k") == {"001": ["002", "003"]}
+    assert load_paga_neighbors(tmp_path, "k") == {"001": ["002", "003"]}
 
 
 def test_malformed_paga_schema_is_not_silently_ignored(tmp_path):
     (tmp_path / "paga_neighbors_k.csv").write_text("wrong_column\nvalue\n")
     with pytest.raises(KeyError):
-        _load_paga_neighbors(tmp_path, "k")
+        load_paga_neighbors(tmp_path, "k")
 
 
 @pytest.mark.parametrize("second_size,connected", [(2, True), (12, True), (12, False)])
@@ -143,7 +143,7 @@ def test_cluster_annotations_preserve_csv_contract(tmp_path, monkeypatch, second
         assert set(local_df["group"]) == expected_groups
     else:
         assert neighbors.empty
-        assert _load_paga_neighbors(tmp_path, "k") == {}
+        assert load_paga_neighbors(tmp_path, "k") == {}
 
 
 def test_deg_lookup_limits_each_view_after_filtering(tmp_path):
@@ -181,6 +181,20 @@ def test_deg_tables_skip_per_cell_csvs_but_keep_summaries(tmp_path):
 
 
 def test_cluster_order_accepts_any_iterable_and_non_numeric_ids():
-    assert _cluster_order(["10", "2", "5,1", "5,0"]) == ["2", "5,1", "5,0", "10"]
-    assert _cluster_order(pd.Series(["b", "a", "b"])) == ["a", "b"]
-    assert _cluster_order(iter(["1", "1", "0"])) == ["0", "1"]
+    assert cluster_order(["10", "2", "5,1", "5,0"]) == ["2", "5,0", "5,1", "10"]
+    assert cluster_order(["5,10", "5,2", "5"]) == ["5", "5,2", "5,10"]  # every part numeric, not just the first
+    assert cluster_order(pd.Series(["b", "a", "b"])) == ["a", "b"]
+    assert cluster_order(["c1_0", "c0_1", "c0_0"]) == ["c0_0", "c0_1", "c1_0"]  # standissect ids: string order
+    assert cluster_order(iter(["1", "1", "0"])) == ["0", "1"]
+
+
+def test_deg_tables_skip_oversized_csvs_but_list_them(tmp_path, monkeypatch):
+    pd.DataFrame({"key": ["k"], "cluster": ["0"], "stress": [False]}).to_csv(
+        tmp_path / "stress_clusters.csv", index=False
+    )
+    pd.DataFrame({"a": range(200)}).to_csv(tmp_path / "large_export.csv", index=False)
+    monkeypatch.setattr(DegTables, "MAX_EXTRA_TABLE_BYTES", 100)
+    with DegTables(tmp_path, base_key="k") as tables:
+        assert tables.skipped_tables == ["large_export"]
+        assert set(tables.extra_tables) == {"stress_clusters"}
+        assert "large_export" in tables.sql("schema") and "not loaded" in tables.schema_text()
