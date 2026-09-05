@@ -31,8 +31,9 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          # CPU-only torch keeps the harmonypy dependency install small.
-          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # agent-harness-bridge 0.2.0 (logging API) is not on PyPI yet; drop
+          # this line once it is published.
+          python -m pip install "git+https://github.com/chansigit/agent-harness-bridge.git@7e658bc"
           python -m pip install -e . pytest pytest-cov
       - name: Test
         run: python -m pytest --cov=msp --cov-report=term-missing --cov-fail-under=80

@@ -9,7 +9,8 @@ the dependency cleanup, the logging switch and the harmonypy 2.0 upgrade
 
 - [ ] **Publish 0.3.0**: `agent-harness-bridge` 0.2.0 must be on PyPI before
       `msp-sc` 0.3.0 (its dependency), and `msp-sc` 0.3.0 before `zmip`
-      0.3.0. Tag each after upload.
+      0.3.0. Tag each after upload, and drop the git install of the bridge
+      from `.github/workflows/ci.yml` once it is on PyPI.
 - [ ] **Remove `msp.harness`** in 0.4 (it warns since 0.3). ZMIP and ECA-RSI
       import `harness_bridge` directly.
 - [ ] **ECA-RSI** still pins `agent-harness-bridge[all]==0.1.0`; it keeps
