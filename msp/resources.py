@@ -43,15 +43,16 @@ def available_cpus() -> int:
     return max(1, min(n, cap) if cap else n)
 
 
-def _cgroup_memory_limits() -> list[int]:
+def _cgroup_memory_limits(proc_cgroup: str = "/proc/self/cgroup", sysfs: str = "/sys/fs/cgroup") -> list[int]:
     """Every memory limit that applies to this process, from its own cgroup up
     to the root (cgroup v1 `memory.limit_in_bytes`, v2 `memory.max`). Works
     for Slurm (path /slurm/uid_N/job_N/...), docker (/docker/<id> or v2
     "0::/"), plain VMs (no limit → empty list); a container that namespaces
-    /sys/fs/cgroup so the listed path doesn't exist just yields nothing."""
+    /sys/fs/cgroup so the listed path doesn't exist just yields nothing.
+    ``proc_cgroup`` and ``sysfs`` exist so tests can point at fixture trees."""
     limits: list[int] = []
     try:
-        with open("/proc/self/cgroup") as fh:
+        with open(proc_cgroup) as fh:
             lines = fh.read().splitlines()
     except Exception:
         return limits
@@ -61,9 +62,9 @@ def _cgroup_memory_limits() -> list[int]:
             continue
         controllers, path = parts[1], parts[2]
         if controllers == "":  # cgroup v2 unified
-            roots, fname = ["/sys/fs/cgroup"], "memory.max"
+            roots, fname = [sysfs], "memory.max"
         elif "memory" in controllers.split(","):
-            roots, fname = ["/sys/fs/cgroup/memory"], "memory.limit_in_bytes"
+            roots, fname = [os.path.join(sysfs, "memory")], "memory.limit_in_bytes"
         else:
             continue
         for root in roots:

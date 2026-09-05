@@ -33,6 +33,7 @@ import html
 import json
 import os
 import re
+from dataclasses import dataclass
 
 from .steps import STEPS, step_pending
 
@@ -134,19 +135,30 @@ TOC_PIN_SCRIPT = """<script>
 })();
 </script>"""
 
-_SECTION_LABELS = {
-    "sample-summary": "Sample Summary",
-    "umaps": "UMAPs (integrated space)",
-    "per-cluster-qc": "Per-cluster QC (standissect clusters)",
-    "leiden-qc": "Leiden Cluster QC",
-    "deg": "Cluster Annotations",
-    "inspection": "Integration QC Inspection",
-    "annotation": "Cell Type Annotation",
-}
+
+@dataclass(frozen=True)
+class Section:
+    """One report section: its HTML anchor and the heading text before numbering."""
+
+    anchor: str
+    label: str
 
 
-def _h2(anchor: str) -> str:
-    return f'<h2 id="{anchor}">{_SECTION_LABELS[anchor]}</h2>'
+SECTIONS = (
+    Section("sample-summary", "Sample Summary"),
+    Section("umaps", "UMAPs (integrated space)"),
+    Section("per-cluster-qc", "Per-cluster QC (standissect clusters)"),
+    Section("leiden-qc", "Leiden Cluster QC"),
+    Section("deg", "Cluster Annotations"),
+    Section("inspection", "Integration QC Inspection"),
+    Section("annotation", "Cell Type Annotation"),
+)
+_SECTION_LABELS = {s.anchor: s.label for s in SECTIONS}
+
+
+def _h2(anchor: str, number: int | None = None) -> str:
+    label = _SECTION_LABELS[anchor]
+    return f'<h2 id="{anchor}">{number}. {label}</h2>' if number else f'<h2 id="{anchor}">{label}</h2>'
 
 
 def _img(path: str, cls: str = "") -> str:
@@ -254,7 +266,7 @@ def _section_sample_summary(outdir: str) -> str:
     qc_t = _csv_table(os.path.join(outdir, "per_sample_qc.csv"))
     if not summary_t and not qc_t:
         return ""
-    parts = [_h2("sample-summary")]
+    parts = []
     if summary_t:
         parts.append(summary_t)
     parts.append(_section_sample_decisions(outdir))
@@ -360,8 +372,7 @@ def _section_per_cluster(outdir: str, violins: list[str], fractal_figs: list[str
             _grid(violins),
         ]
     parts.append(_section_fractal_heatmap(outdir, fractal_figs))
-
-    return _h2("per-cluster-qc") + "".join(parts) if parts else ""
+    return "".join(parts)
 
 
 def _section_leiden_qc(outdir: str, leiden_violin_figs: list[str]) -> str:
@@ -407,7 +418,7 @@ def _section_leiden_qc(outdir: str, leiden_violin_figs: list[str]) -> str:
             tab_parts += ["<h4>Per-cluster cutoff violins</h4>", _grid(key_figs)]
         tabs.append((key, "".join(tab_parts)))
     parts.append(_tabs("leidenqc", tabs))
-    return _h2("leiden-qc") + "".join(parts)
+    return "".join(parts)
 
 
 def _section_fractal_heatmap(outdir: str, fractal_figs: list[str]) -> str:
@@ -563,7 +574,7 @@ def _section_deg(outdir: str, top_n: int = 10, preannotation_figs: list[str] | N
         if os.path.exists(local_p):
             tabs.append((f"{key} — local", _deg_local_table(local_p, top_n, key, stress_lookup)))
     parts.append(_tabs("deg", tabs))
-    return _h2("deg") + "".join(parts)
+    return "".join(parts)
 
 
 def _section_inspection(outdir: str, inspection_figs: list[str]) -> str:
@@ -613,7 +624,7 @@ def _section_inspection(outdir: str, inspection_figs: list[str]) -> str:
                 "<details><summary>Inspection notes</summary>"
                 f'<pre class="notes">{html.escape(f.read())}</pre></details>'
             )
-    return _h2("inspection") + "".join(parts)
+    return "".join(parts)
 
 
 def _section_annotation(outdir: str, annotation_figs: list[str]) -> str:
@@ -700,7 +711,7 @@ def _section_annotation(outdir: str, annotation_figs: list[str]) -> str:
                 f'<details><summary>agent notes</summary><pre class="notes">{html.escape(f.read())}</pre></details>'
             )
     parts.append("</div>")
-    return _h2("annotation") + "".join(parts)
+    return "".join(parts)
 
 
 def _section_umaps(umap_figs: list[str], standissect_figs: list[str], qc_figs: list[str]) -> str:
@@ -712,7 +723,7 @@ def _section_umaps(umap_figs: list[str], standissect_figs: list[str], qc_figs: l
     rest = [p for p in umap_figs if p not in ann]
     leiden = sorted(p for p in rest if "leiden" in os.path.basename(p))
     samples = [p for p in rest if p not in leiden]
-    parts = [_h2("umaps")]
+    parts = []
     if ann:
         parts += [
             "<h3>Inherited annotations from One-sample Pipeline (OSP)</h3>",
@@ -757,40 +768,25 @@ def _add_subsection_anchors(section_html, sec_anchor):
     return re.sub(r"<h3>(.*?)</h3>", repl, section_html), entries
 
 
-def _number_sections(section_htmls):
-    """Number the sections that actually rendered so a missing one doesn't
-    leave a gap (same mechanism as osp.report); also anchor every h3
-    subsection and nest it under its parent in the TOC."""
-    present = [
-        (anchor, label)
-        for anchor, label in _SECTION_LABELS.items()
-        if any(f'<h2 id="{anchor}">{label}</h2>' in s for s in section_htmls)
-    ]
-    numbered = {anchor: f"{i}. {label}" for i, (anchor, label) in enumerate(present, start=1)}
-    numbered_htmls = []
-    toc_groups = []
-    for s in section_htmls:
-        sec_anchor = next((a for a, lbl in present if f'<h2 id="{a}">{lbl}</h2>' in s), None)
-        for anchor, label in present:
-            s = s.replace(f'<h2 id="{anchor}">{label}</h2>', f'<h2 id="{anchor}">{numbered[anchor]}</h2>', 1)
-        subs = []
-        if sec_anchor:
-            s, subs = _add_subsection_anchors(s, sec_anchor)
-            toc_groups.append((sec_anchor, subs))
-        numbered_htmls.append(s)
-
-    toc_by_anchor = dict(toc_groups)
-    parts = []
-    for anchor, _ in present:
-        parts.append(f'<a href="#{anchor}">{html.escape(numbered[anchor])}</a>')
-        subs = toc_by_anchor.get(anchor, [])
+def _number_sections(sections):
+    """``sections`` is a list of ``(anchor, body_html)``; sections whose body
+    is empty are dropped, the rest are numbered consecutively so a missing one
+    doesn't leave a gap (same mechanism as osp.report). Every h3 subsection is
+    anchored and nested under its parent in the TOC. Returns
+    ``(section_htmls, toc_html)``."""
+    present = [(anchor, body) for anchor, body in sections if body]
+    numbered_htmls, toc_parts = [], []
+    for number, (anchor, body) in enumerate(present, start=1):
+        body, subs = _add_subsection_anchors(body, anchor)
+        numbered_htmls.append(_h2(anchor, number) + body)
+        toc_parts.append(f'<a href="#{anchor}">{html.escape(f"{number}. {_SECTION_LABELS[anchor]}")}</a>')
         if subs:
-            parts.append(
+            toc_parts.append(
                 '<div class="toc-sub">'
                 + "".join(f'<a href="#{sid}">{html.escape(text)}</a>' for sid, text in subs)
                 + "</div>"
             )
-    toc = "".join(parts)
+    toc = "".join(toc_parts)
     return numbered_htmls, (f'<nav class="toc">{toc}</nav>' if toc else "")
 
 
@@ -856,16 +852,16 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
     sections = []
     if "integrate" not in pending:
         sections = [
-            _section_sample_summary(outdir),
-            _section_umaps(umap_figs, standissect_figs, qc_figs),
-            _section_per_cluster(outdir, violins, fractal_figs),
-            _section_leiden_qc(outdir, leiden_violin_figs),
-            _section_deg(outdir, preannotation_figs=preannotation_figs),
+            ("sample-summary", _section_sample_summary(outdir)),
+            ("umaps", _section_umaps(umap_figs, standissect_figs, qc_figs)),
+            ("per-cluster-qc", _section_per_cluster(outdir, violins, fractal_figs)),
+            ("leiden-qc", _section_leiden_qc(outdir, leiden_violin_figs)),
+            ("deg", _section_deg(outdir, preannotation_figs=preannotation_figs)),
         ]
         if "inspect" not in pending:
-            sections.append(_section_inspection(outdir, inspection_figs))
+            sections.append(("inspection", _section_inspection(outdir, inspection_figs)))
         if "annotate" not in pending:
-            sections.append(_section_annotation(outdir, annotation_figs))
+            sections.append(("annotation", _section_annotation(outdir, annotation_figs)))
     sections, toc = _number_sections(sections)
 
     header = f'<h1>{html.escape(title)}</h1><p class="meta">source dir: {html.escape(os.path.abspath(outdir))}</p>'
