@@ -4,6 +4,7 @@ parent-core marker dot plot that explains what each fragment is."""
 from __future__ import annotations
 
 import csv
+import logging
 import os
 import re
 
@@ -19,6 +20,8 @@ from matplotlib.colors import LinearSegmentedColormap
 from scipy.cluster.hierarchy import dendrogram, linkage
 
 from ..plots import UMAP_DPI
+
+log = logging.getLogger(__name__)
 
 # thresholds for minor-sibling QC testing (candidate detection, not a final
 # verdict — msp.inspect judges what actually matters). "n_hits"/
@@ -201,10 +204,10 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
         # one-vs-other-parent DE needs >=2 parents; a lineage that standissect
         # never split beyond its root has only one, and rank_genes_groups_df
         # drops the "group" column for a single-group input (KeyError downstream)
-        print("== only one parent-core cluster — skipping parent-core DEG/heatmap", flush=True)
+        log.warning("== only one parent-core cluster — skipping parent-core DEG/heatmap")
         return
 
-    print("== parent-core DEG (one vs other parent cores)", flush=True)
+    log.info("== parent-core DEG (one vs other parent cores)")
     sc.tl.rank_genes_groups(core_ad, "parent", method="wilcoxon", use_raw=True, pts=True)
     de_df = sc.get.rank_genes_groups_df(core_ad, group=None)
     de_df.to_csv(os.path.join(outdir, "de_parent_core_vs_core.csv"), index=False)
@@ -213,12 +216,11 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
     marker_rows, gene_parent, markers = _select_fractal_markers(de_df, ribo, top_n)
     pd.DataFrame(marker_rows).to_csv(os.path.join(outdir, "fractal_markers.csv"), index=False)
     if not markers:
-        print("== no marker genes passed the filters — skipping heatmap", flush=True)
+        log.warning("== no marker genes passed the filters — skipping heatmap")
         return
 
-    print(
+    log.info(
         f"== fractal marker dot plot ({len(markers)} genes x {ad.obs['standissect_product'].nunique()} clusters)",
-        flush=True,
     )
     sub = ad[:, markers]
     X = sub.X.toarray() if hasattr(sub.X, "toarray") else np.asarray(sub.X)

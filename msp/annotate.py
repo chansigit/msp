@@ -39,6 +39,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import logging
 import os
 
 import matplotlib
@@ -59,8 +60,11 @@ from .evidence import (
     load_removal_mask,
     parse_reference,
 )
+from .log import configure, ensure
 from .report import generate_report
 from .steps import begin_step, complete_step, require_upstream_ready
+
+log = logging.getLogger(__name__)
 
 BASE_KEY = "msp_leiden_r2.0"
 PARENT_KEY = "msp_leiden_r1.0"
@@ -394,7 +398,7 @@ def _palette(ad, col):
 
         cmap = assign_celltype_colors(np.asarray(ad.obsm["X_umap"]), ad.obs[col].astype(str).to_numpy())
     except Exception as exc:
-        print(f"== stanhue palette unavailable ({exc!r}); using scanpy's default palette for {col}", flush=True)
+        log.warning(f"== stanhue palette unavailable ({exc!r}); using scanpy's default palette for {col}")
         return None
     return [cmap.get(str(c), "#999999") for c in ad.obs[col].cat.categories]
 
@@ -537,7 +541,7 @@ async def _run_agent(
     entries = {}
     deg = DegCache(ad, outdir, pre_agent_removed, label="annotate")
     tables = DegTables(outdir, base_key=BASE_KEY)
-    print(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}", flush=True)
+    log.info(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}")
 
     async def cluster_context(args):
         return text_result(
@@ -570,10 +574,9 @@ async def _run_agent(
             e["merge_target"] = str(e["merge_target"])
         entries[e["cluster_id"]] = e
         left = [c for c in clusters if c not in entries]
-        print(
+        log.info(
             f"== submitted cluster {e['cluster_id']}: {e['coarse_label']} / {e['fine_label']} "
             f"[{e['action']}{', merge→' + e['merge_target'] if e['merge_target'] else ''}]",
-            flush=True,
         )
         return text_result(
             f"recorded cluster {e['cluster_id']}; {len(entries)}/{len(clusters)} submitted"
@@ -685,6 +688,7 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     added), the annotation UMAPs, and refreshes report.html. integrated.h5ad
     is not modified. Returns the proposal.
     """
+    ensure()
     require_upstream_ready(outdir, "annotate")
     ad = sc.read_h5ad(os.path.join(outdir, "integrated.h5ad"))
     for k in (BASE_KEY, PARENT_KEY):
@@ -701,16 +705,15 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     if "_msp_action" in ad.obs:
         pre_sources["inspect_drop"] = (ad.obs["_msp_action"].astype(str) == "drop").to_numpy()
     else:
-        print("== no obs['_msp_action'] — msp.inspect has not run; only preannotation removals inherited", flush=True)
+        log.warning("== no obs['_msp_action'] — msp.inspect has not run; only preannotation removals inherited")
     pre_agent_removed = np.logical_or.reduce(list(pre_sources.values()))
-    print(
+    log.info(
         f"== {int(pre_agent_removed.sum())}/{ad.n_obs} cells already slated for removal "
         f"({', '.join(f'{k}={int(v.sum())}' for k, v in pre_sources.items())})",
-        flush=True,
     )
 
     prior_cols = _prior_label_columns(ad, batch_col)
-    print(f"== prior label columns detected: {prior_cols}", flush=True)
+    log.info(f"== prior label columns detected: {prior_cols}")
     paga = load_paga_neighbors(outdir, BASE_KEY)
 
     begin_step(outdir, "annotate")
@@ -734,21 +737,21 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     archive = _apply(ad, proposal, pre_agent_removed, pre_sources)
     archive.to_csv(os.path.join(outdir, "annotation_removed.csv"), index=False)
     kept = ad[(ad.obs["msp_ann_action"] == "keep").values].copy()
-    print(
+    log.info(
         f"== removed {len(archive)} cells (agent-marked clusters: "
         f"{int(archive['annotate_remove'].sum())}); annotated.h5ad keeps {kept.n_obs}/{ad.n_obs}",
-        flush=True,
     )
     _plot(ad, kept, os.path.join(outdir, "figures"))
     tmp = os.path.join(outdir, "annotated.tmp.h5ad")
     kept.write_h5ad(tmp)
     os.replace(tmp, os.path.join(outdir, "annotated.h5ad"))
     complete_step(outdir, "annotate")
-    print(f"== report refreshed: {generate_report(outdir)}", flush=True)
+    log.info(f"== report refreshed: {generate_report(outdir)}")
     return proposal
 
 
 def main(argv=None):
+    configure()
     parser = argparse.ArgumentParser(prog="msp.annotate", description=__doc__)
     parser.add_argument("outdir", help="msp integration output directory (after msp.inspect)")
     parser.add_argument("--species", default=None, help="defaults to uns['msp']['species']")
@@ -774,12 +777,6 @@ def main(argv=None):
         )
     if proposal["merged_groups"]:
         print("merged groups: " + ", ".join(proposal["merged_groups"]))
-
-
-# ---------------------------------------------------------------- compatibility
-# zmip (msp-sc<0.3) imports this underscore name from here; the function now
-# lives in msp.evidence as load_paga_neighbors.
-_load_paga_neighbors = load_paga_neighbors
 
 
 if __name__ == "__main__":

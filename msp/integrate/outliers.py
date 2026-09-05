@@ -4,6 +4,7 @@ Annotations (the pre-annotation filtering mask and UMAP)."""
 
 from __future__ import annotations
 
+import logging
 import os
 
 import matplotlib
@@ -15,6 +16,8 @@ import pandas as pd
 import seaborn as sns
 
 from ..plots import UMAP_DPI, save_single_umap, slug
+
+log = logging.getLogger(__name__)
 
 CELL_OUTLIER_METRICS = ("doublet_score", "decontX_contamination")
 CELL_OUTLIER_MAD_K = 3.0
@@ -74,10 +77,9 @@ def _cell_level_outliers(ad, leiden_keys, resolutions, outdir):
     summary_df.to_csv(os.path.join(outdir, "cell_outlier_summary.csv"), index=False)
 
     n_removal = int(df["recommend_removal"].sum())
-    print(
+    log.info(
         f"== cell-level outliers: {n_removal}/{len(df)} cells recommend_removal "
         f"(doublet/ambient, MAD+floor, r1.0 or r2.0)",
-        flush=True,
     )
     return df
 

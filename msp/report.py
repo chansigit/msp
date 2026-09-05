@@ -35,6 +35,7 @@ import os
 import re
 from dataclasses import dataclass
 
+from .log import configure
 from .steps import STEPS, step_pending
 
 CSS = """
@@ -888,6 +889,7 @@ def generate_report(outdir: str, out_html: str | None = None, title: str | None 
 
 
 def main(argv=None):
+    configure()
     parser = argparse.ArgumentParser(prog="msp.report", description=__doc__)
     parser.add_argument("outdir")
     parser.add_argument("--out", default=None)

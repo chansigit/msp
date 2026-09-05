@@ -9,6 +9,7 @@ read the same.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 
@@ -17,12 +18,15 @@ import pandas as pd
 import scanpy as sc
 from sklearn.decomposition import PCA
 
+from ..log import ensure
 from ..plots import save_single_umap, slug
 from ..steps import begin_step, complete_step
 from .deg import _cluster_annotations
 from .fragments import _fractal_marker_heatmap, _minor_sibling_qc
 from .outliers import _build_removal_mask, _cell_level_outliers, _leiden_cluster_qc_violins, _preannotation_removal_umap
 from .qc import _qc_outputs
+
+log = logging.getLogger(__name__)
 
 
 def load_and_merge(inputs, batch_col, counts_layer="counts"):
@@ -92,6 +96,7 @@ def run_multi_sample_pipeline(
 ):
     """Load osp per-sample outputs, merge, and run integrate_adata on the
     result — see there for the parameters. Returns (ad, summary)."""
+    ensure()
     os.makedirs(outdir, exist_ok=True)
     ad = load_and_merge(inputs, batch_col, counts_layer=counts_layer)
     return integrate_adata(
@@ -151,12 +156,12 @@ def _reset_state(ad, counts_layer):
 
 def _preprocess(ad, batch_col, n_top_genes):
     """normalize_total(1e4) → log1p (kept as .raw) → HVG per batch."""
-    print("== normalize/log1p", flush=True)
+    log.info("== normalize/log1p")
     sc.pp.normalize_total(ad, target_sum=1e4)
     sc.pp.log1p(ad)
     ad.raw = ad
 
-    print(f"== HVG per batch (n_top_genes={n_top_genes})", flush=True)
+    log.info(f"== HVG per batch (n_top_genes={n_top_genes})")
     sc.pp.highly_variable_genes(ad, n_top_genes=n_top_genes, flavor="seurat", batch_key=batch_col)
 
 
@@ -168,36 +173,32 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
     n_comps = min(n_pcs, hvg.n_vars - 1, ad.n_obs - 1)
     if n_comps < 1:
         raise ValueError(f"not enough variable genes/cells for PCA: {hvg.shape}, n_comps={n_comps}")
-    print(f"== PCA ({n_comps} comps on {hvg.n_vars} HVGs)", flush=True)
+    log.info(f"== PCA ({n_comps} comps on {hvg.n_vars} HVGs)")
     ad.obsm["X_pca"] = PCA(n_components=n_comps, svd_solver="arpack", random_state=0).fit_transform(hvg.X)
     del hvg
 
-    # call harmonypy directly: the installed fork returns Z_corr already
-    # cells-by-PCs, which scanpy's wrapper transposes into garbage — accept
-    # either orientation and assert the final shape
+    # harmonypy >= 2.0 (C++ backend, numpy-only): Z_corr is cells-by-PCs.
+    # Accept either orientation anyway and assert the final shape below.
     import harmonypy
 
-    # MSP_DEVICE env overrides (cpu|cuda|mps); otherwise harmonypy's own
-    # auto-detection (cuda → mps → cpu) decides, and we report its choice.
-    device = os.environ.get("MSP_DEVICE") or None
     if n_samples < 2:
         # nothing to correct across: one sample / one batch level. The rest of
         # the chain (neighbors, leiden, UMAP, QC tables, agents) runs unchanged
         # on plain PCA so single-sample datasets go through the same steps
-        print("== harmony skipped: single batch — X_pca_harmony = X_pca", flush=True)
+        log.info("== harmony skipped: single batch — X_pca_harmony = X_pca")
         Z = np.array(ad.obsm["X_pca"], copy=True)
         harmony_record = "skipped: single batch"
     else:
-        from harmonypy.harmony import get_device
+        from ..resources import available_cpus
 
-        print(
-            f"== harmony on {device or get_device(None)}{'' if device else ' (auto-detected)'}"
+        # BLAS threads for the C++ solver: the CPUs this process may really
+        # use (affinity mask / cgroup), not the node's core count.
+        kwargs = {"random_state": 0, "ncores": available_cpus(), **harmony_kwargs}
+        log.info(
+            f"== harmony (harmonypy {getattr(harmonypy, '__version__', '?')}, {kwargs['ncores']} thread(s))"
             + (f", overrides {harmony_kwargs}" if harmony_kwargs else ", harmonypy defaults"),
-            flush=True,
         )
-        ho = harmonypy.run_harmony(
-            ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col, random_state=0, device=device, **harmony_kwargs
-        )
+        ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col, **kwargs)
         Z = np.asarray(ho.Z_corr)
         if Z.shape[0] != ad.n_obs:
             Z = Z.T
@@ -211,16 +212,16 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
 def _cluster(ad, resolutions, n_neighbors):
     """Neighbors on X_pca_harmony, leiden at every resolution, UMAP. Returns
     the leiden keys in resolution order."""
-    print("== neighbors (use_rep=X_pca_harmony)", flush=True)
+    log.info("== neighbors (use_rep=X_pca_harmony)")
     sc.pp.neighbors(ad, use_rep="X_pca_harmony", n_neighbors=n_neighbors)
     leiden_keys = []
     for r in resolutions:
         key = f"msp_leiden_r{r}"
-        print(f"== leiden {key}", flush=True)
+        log.info(f"== leiden {key}")
         sc.tl.leiden(ad, resolution=r, key_added=key, flavor="igraph", n_iterations=2)
         leiden_keys.append(key)
 
-    print("== umap", flush=True)
+    log.info("== umap")
     sc.tl.umap(ad)
     return leiden_keys
 
@@ -235,7 +236,7 @@ def _dissect(ad, leiden_keys, resolutions, outdir):
     Parent comes from the LOWEST resolution: the product hunts strays
     inside broad clusters — a high-res leiden has already split them."""
     standissect_key = leiden_keys[int(np.argmin(resolutions))]
-    print(f"== standissect-lite on {standissect_key} (leiden x umap product)", flush=True)
+    log.info(f"== standissect-lite on {standissect_key} (leiden x umap product)")
     from standissect_lite import dissect_partition
 
     res = dissect_partition(ad, cluster_col=standissect_key, umap_key="X_umap")
@@ -248,29 +249,28 @@ def _dissect(ad, leiden_keys, resolutions, outdir):
 def _evidence(ad, res, leiden_keys, resolutions, outdir, figdir, top_n_de):
     """Fragment QC, cell-level outliers, the pre-annotation removal union,
     then PAGA + global/local DEG on the survivors."""
-    print("== minor-sibling QC", flush=True)
+    log.info("== minor-sibling QC")
     msq_df = _minor_sibling_qc(ad, res, outdir)
 
-    print("== cell-level doublet/ambient-RNA outliers (per-cluster MAD + hard floor)", flush=True)
+    log.info("== cell-level doublet/ambient-RNA outliers (per-cluster MAD + hard floor)")
     cell_outliers_df = _cell_level_outliers(ad, leiden_keys, resolutions, outdir)
 
-    print("== leiden cluster QC violins (per-cluster cutoffs)", flush=True)
+    log.info("== leiden cluster QC violins (per-cluster cutoffs)")
     _leiden_cluster_qc_violins(ad, leiden_keys, resolutions, figdir)
 
     remove_mask = _build_removal_mask(ad, msq_df, cell_outliers_df, outdir)
-    print(
+    log.info(
         f"== pre-annotation filtering: {int(remove_mask.sum())}/{ad.n_obs} cells "
         "recommend_removal (minor-sibling fragments ∪ cell-level outliers ∪ osp _qc_action=drop)",
-        flush=True,
     )
     _preannotation_removal_umap(ad, remove_mask, figdir)
 
-    print("== cluster annotations (PAGA + global/local DEG)", flush=True)
+    log.info("== cluster annotations (PAGA + global/local DEG)")
     _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_n_de=top_n_de)
 
 
 def _figures(ad, batch_col, leiden_keys, figdir):
-    print("== figures", flush=True)
+    log.info("== figures")
     save_single_umap(ad, batch_col, os.path.join(figdir, f"umap_{slug(batch_col)}.png"), legend_fontsize=6)
     for color in leiden_keys:  # cluster ids on the clusters, repelled apart
         save_single_umap(ad, color, os.path.join(figdir, f"umap_{slug(color)}.png"), repel=True)
@@ -312,7 +312,7 @@ def _write(ad, batch_col, leiden_keys, n_samples, outdir):
     ad.write_h5ad(tmp)  # never in place: tmp + rename
     os.replace(tmp, os.path.join(outdir, "integrated.h5ad"))
     complete_step(outdir, "integrate")
-    print(f"== wrote {os.path.join(outdir, 'integrated.h5ad')}", flush=True)
+    log.info(f"== wrote {os.path.join(outdir, 'integrated.h5ad')}")
     return summary
 
 
@@ -339,20 +339,22 @@ def integrate_adata(
     on merged osp outputs and by zmip on one lineage subset of annotated.h5ad
     (same artifacts, same report).
 
-    harmony_kwargs: passed straight to harmonypy.run_harmony on top of msp's
-    fixed random_state=0/device — theta (diversity penalty, default 2 per
-    covariate), lamb (ridge, default 1; -1 = auto-estimate), sigma (soft
-    k-means width, 0.1), nclust (default min(round(N/30), 100)), tau,
-    block_size, max_iter_harmony (10), max_iter_kmeans (20),
-    epsilon_cluster, epsilon_harmony, alpha. Recorded in uns["msp"]["harmony"].
+    harmony_kwargs: passed straight to harmonypy.run_harmony (>= 2.0) on top
+    of msp's fixed random_state=0 and ncores=available_cpus() — theta
+    (diversity penalty, default 2 per covariate), lamb (ridge; default None =
+    auto-estimate), sigma (soft k-means width, 0.1), nclust (default
+    min(round(N/30), 100)), tau, block_size, max_iter_harmony (10),
+    max_iter_kmeans (4), epsilon_cluster (1e-3), epsilon_harmony (1e-2),
+    alpha, batch_prop_cutoff. Recorded in uns["msp"]["harmony"].
     meta_extra: extra keys merged into uns["msp"] (zmip records its lineage)."""
+    ensure()
     _validate_inputs(ad, batch_col, resolutions, n_top_genes, n_pcs, n_neighbors, counts_layer)
     harmony_kwargs = dict(harmony_kwargs or {})
     os.makedirs(outdir, exist_ok=True)
     begin_step(outdir, "integrate")
     _reset_state(ad, counts_layer)
     n_samples = ad.obs[batch_col].astype(str).nunique()
-    print(f"== integrating: {ad.shape}, {n_samples} samples (batch={batch_col!r})", flush=True)
+    log.info(f"== integrating: {ad.shape}, {n_samples} samples (batch={batch_col!r})")
 
     _preprocess(ad, batch_col, n_top_genes)
     n_comps, harmony_record = _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs)
@@ -383,10 +385,10 @@ def integrate_adata(
 
     _figures(ad, batch_col, leiden_keys, figdir)
 
-    print("== QC figures/tables", flush=True)
+    log.info("== QC figures/tables")
     _qc_outputs(ad, batch_col, primary_key, outdir, figdir, leiden_keys, resolutions)
 
-    print("== fractal marker heatmap", flush=True)
+    log.info("== fractal marker heatmap")
     _fractal_marker_heatmap(ad, res, outdir, figdir)
 
     summary = _write(ad, batch_col, leiden_keys, n_samples, outdir)

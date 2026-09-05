@@ -3,7 +3,7 @@
 Every public object is the same object exported by ``harness_bridge``, so
 exception and dataclass identity remain stable across repositories. msp itself
 no longer imports this module; import from ``harness_bridge`` directly. The
-shim emits a DeprecationWarning and will be removed in msp-sc 0.3.
+shim emits a DeprecationWarning and will be removed in msp-sc 0.4.
 """
 
 import warnings
@@ -36,7 +36,7 @@ from harness_bridge.harness import (
 )
 
 warnings.warn(
-    "msp.harness is deprecated and will be removed in msp-sc 0.3; import from harness_bridge instead",
+    "msp.harness is deprecated and will be removed in msp-sc 0.4; import from harness_bridge instead",
     DeprecationWarning,
     stacklevel=2,
 )

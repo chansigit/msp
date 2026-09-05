@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import csv
 import glob
+import logging
 import os
 
 import numpy as np
 import pandas as pd
 import scanpy as sc
 import scipy.sparse as sp
+
+log = logging.getLogger(__name__)
 
 QC_COLS = (
     "pct_counts_mt",
@@ -618,7 +621,7 @@ class DegCache:
                 source = "computed"
                 self.n_computed += 1
         ref_desc = "rest" if ref == "rest" else ",".join(ref)
-        print(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: {source}", flush=True)
+        log.info(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: {source}")
         kept = filter_deg(df, min_logfc, max_padj, min_pct1, max_pct2)
         if not self._memo[mk][1] and len(kept) < top_n:
             df = deg_frame(self.ad, key, cluster, ref, self.mask)
@@ -627,7 +630,7 @@ class DegCache:
             self._memo[mk] = (df, True)
             self.n_computed += 1
             kept = filter_deg(df, min_logfc, max_padj, min_pct1, max_pct2)
-            print(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: computed after filtering", flush=True)
+            log.info(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: computed after filtering")
         complete = self._memo[mk][1]
         text = format_deg(
             cluster,

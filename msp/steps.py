@@ -7,10 +7,13 @@ rendering can mistake partial files for completed results. Use one writer
 per output directory.
 """
 
+import logging
 import os
 import shutil
 import tempfile
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 STEPS = ("integrate", "inspect", "annotate")
 _OUTPUTS = {
@@ -109,7 +112,7 @@ def begin_step(outdir, step):
             os.link(snapshot, dst)
         except OSError:
             shutil.copy2(snapshot, dst)
-    print(f"== [{step}] previous outputs archived in {archive}", flush=True)
+    log.info(f"== [{step}] previous outputs archived in {archive}")
 
 
 def complete_step(outdir, step):

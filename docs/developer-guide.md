@@ -8,7 +8,7 @@ MSP owns integration, biological tools, proposal validation, output updates,
 and reports. [Agent Harness Bridge](https://github.com/chansigit/agent-harness-bridge)
 owns backend execution and shared agent controls; import it as
 `harness_bridge`. The `msp.harness` re-export shim is deprecated and will be
-removed in 0.3.
+removed in 0.4.
 
 | Module | Responsibility |
 | --- | --- |
@@ -64,13 +64,22 @@ genes, usable HVGs, and `n_neighbors < n_obs`.
 Integration resets `X` from counts, normalizes to 10,000 counts per cell,
 applies log1p, selects HVGs by batch, and runs scaled-HVG PCA, Harmony,
 neighbors, Leiden, and UMAP. All genes remain in the output. A single batch
-skips Harmony and uses PCA directly. The project pins `harmonypy==0.2.0`;
-repeatable CLI `--harmony KEY=VALUE` options pass overrides to Harmony, while
-`MSP_DEVICE` can select `cpu`, `cuda`, or `mps`.
+skips Harmony and uses PCA directly. The project requires `harmonypy>=2.0`
+(the C++ rewrite: numpy-only, no torch, no device selection) and passes
+`random_state=0` plus `ncores` equal to the CPUs the process may use;
+repeatable CLI `--harmony KEY=VALUE` options pass further overrides.
+
+The move from the torch-based 0.2.0 was checked on a real dataset (81,079
+cells, 6 samples, 50 PCs, 8 CPU threads): 2.0.0 took 17 s where 0.2.0 took
+199 s; the corrected coordinates correlate at 0.99 or better per PC; kNN
+batch mixing is the same (same-sample neighbour fraction 0.356 vs 0.362);
+kNN purity of the existing level-1 labels is 0.945 vs 0.958 and Leiden
+clusters agree with those labels at ARI 0.51 vs 0.53. Running 2.0.0 with
+0.2.0's parameters did not close that small gap, so it is the implementation
+(2.0 follows R harmony2), not the new defaults; msp uses the 2.0 defaults.
 
 | Environment variable | Effect |
 | --- | --- |
-| `MSP_DEVICE` | Harmony device: `cpu`, `cuda`, or `mps` (default: auto-detect). |
 | `MSP_MAX_THREADS` | Cap on the CPUs the DEG thread pool may use (default: the affinity mask). |
 | `HARNESS` | Agent backend when `--harness` is not given; see Agent Harness Bridge. |
 
@@ -174,6 +183,24 @@ columns and its action plot; annotation requires its proposal and H5AD.
 Input contents and agent configuration are not fingerprinted. Use `--force`
 or a new directory after changing them, and record successful process
 completion when driving MSP externally.
+
+## Logging
+
+Progress lines (`== normalize/log1p`, `== [inspect] check_deg ...`, resume
+notices) go through Python `logging` under the `msp` logger family, one
+module logger per file (`msp.integrate.pipeline`, `msp.annotate`, ...).
+Degraded paths such as a missing stanhue palette or a skipped heatmap log at
+`WARNING`; everything else is `INFO`. The CLI entry points (`python -m msp`,
+`msp.inspect`, `msp.annotate`, `msp.report`) call `msp.log.configure()`
+first, which attaches one flushed stdout handler with a bare `%(message)s`
+format to both `msp` and `harness_bridge`, so pipeline lines and agent
+traces share one stream and Slurm logs stay live. Library callers such as
+notebooks or ZMIP get the same default handler from `msp.log.ensure()`,
+which the public entry points (`run_multi_sample_pipeline`,
+`integrate_adata`, `inspect_clusters`, `annotate_clusters`) call unless a
+handler is already reachable. Redirect or quieten the output with
+`msp.log.configure(stream=sys.stderr, level="WARNING")`. Loggers keep
+propagating to the root logger, so tests read messages with `caplog`.
 
 ## Development checks
 

@@ -10,12 +10,16 @@ requested steps. Report rendering does not trigger computation.
 """
 
 import argparse
+import logging
 import os
 import sys
 
 from .integrate import integrate_adata, run_multi_sample_pipeline
+from .log import configure
 from .report import generate_report, write_report_context
 from .steps import step_pending
+
+log = logging.getLogger(__name__)
 
 
 def build_parser():
@@ -155,7 +159,7 @@ def _integration_matches(out, args, harmony_kwargs):
         }
         return all(meta.get(k) == _plain(v) for k, v in expected.items())
     except Exception as exc:
-        print(f"[resume] could not verify integration metadata: {exc}", file=sys.stderr)
+        log.warning(f"[resume] could not verify integration metadata: {exc}")
         return False
 
 
@@ -178,6 +182,7 @@ def _inspection_applied(out):
 
 
 def main(argv=None):
+    configure()
     args = build_parser().parse_args(argv)
 
     if args.harness:
@@ -215,18 +220,18 @@ def main(argv=None):
             _, summary = integrate_adata(ad, args.batch_col, out, inputs=[args.from_h5ad], **kw)
         else:
             _, summary = run_multi_sample_pipeline(args.inputs, batch_col=args.batch_col, outdir=out, **kw)
-        print(summary)
+        log.info(summary)
     else:
-        print(f"[resume] integration already done in {out} (integrated.h5ad) — skipping")
+        log.info(f"[resume] integration already done in {out} (integrated.h5ad) — skipping")
 
     # Rendering never determines whether an expensive computation must be repeated.
-    print(f"report: {generate_report(out)}")
+    log.info(f"report: {generate_report(out)}")
 
     if args.inspect:
         from harness_bridge import backend_name, default_model
 
         args.model = args.model or default_model()
-        print(f"[agent] harness={backend_name()} model={args.model}")
+        log.info(f"[agent] harness={backend_name()} model={args.model}")
     agent_kw = dict(species=args.species, language=args.language, model=args.model, effort=args.effort)
 
     if args.inspect:
@@ -235,7 +240,7 @@ def main(argv=None):
 
             inspect_clusters(out, max_turns=args.max_turns or 100, **agent_kw)
         else:
-            print(f"[resume] inspection_proposal.json exists in {out} — skipping inspect")
+            log.info(f"[resume] inspection_proposal.json exists in {out} — skipping inspect")
 
     if args.annotate:
         if args.force or step_pending(out, "annotate") or not _done(out, "annotation_proposal.json", "annotated.h5ad"):
@@ -243,7 +248,7 @@ def main(argv=None):
 
             annotate_clusters(out, max_turns=args.max_turns or 200, **agent_kw)
         else:
-            print(f"[resume] annotation_proposal.json + annotated.h5ad exist in {out} — skipping annotate")
+            log.info(f"[resume] annotation_proposal.json + annotated.h5ad exist in {out} — skipping annotate")
 
 
 if __name__ == "__main__":

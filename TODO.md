@@ -1,34 +1,21 @@
 # TODO
 
-Open items from the 2026-09-04 code review, after the 2026-09-05 pass that
-closed the evidence/tool split, the statistics tests, the report and
-resources tests, and the dependency cleanup (see `CHANGELOG.md`). Items
-below are what remains, in the recommended order.
+Open items from the 2026-09-04 code review, after the passes that closed the
+evidence/tool split, the statistics tests, the report and resources tests,
+the dependency cleanup, the logging switch and the harmonypy 2.0 upgrade
+(see `CHANGELOG.md`). Items below are what remains, in the recommended order.
 
 ## Needs a decision or an external step
 
-- [ ] **stanhue on PyPI.** `pyproject.toml` pins
-      `stanhue @ git+https://github.com/chansigit/stanhue.git@v1.1.0`. PyPI
-      rejects uploads whose dependencies are direct URL references, so the
-      next msp-sc release cannot be published until stanhue is on PyPI and
-      the pin becomes `stanhue>=1.1.0`.
-- [ ] **harmonypy 2.0.0.** Evaluate against the pinned 0.2.0 on a reference
-      run (Z_corr orientation, defaults, numerics); either upgrade or record
-      why the pin stays. Needs a real dataset and a GPU or a long CPU job.
-- [ ] **Remove `msp.harness`** in 0.3 (it already warns). ZMIP and ECA-RSI
+- [ ] **Publish 0.3.0**: `agent-harness-bridge` 0.2.0 must be on PyPI before
+      `msp-sc` 0.3.0 (its dependency), and `msp-sc` 0.3.0 before `zmip`
+      0.3.0. Tag each after upload.
+- [ ] **Remove `msp.harness`** in 0.4 (it warns since 0.3). ZMIP and ECA-RSI
       import `harness_bridge` directly.
-- [ ] **Release 0.3.0**: bump `version`, move the Unreleased section of
-      `CHANGELOG.md`, tag. ZMIP pins `msp-sc<0.3` and imports underscore
-      names from `msp.inspect` / `msp.annotate`; update it to the public
-      `msp.evidence` names before removing the aliases.
-
-## Phase 2 leftovers
-
-- [ ] **`print` to `logging`**: `logging.getLogger("msp")`, a handler with
-      immediate flush configured in the CLI `main()`s (Slurm logs must stay
-      live). Coordinate with Agent Harness Bridge so agent output uses the
-      same logger; otherwise two styles interleave. Tests that read stdout
-      (`capsys`) move to `caplog`.
+- [ ] **ECA-RSI** still pins `agent-harness-bridge[all]==0.1.0`; it keeps
+      working (the bridge attaches its default handler when nobody configured
+      logging), but move it to `>=0.2.0,<0.3` and `configure_logging` when it
+      is next touched.
 
 ## Phase 3 leftovers
 

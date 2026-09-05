@@ -3,11 +3,14 @@ r1.0 / r2.0 resolutions, and the dissociation-stress signature check."""
 
 from __future__ import annotations
 
+import logging
 import os
 
 import numpy as np
 import pandas as pd
 import scanpy as sc
+
+log = logging.getLogger(__name__)
 
 # Conservative "dissociation stress" core panel (not osp's full ~130-gene
 # DISSOCIATION_GENES_HS — that one includes ECM/lineage genes like DCN,
@@ -90,24 +93,23 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
     keep_mask = ~remove_mask
     n_excluded = int((~keep_mask).sum())
     ad_excl = ad[keep_mask].copy()
-    print(
+    log.info(
         f"== cluster annotations: excluding {n_excluded} recommend_removal cells ({ad_excl.n_obs}/{ad.n_obs} remain)",
-        flush=True,
     )
 
     res_to_key = dict(zip(resolutions, leiden_keys, strict=True))
     target = [(r, res_to_key[r]) for r in (1.0, 2.0) if r in res_to_key]
     if not target:
-        print("== cluster annotations: neither r1.0 nor r2.0 in resolutions — skipping", flush=True)
+        log.warning("== cluster annotations: neither r1.0 nor r2.0 in resolutions — skipping")
         return
 
-    print("== cluster annotations: neighbors on the excluded subset", flush=True)
+    log.info("== cluster annotations: neighbors on the excluded subset")
     sc.pp.neighbors(ad_excl, use_rep="X_pca_harmony")
 
     # phase 1 (sequential, cheap): PAGA + neighbour tables + the task list
     plan = []  # per key: dict(key, cats, valid_groups, top3)
     for r, key in target:
-        print(f"== cluster annotations on {key} (r={r})", flush=True)
+        log.info(f"== cluster annotations on {key} (r={r})")
         sc.tl.paga(ad_excl, groups=key)
         conn = ad_excl.uns["paga"]["connectivities"].toarray()
         cats = list(ad_excl.obs[key].cat.categories)
@@ -138,10 +140,9 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         valid_groups = [c for c in cats if sizes.get(c, 0) >= MIN_DE_GROUP_SIZE]
         if len(valid_groups) < len(cats):
             skipped = [c for c in cats if c not in valid_groups]
-            print(
+            log.info(
                 f"== cluster annotations: skipping global DE for undersized "
                 f"(<{MIN_DE_GROUP_SIZE} cells) cluster(s) {skipped} in {key}",
-                flush=True,
             )
         if not valid_groups:
             continue
@@ -181,7 +182,7 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         return ldf
 
     n_workers = max(1, min(available_cpus(), 8))
-    print(f"== cluster annotations: DE on {n_workers} thread(s)", flush=True)
+    log.info(f"== cluster annotations: DE on {n_workers} thread(s)")
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = []
         for item in plan:
@@ -242,8 +243,7 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         stress_df = stress_df.merge(overall, on=["key", "cluster"])
         stress_df.to_csv(os.path.join(outdir, "stress_clusters.csv"), index=False)
         n_removal = int(overall["recommend_removal"].sum())
-        print(
+        log.info(
             f"== cluster annotations: {n_removal}/{len(overall)} (key, cluster) pairs "
             f"recommend_removal (stress signature)",
-            flush=True,
         )

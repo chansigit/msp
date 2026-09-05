@@ -1,6 +1,7 @@
 """One real integration run on the synthetic two-sample dataset: no scanpy
 monkeypatching, every artifact of the integrate stage written for real."""
 
+import logging
 from pathlib import Path
 
 import anndata as ad
@@ -22,17 +23,40 @@ def integrated(tmp_path_factory):
     inputs = write_samples(root)
     out = root / "msp_out"
     begin_step(out, "annotate")  # an older interrupted annotation is superseded by a fresh upstream run
-    data, summary = run_multi_sample_pipeline(
-        inputs,
-        batch_col="sample_id",
-        outdir=out,
-        species="human",
-        resolutions=(0.3, 1.0, 2.0),
-        n_top_genes=30,
-        n_pcs=10,
-        n_neighbors=10,
-    )
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logger = logging.getLogger("msp")
+    logger.addHandler(handler)
+    previous_level = logger.level
+    logger.setLevel(logging.INFO)  # a bare interpreter leaves the family at WARNING
+    try:
+        data, summary = run_multi_sample_pipeline(
+            inputs,
+            batch_col="sample_id",
+            outdir=out,
+            species="human",
+            resolutions=(0.3, 1.0, 2.0),
+            n_top_genes=30,
+            n_pcs=10,
+            n_neighbors=10,
+        )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+    LOG_RECORDS.extend(records)
     return out, data, summary
+
+
+LOG_RECORDS: list[logging.LogRecord] = []
+
+
+def test_pipeline_progress_goes_through_the_msp_logger(integrated):
+    messages = [r.getMessage() for r in LOG_RECORDS]
+    assert any(m.startswith("== integrating:") for m in messages)
+    assert any(m.startswith("== wrote ") and m.endswith("integrated.h5ad") for m in messages)
+    assert {r.name.split(".")[0] for r in LOG_RECORDS} == {"msp"}
+    assert all(r.levelno >= logging.INFO for r in LOG_RECORDS)
 
 
 def test_pipeline_writes_every_integrate_artifact(integrated):

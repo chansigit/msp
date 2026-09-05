@@ -40,6 +40,7 @@ import argparse
 import asyncio
 import glob
 import json
+import logging
 import operator
 import os
 
@@ -54,27 +55,21 @@ from harness_bridge import default_model
 
 from .agent_tools import DEG_FILTER_ARGS, deg_filters, shared_tools, text_result
 from .evidence import (
-    DEG_SQL_DOC,
-    DEG_TOOL_DOC,
     QC_COLS,
     DegCache,
     DegTables,
     cluster_order,
-    deg_frame,
-    deg_table,
     file_inventory,
-    filter_deg,
-    filter_desc,
-    format_deg,
-    gene_table,
-    load_paga_neighbors,
     load_removal_mask,
     parse_reference,
     qc_table,
     stability_table,
 )
+from .log import configure, ensure
 from .report import generate_report
 from .steps import begin_step, complete_step, require_upstream_ready
+
+log = logging.getLogger(__name__)
 
 _OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le}
 
@@ -346,7 +341,7 @@ async def _run_agent(
     state = {"key": cluster_key, "n_sub": 0}
     deg = DegCache(ad, outdir, remove_mask, label="inspect")
     tables = DegTables(outdir, base_key=cluster_key)
-    print(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}", flush=True)
+    log.info(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}")
 
     def current_clusters():
         return cluster_order(ad.obs[state["key"]].astype(str))
@@ -489,6 +484,7 @@ def inspect_clusters(
     proposal onto obs["_msp_action"]/obs["_msp_verdict"] in integrated.h5ad,
     renders the verdict UMAP, refreshes report.html. Returns the proposal.
     """
+    ensure()
     require_upstream_ready(outdir, "inspect")
     ad = sc.read_h5ad(os.path.join(outdir, "integrated.h5ad"))
     cluster_key = cluster_key or _detect_primary_key(outdir)
@@ -500,10 +496,9 @@ def inspect_clusters(
     species = species or (msp_meta.get("species") or None)
 
     remove_mask = load_removal_mask(outdir, ad)
-    print(
+    log.info(
         f"== {int(remove_mask.sum())}/{ad.n_obs} cells already recommend_removal "
         "(pre-annotation filtering) — excluded from check_deg / subcluster DE",
-        flush=True,
     )
 
     begin_step(outdir, "inspect")
@@ -532,11 +527,12 @@ def inspect_clusters(
     ad.write_h5ad(tmp)
     os.replace(tmp, os.path.join(outdir, "integrated.h5ad"))
     complete_step(outdir, "inspect")
-    print(f"== report refreshed: {generate_report(outdir)}", flush=True)
+    log.info(f"== report refreshed: {generate_report(outdir)}")
     return proposal
 
 
 def main(argv=None):
+    configure()
     parser = argparse.ArgumentParser(prog="msp.inspect", description=__doc__)
     parser.add_argument("outdir", help="msp integration output directory")
     parser.add_argument("--species", default=None, help="defaults to uns['msp']['species']")
@@ -560,24 +556,6 @@ def main(argv=None):
         print(f"cluster {e['cluster']}: {e['verdict']} -> {e['action']} [{e['confidence']}]")
 
 
-# ---------------------------------------------------------------- compatibility
-# The evidence layer moved to msp.evidence with public names. zmip (msp-sc<0.3)
-# imports these underscore names from here; keep them for that release line.
-_DEG_SQL_DOC = DEG_SQL_DOC
-_DEG_TOOL_DOC = DEG_TOOL_DOC
-_cluster_order = cluster_order
-_deg_frame = deg_frame
-_deg_table = deg_table
-_file_inventory = file_inventory
-_filter_deg = filter_deg
-_filter_desc = filter_desc
-_format_deg = format_deg
-_gene_table = gene_table
-_load_paga_neighbors = load_paga_neighbors
-_load_removal_mask = load_removal_mask
-_parse_reference = parse_reference
-_qc_table = qc_table
-_stability_table = stability_table
 __all__ = [
     "QC_COLS",
     "DegCache",

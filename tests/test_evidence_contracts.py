@@ -88,7 +88,7 @@ def test_merge_preserves_partial_metadata_counts_and_h5ad_roundtrip(tmp_path):
         assert actual.obs[col].iloc[:2].tolist() == first.obs[col].tolist()
         assert actual.obs[col].iloc[2:].isna().all()
     assert actual.obs_names.tolist() == ["cell0", "cell1", "other0", "other1"]
-    assert "nan|nan" in inspect._qc_table(actual, "batch", "batch")
+    assert "nan|nan" in evidence.qc_table(actual, "batch", "batch")
 
 
 @pytest.mark.parametrize("mismatch", ["genes", "barcodes"])
@@ -168,14 +168,14 @@ def test_filtered_deg_cache_falls_back_once_then_reuses_complete_table(tmp_path,
     ],
 )
 def test_reference_preserves_subcluster_ids(reference, expected):
-    assert inspect._parse_reference(reference, ["1", "2", "5", "5,0", "5,1"]) == expected
+    assert evidence.parse_reference(reference, ["1", "2", "5", "5,0", "5,1"]) == expected
 
 
 def test_ambiguous_reference_requests_quoted_ids():
     with pytest.raises(ValueError, match="CSV-quote"):
-        inspect._parse_reference("5,0,5,1", ["0", "1", "5", "5,0", "5,1"])
+        evidence.parse_reference("5,0,5,1", ["0", "1", "5", "5,0", "5,1"])
     with pytest.raises(ValueError, match="unknown reference"):
-        inspect._parse_reference("missing", ["0"])
+        evidence.parse_reference("missing", ["0"])
 
 
 @pytest.mark.parametrize(
@@ -365,7 +365,8 @@ def test_report_renders_inspection_evidence_and_escapes_model_text(tmp_path):
     assert "Five-test evidence" not in Path(generate_report(tmp_path)).read_text()
 
 
-def test_palette_uses_stanhue_in_category_order_and_falls_back_loudly(monkeypatch, capsys):
+def test_palette_uses_stanhue_in_category_order_and_falls_back_loudly(monkeypatch, caplog):
+    import logging
     import sys
 
     data = data_with_clusters(("b", "a", "b"))
@@ -381,5 +382,6 @@ def test_palette_uses_stanhue_in_category_order_and_falls_back_loudly(monkeypatc
     assert calls == [((3, 2), ["b", "a", "b"])]
 
     monkeypatch.setitem(sys.modules, "stanhue", None)  # import fails
-    assert annotate._palette(data, "label") is None
-    assert "stanhue palette unavailable" in capsys.readouterr().out
+    with caplog.at_level(logging.WARNING, logger="msp"):
+        assert annotate._palette(data, "label") is None
+    assert "stanhue palette unavailable" in caplog.text

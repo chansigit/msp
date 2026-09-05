@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "msp-sc"   # PyPI distribution name (plain "msp" is taken); the import name stays `msp`
-version = "0.2.0"
+version = "0.3.0"
 description = "Multi-sample-pipeline: harmony integration of osp per-sample outputs, cluster QC inspection and cell-type annotation agents, self-contained HTML report"
 readme = "README.md"
 license = "MIT"
@@ -21,19 +21,16 @@ classifiers = [
 #   pandas 2.0    groupby(observed=True) everywhere, nullable "boolean" dtype
 #   adjustText 1.0 adjust_text(expand=..., max_move=...)
 dependencies = [
-    "agent-harness-bridge==0.1.0",
+    "agent-harness-bridge>=0.2.0,<0.3",   # 0.2: logging via configure_logging
     "scanpy>=1.10",
     "anndata>=0.10",
     "igraph>=0.10",
-    # the torch-based release msp was validated on (PyPI 2.0.0 exists, untested;
-    # Z_corr orientation handled in msp.integrate). harmonypy pulls in torch;
-    # msp itself never imports it.
-    "harmonypy==0.2.0",
+    # 2.0 is the C++ (Armadillo) rewrite: numpy-only, ~11x faster than the
+    # torch-based 0.2.0 on 81k cells (17 s vs 199 s, 8 threads); per-PC
+    # correlation with 0.2.0 >= 0.99 on that run. See docs/developer-guide.md.
+    "harmonypy>=2.0.0,<3",
     "standissect-lite>=0.2.0",
-    # hierarchical cell-type palette for the annotation UMAPs. Not on PyPI yet:
-    # switch to "stanhue>=1.1.0" as soon as it is, because PyPI rejects uploads
-    # whose dependencies are direct URL references.
-    "stanhue @ git+https://github.com/chansigit/stanhue.git@v1.1.0",
+    "stanhue>=1.1.0",   # hierarchical cell-type palette for the annotation UMAPs
     "pandas>=2.0",
     "numpy>=1.24",
     "scipy>=1.9",
@@ -44,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-agent = ["agent-harness-bridge[all]==0.1.0"]
+agent = ["agent-harness-bridge[all]>=0.2.0,<0.3"]
 
 [project.urls]
 Homepage = "https://github.com/chansigit/msp"
