@@ -7,6 +7,9 @@ All notable changes to msp-sc. The format follows
 ## 0.3.3 - Unreleased
 
 ### Fixed
+- Show optional lineage reassignment destinations, cell-ledger counts and foreign
+  evidence in annotation reports, including computed signal metrics when the
+  current clustering table exists. Ordinary MSP reports retain their layout.
 - Retain explicit batch/sample-artifact annotation removals submitted as
   `remove_reason=other`, preserving the requested reason and explanation in
   host review records. Saved proposals cannot bypass this check. General

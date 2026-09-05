@@ -33,6 +33,7 @@ import html
 import json
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 from .log import configure
@@ -696,12 +697,44 @@ def _section_annotation(outdir: str, annotation_figs: list[str]) -> str:
         "confidence",
         "rationale",
     )
+    has_reassign = any(e.get("action") == "reassign" or e.get("reassign_to") for e in prop.get("clusters", []))
+    if has_reassign:
+        cols = cols[:5] + ("reassign_to",) + cols[5:]
     head = "".join(f"<th>{c}</th>" for c in cols)
     body = "".join(
         "<tr>" + "".join(f"<td>{html.escape('' if e.get(c) is None else str(e.get(c)))}</td>" for c in cols) + "</tr>"
         for e in prop.get("clusters", [])
     )
     parts += ['<div id="annotation-tables">', "<h3>Per-cluster decisions</h3>", f"<table><tr>{head}</tr>{body}</table>"]
+    if has_reassign:
+        parts.append(
+            "<h3>Reassigned cells by destination</h3>"
+            "<p>Reassigned cells remain in annotated.h5ad; reassignment changes their lineage, "
+            "not their retention. Counts below come from annotation_reassigned.csv.</p>"
+        )
+        ledger = os.path.join(outdir, "annotation_reassigned.csv")
+        if os.path.exists(ledger):
+            with open(ledger) as f:
+                reader = csv.DictReader(f)
+                ledger_rows = list(reader)
+                valid = {"cell", "reassign_to"}.issubset(reader.fieldnames or []) and all(
+                    row.get("cell") and row.get("reassign_to") for row in ledger_rows
+                )
+            if valid:
+                destinations = Counter(row["reassign_to"] for row in ledger_rows)
+                parts.append(
+                    f"<p>{len(ledger_rows)} cells reassigned.</p>"
+                    "<table><tr><th>reassign_to</th><th>n_cells</th></tr>"
+                    + "".join(
+                        f"<tr><td>{html.escape(destination)}</td><td>{count}</td></tr>"
+                        for destination, count in sorted(destinations.items())
+                    )
+                    + "</table>"
+                )
+            else:
+                parts.append("<p>Cell-level reassignment ledger is malformed; counts unavailable.</p>")
+        else:
+            parts.append("<p>Cell-level reassignment ledger unavailable; counts unavailable.</p>")
     adjustments = [e for e in prop.get("clusters", []) if e.get("host_adjustment")]
     if adjustments:
         parts.append(
@@ -721,20 +754,38 @@ def _section_annotation(outdir: str, annotation_figs: list[str]) -> str:
         )
     if prop.get("merged_groups"):
         parts.append("<p><b>Merged groups:</b> " + html.escape(", ".join(prop["merged_groups"])) + "</p>")
+    has_foreign = any("foreign" in e.get("evidence", {}) for e in prop.get("clusters", []))
+    evidence_fields = (
+        ("distinctness", "markers", "foreign", "merge") if has_foreign else ("distinctness", "markers", "merge")
+    )
     ev_rows = "".join(
         f"<tr><td>{html.escape(str(e.get('cluster_id')))}</td>"
-        + "".join(
-            f"<td>{html.escape(str(e.get('evidence', {}).get(t, '')))}</td>"
-            for t in ("distinctness", "markers", "merge")
-        )
+        + "".join(f"<td>{html.escape(str(e.get('evidence', {}).get(t, '')))}</td>" for t in evidence_fields)
         + "</tr>"
         for e in prop.get("clusters", [])
     )
     parts.append(
         "<details><summary>reasoning chain per cluster</summary>"
-        "<table><tr><th>cluster</th><th>1. distinctness</th><th>2. markers</th>"
-        f"<th>3. merge</th></tr>{ev_rows}</table></details>"
+        "<table><tr><th>cluster</th>"
+        + "".join(f"<th>{i}. {field}</th>" for i, field in enumerate(evidence_fields, 1))
+        + f"</tr>{ev_rows}</table></details>"
     )
+    if has_foreign:
+        parts.append(
+            '<p class="hint">Foreign evidence above is the model explanation. Foreign signal '
+            "scores and summary metrics are not probabilities; signal panel names need not "
+            "match reassignment destinations.</p>"
+        )
+        # Only the exact current clustering is comparable to the proposal's cluster IDs.
+        foreign = os.path.join(outdir, f"foreign_signal_{key}.csv")
+        if os.path.basename(foreign) == f"foreign_signal_{key}.csv" and os.path.isfile(foreign):
+            parts.append(
+                "<details><summary>Computed foreign signal metrics for the current clustering</summary>"
+                + _csv_table(foreign)
+                + "</details>"
+            )
+        else:
+            parts.append("<p>No computed foreign signal table for the current clustering.</p>")
     if prop.get("overall"):
         parts.append(f"<p><b>Overall:</b> {html.escape(prop['overall'])}</p>")
     notes = os.path.join(outdir, "annotation_notes.md")
