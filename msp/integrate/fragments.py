@@ -19,6 +19,7 @@ import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.cluster.hierarchy import dendrogram, linkage
 
+from ..deg_logging import rank_genes_groups
 from ..plots import UMAP_DPI
 
 log = logging.getLogger(__name__)
@@ -208,7 +209,7 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
         return
 
     log.info("== parent-core DEG (one vs other parent cores)")
-    sc.tl.rank_genes_groups(core_ad, "parent", method="wilcoxon", use_raw=True, pts=True)
+    rank_genes_groups(core_ad, "parent", method="wilcoxon", use_raw=True, pts=True)
     de_df = sc.get.rank_genes_groups_df(core_ad, group=None)
     de_df.to_csv(os.path.join(outdir, "de_parent_core_vs_core.csv"), index=False)
 

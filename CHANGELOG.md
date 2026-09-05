@@ -4,6 +4,24 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased (0.3.1)
+
+### Added
+- Public downstream helpers: `msp.evidence.prior_label_columns`, `components`,
+  `palette`, `plot_annotation`, and `subcluster_once`; `msp.report.csv_table`
+  and `img`. Existing private names remain compatible in 0.3.
+- Regression coverage for cluster context, prior-label detection, and real
+  graph subclustering, including removal masks and singleton remnants.
+
+### Fixed
+- Summarize repeated Scanpy log2 divide-by-zero/invalid-value warnings once
+  per DEG call. Non-finite results are retained, unrelated warnings remain
+  visible, and numerical errors still propagate.
+- Subcluster evidence no longer attempts a Wilcoxon test when removal leaves
+  a singleton sibling; report insufficient evidence with full split sizes.
+- Harmony iteration chatter defaults to `verbose=False`, keeping MSP progress
+  readable. Explicit `harmony_kwargs={"verbose": True}` remains supported.
+
 ## 0.3.0 - 2026-09-04
 
 ### Added

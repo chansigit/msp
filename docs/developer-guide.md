@@ -227,3 +227,18 @@ coverage floor set there. The test suite treats `FutureWarning`s raised from
 `msp` as errors, so a pandas deprecation shows up as a failure rather than as
 noise. Record user-visible changes in [CHANGELOG.md](../CHANGELOG.md); open
 items are tracked in [TODO.md](../TODO.md).
+
+
+### Downstream helper API (0.3.1)
+
+ZMIP can import `prior_label_columns`, `components`, `palette`,
+`plot_annotation`, and `subcluster_once` from `msp.evidence`, and `csv_table`
+and `img` from `msp.report`. Signatures and behavior match the previous
+private helpers. Evidence uses lazy forwarding to avoid agent-module import
+cycles; legacy private entry points are retained for 0.3 compatibility.
+
+MSP summarizes only Scanpy's log2 divide-by-zero/invalid-value DEG warnings
+per test call. The underlying non-finite fold changes are retained; summaries
+are numerical evidence, not a claim that every DEG is valid. Harmony defaults
+to quiet iterations while MSP logs the start; set `harmony_kwargs={"verbose":
+True}` for the original iteration detail.

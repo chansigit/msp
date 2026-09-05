@@ -12,26 +12,36 @@ the dependency cleanup, the logging switch and the harmonypy 2.0 upgrade
 
 ## Phase 3 leftovers
 
-- [ ] `test_step_recovery.py::test_completed_integration_allows_external_annotation_report`
-      still monkeypatches scanpy internals; the end-to-end test covers the
-      real path, so either fold its recovery assertions into that test or
-      leave this one as the fast variant.
-- [ ] Raise the coverage floor in `pyproject.toml` as `integrate.py` and
-      `annotate.py` gain tests (target: `integrate` 80 percent, total 80
-      percent). `_cluster_context`, `_prior_label_columns`, and
-      `_subcluster_once` are the largest untested pieces.
+- [x] Keep `test_step_recovery.py::test_completed_integration_allows_external_annotation_report`
+      as a fast recovery regression; the separate end-to-end integration test
+      exercises the real numerical path. These cover different failure modes.
+- [x] The configured total coverage floor is already 80 percent. Add direct
+      `_cluster_context` / `_prior_label_columns` tests and real-graph
+      `_subcluster_once` tests, including removed and singleton siblings.
+      Remaining agent-session branch coverage can grow with concrete bugs.
 
 ## Smaller items
 
 - [ ] Figures are not byte-reproducible: two runs of the same code on the
       synthetic dataset differ in `figures/umap_msp_leiden_r2.0.png`
-      (adjustText's label repulsion is randomized). Seed it in
-      `plots._repel_on_data_labels` (adjustText >= 1.0 accepts a seed) if
-      figure diffs are ever needed; every CSV and the H5AD are already
-      reproducible.
+      (adjustText's label repulsion is randomized and time-limited). The
+      installed adjustText API has no dedicated seed argument: reproducible
+      rendering needs controlled RNG state plus a fixed iteration budget,
+      with concurrency and label-quality checks. Defer until byte-level
+      figure reproducibility is required; this is not a scientific-output
+      correctness fix.
 - [ ] `DegTables` still loads every remaining CSV under 64 MB into SQLite on
       each agent session; consider lazy `ATTACH` if session start-up becomes
       noticeable.
 - [ ] `report.py` section functions read their CSVs with the `csv` module and
       hand-build tables; a shared `_table(rows, columns, style=...)` helper
       would remove most of the repetition.
+
+## Integration maintenance (2026-09-05)
+
+- [x] Summarize Scanpy's repeated log2 numerical warnings in every MSP DEG
+      path without replacing non-finite results or suppressing other errors.
+- [x] Quiet Harmony iteration logs by default, with explicit verbose override.
+- [x] Expose all seven helpers ZMIP used privately; keep old names for 0.3.
+- [ ] Record the full 19Liu inspect/annotate/report content audit once the
+      coordinated validation run completes (file existence is insufficient).

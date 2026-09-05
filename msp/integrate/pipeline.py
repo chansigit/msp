@@ -193,7 +193,7 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
 
         # BLAS threads for the C++ solver: the CPUs this process may really
         # use (affinity mask / cgroup), not the node's core count.
-        kwargs = {"random_state": 0, "ncores": available_cpus(), **harmony_kwargs}
+        kwargs = {"random_state": 0, "ncores": available_cpus(), "verbose": False, **harmony_kwargs}
         log.info(
             f"== harmony (harmonypy {getattr(harmonypy, '__version__', '?')}, {kwargs['ncores']} thread(s))"
             + (f", overrides {harmony_kwargs}" if harmony_kwargs else ", harmonypy defaults"),

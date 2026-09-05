@@ -20,6 +20,8 @@ import pandas as pd
 import scanpy as sc
 import scipy.sparse as sp
 
+from .deg_logging import rank_genes_groups
+
 log = logging.getLogger(__name__)
 
 QC_COLS = (
@@ -179,7 +181,7 @@ def deg_frame(ad, cluster_key, cluster, ref_groups, remove_mask):
     if cluster not in set(lab):
         return None
     sub = base if ref_groups == "rest" else base[lab.isin([cluster, *ref_groups])].copy()
-    sc.tl.rank_genes_groups(
+    rank_genes_groups(
         sub, cluster_key, groups=[cluster], reference="rest", method="wilcoxon", use_raw=True, pts=True
     )
     df = sc.get.rank_genes_groups_df(sub, group=cluster)
@@ -640,3 +642,35 @@ class DegCache:
             filter_desc(min_logfc, max_padj, min_pct1, max_pct2),
         )
         return text if complete else text + "\n(cached ranked prefix; more genes may pass)"
+
+
+# Lazy imports keep the evidence module usable during annotate/inspect import.
+# These stable public entry points retain the existing 0.3 call signatures.
+def prior_label_columns(ad, batch_col):
+    """Return candidate prior label columns, excluding sample identities."""
+    from .annotate import _prior_label_columns
+    return _prior_label_columns(ad, batch_col)
+
+
+def components(entries):
+    """Return connected annotation merge components from cluster entries."""
+    from .annotate import _components
+    return _components(entries)
+
+
+def palette(ad, col):
+    """Assign the annotation palette for an observation column."""
+    from .annotate import _palette
+    return _palette(ad, col)
+
+
+def plot_annotation(ad_full, ad_kept, figdir):
+    """Render full and retained annotation views into a figure directory."""
+    from .annotate import _plot
+    return _plot(ad_full, ad_kept, figdir)
+
+
+def subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
+    """Split one cluster and report sibling markers excluding removed cells."""
+    from .inspect import _subcluster_once
+    return _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask)

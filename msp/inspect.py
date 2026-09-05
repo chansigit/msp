@@ -54,6 +54,7 @@ import scanpy as sc
 from harness_bridge import default_model
 
 from .agent_tools import DEG_FILTER_ARGS, deg_filters, shared_tools, text_result
+from .deg_logging import rank_genes_groups
 from .evidence import (
     QC_COLS,
     DegCache,
@@ -101,10 +102,12 @@ def _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
         return 0, f"cluster {cluster} did not split at resolution {resolution}; try higher"
     sub = ad[parent_mask].copy()
     sub.obs["_sub"] = pd.Categorical(sub_labels.values)
-    sub_clean = sub[~remove_mask[parent_mask]]
+    sub_clean = sub[~remove_mask[parent_mask]].copy()
     top = None
-    if sub_clean.obs["_sub"].nunique(dropna=True) >= 2:
-        sc.tl.rank_genes_groups(sub_clean, "_sub", method="wilcoxon", use_raw=False)
+    clean_sizes = sub_clean.obs["_sub"].value_counts()
+    clean_sizes = clean_sizes[clean_sizes > 0]
+    if len(clean_sizes) >= 2 and clean_sizes.min() >= 2:
+        rank_genes_groups(sub_clean, "_sub", method="wilcoxon", use_raw=False)
         top = sc.get.rank_genes_groups_df(sub_clean, group=None).groupby("group", observed=True).head(10)
     sizes = sub_labels.value_counts()
     lines = [f"cluster {cluster} split into {len(subs)} subclusters at resolution {resolution}:"]

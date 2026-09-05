@@ -899,3 +899,8 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
+
+# Public rendering helpers; old names remain compatible with 0.3 callers.
+csv_table = _csv_table
+img = _img

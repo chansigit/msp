@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
+from ..deg_logging import rank_genes_groups
+
 log = logging.getLogger(__name__)
 
 # Conservative "dissociation stress" core panel (not osp's full ~130-gene
@@ -153,7 +155,7 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
     def run_global(item):
         key = item["key"]
         slot = f"_rgg_{key}"
-        sc.tl.rank_genes_groups(
+        rank_genes_groups(
             ad_excl, key, groups=item["valid"], method="wilcoxon", use_raw=True, pts=True, key_added=slot
         )
         gdf = sc.get.rank_genes_groups_df(ad_excl, group=None, key=slot)
@@ -171,7 +173,7 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         sub = ad_excl[ad_excl.obs[key].isin([c, *neighbors])].copy()
         if int((sub.obs[key] == c).sum()) < MIN_DE_GROUP_SIZE:
             return None
-        sc.tl.rank_genes_groups(sub, key, groups=[c], reference="rest", method="wilcoxon", use_raw=True, pts=True)
+        rank_genes_groups(sub, key, groups=[c], reference="rest", method="wilcoxon", use_raw=True, pts=True)
         ldf = sc.get.rank_genes_groups_df(sub, group=c)
         ldf = ldf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
         # rank_genes_groups_df drops the "group" column when `group` is a scalar
