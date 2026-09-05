@@ -3,21 +3,22 @@
   <title id="msp-logo-title">MSP — a shared cell atlas</title>
   <desc id="msp-logo-desc">Three distinct organic populations share intertwined blue,
     jade, and amber bands. Shape represents biological identity; the recurring
-    colors represent samples integrated into each population. Open space preserves
-    the distinction between populations. An abstract mark, not a data plot.</desc>
+    colors represent samples integrated into each population. The transparent space
+    between the populations forms an M, enclosed by a fine circular border.
+    An abstract mark, not a data plot.</desc>
 
   <defs>
-    <!-- Population contours: deliberately different, like islands in a cell atlas. -->
-    <path id="population-a" d="M79 148C82 107 116 76 158 72C202 68 246 89 265 125
-      C279 151 270 178 249 194C232 207 219 207 207 226C193 249 183 268 155 268
-      C111 268 74 211 79 148Z"/>
-    <path id="population-b" d="M366 112C408 105 446 140 449 183C452 217 436 258 408 276
-      C383 292 356 281 348 258C341 238 350 220 336 204C318 184 314 164 324 144
-      C332 127 347 116 366 112Z"/>
-    <path id="population-c" d="M174 308C201 310 216 286 244 282C279 275 304 296 326 314
-      C348 332 374 331 391 352C414 381 400 416 370 432C338 450 298 444 273 426
-      C250 409 232 400 207 404C173 411 142 408 126 385C108 359 119 326 143 313
-      C153 308 163 307 174 308Z"/>
+    <!-- The population boundaries leave an open M-shaped channel. The letter
+         is transparent negative space, not a glyph painted over the populations. -->
+    <path id="population-a" d="M227 88C183 73 134 99 106 137C76 177 68 221 83 265
+      C94 298 115 325 132 341C139 347 145 349 145 337V180C145 162 151 148 162 148C173 148 184 162 196 177
+      L239 232C246 241 251 235 250 222L250 129C249 107 242 93 227 88Z"/>
+    <path id="population-b" d="M283 88C324 75 372 99 403 139C433 178 443 220 429 263
+      C418 298 397 325 380 341C373 347 367 349 367 337V180C367 162 361 148 350 148C339 148 328 162 316 177
+      L273 232C266 241 261 235 262 222L262 129C263 107 269 93 283 88Z"/>
+    <path id="population-c" d="M181 225C181 211 187 207 197 220L239 273
+      C250 287 262 287 273 273L315 220C325 207 331 211 331 225V344
+      C331 388 302 418 264 426C224 434 187 404 182 362C180 340 181 298 181 225Z"/>
     <clipPath id="clip-a"><use href="#population-a"/></clipPath>
     <clipPath id="clip-b"><use href="#population-b"/></clipPath>
     <clipPath id="clip-c"><use href="#population-c"/></clipPath>
@@ -25,7 +26,9 @@
 
   <!-- Each population contains the same three sample colors. The bands bend
        together within a population, rather than converging into one central hub. -->
-  <g transform="rotate(-35 256 256)">
+  <!-- A shared circular frame holds the distinct populations in one atlas. -->
+  <circle cx="256" cy="256" r="226" fill="none" stroke="#2855BD" stroke-width="6"/>
+  <g>
     <g clip-path="url(#clip-a)">
       <use href="#population-a" fill="#2855BD"/>
       <path d="M78 92C96 130 125 141 155 147C193 155 213 176 224 205C235 235 222 265 218 285"
@@ -52,13 +55,13 @@
 
     <g clip-path="url(#clip-c)">
       <use href="#population-c" fill="#2855BD"/>
-      <path d="M106 365C149 386 173 365 204 357C248 345 275 352 302 375C327 397 364 411 411 392"
+      <path d="M148 290C187 282 217 299 242 321C268 344 299 352 356 328"
             fill="none" stroke="#FFFFFF" stroke-width="69"/>
-      <path d="M106 365C149 386 173 365 204 357C248 345 275 352 302 375C327 397 364 411 411 392"
+      <path d="M148 290C187 282 217 299 242 321C268 344 299 352 356 328"
             fill="none" stroke="#20AD98" stroke-width="58"/>
-      <path d="M118 320C151 340 174 333 199 322C233 306 263 310 288 329C322 356 346 365 405 357"
+      <path d="M155 353C195 335 220 357 245 375C274 396 305 398 355 371"
             fill="none" stroke="#FFFFFF" stroke-width="34"/>
-      <path d="M118 320C151 340 174 333 199 322C233 306 263 310 288 329C322 356 346 365 405 357"
+      <path d="M155 353C195 335 220 357 245 375C274 396 305 398 355 371"
             fill="none" stroke="#F0B54D" stroke-width="23"/>
     </g>
   </g>
