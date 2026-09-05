@@ -70,3 +70,12 @@ def test_dynamic_clusters_do_not_borrow_old_foreign_measurements(tmp_path):
     assert "No computed foreign signal table for the current clustering." in result
     assert "obsolete" not in result
     assert "&lt;signal&gt; 1.343" in result
+
+
+def test_duplicate_cell_ids_do_not_inflate_reassignment_counts(tmp_path):
+    proposal(tmp_path)
+    (tmp_path / "annotation_reassigned.csv").write_text("cell,reassign_to\na,B cell\na,Stromal\n")
+    result = _section_annotation(str(tmp_path), [])
+    assert "ledger is malformed; counts unavailable" in result
+    assert "2 cells reassigned." not in result
+    assert "<th>n_cells</th>" not in result

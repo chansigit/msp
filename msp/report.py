@@ -717,8 +717,10 @@ def _section_annotation(outdir: str, annotation_figs: list[str]) -> str:
             with open(ledger) as f:
                 reader = csv.DictReader(f)
                 ledger_rows = list(reader)
-                valid = {"cell", "reassign_to"}.issubset(reader.fieldnames or []) and all(
-                    row.get("cell") and row.get("reassign_to") for row in ledger_rows
+                valid = (
+                    {"cell", "reassign_to"}.issubset(reader.fieldnames or [])
+                    and all(row.get("cell") and row.get("reassign_to") for row in ledger_rows)
+                    and len({row["cell"] for row in ledger_rows}) == len(ledger_rows)
                 )
             if valid:
                 destinations = Counter(row["reassign_to"] for row in ledger_rows)
