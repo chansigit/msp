@@ -40,7 +40,6 @@ import argparse
 import asyncio
 import json
 import os
-import sys
 
 import matplotlib
 
@@ -68,9 +67,6 @@ BASE_KEY = "msp_leiden_r2.0"
 PARENT_KEY = "msp_leiden_r1.0"
 CONFIDENCES = ("high", "medium", "low")
 REMOVE_REASONS = ("doublet", "low-quality", "ambient", "stress", "batch", "other")
-# Optional: a directory holding stanhue's scatter_colormap.py (hierarchical
-# cell-type palette). Unset → scanpy's default palette; never auto-detected.
-PALETTE_DIR_ENV = "MSP_PALETTE_DIR"
 
 
 # ---------------------------------------------------------------- evidence
@@ -389,21 +385,28 @@ def _apply(ad, proposal, pre_removed, pre_sources):
     return archive.loc[removed].reset_index(drop=True)
 
 
-def _palette(ad, col):
-    """stanhue hierarchical palette (related labels share a hue family) when
-    $MSP_PALETTE_DIR points at a directory with scatter_colormap.py, else
-    None (scanpy's default). Falling back is announced, never silent."""
-    palette_dir = os.environ.get(PALETTE_DIR_ENV)
-    if not palette_dir:
-        return None
+def _stanhue_colors():
+    """stanhue's palette function. The 1.0.0 wheel ships its single module as
+    ``scatter_colormap`` (the README's ``from stanhue import ...`` does not
+    resolve); accept both names so a fixed release keeps working."""
     try:
-        if palette_dir not in sys.path:
-            sys.path.insert(0, palette_dir)
+        from stanhue import assign_celltype_colors  # type: ignore[import-not-found]
+    except ImportError:
         from scatter_colormap import assign_celltype_colors  # type: ignore[import-not-found]
+    return assign_celltype_colors
+
+
+def _palette(ad, col):
+    """stanhue hierarchical palette (related labels share a hue family) in
+    category order, or None for scanpy's default when stanhue is missing or
+    fails; the fallback is announced so it never passes unnoticed. Failing
+    here must not lose the annotation run that precedes it."""
+    try:
+        assign_celltype_colors = _stanhue_colors()
+        cmap = assign_celltype_colors(np.asarray(ad.obsm["X_umap"]), ad.obs[col].astype(str).to_numpy())
     except Exception as exc:
-        print(f"== {PALETTE_DIR_ENV}={palette_dir!r} unusable ({exc}); using scanpy's default palette", flush=True)
+        print(f"== stanhue palette unavailable ({exc!r}); using scanpy's default palette for {col}", flush=True)
         return None
-    cmap = assign_celltype_colors(np.asarray(ad.obsm["X_umap"]), ad.obs[col].astype(str).to_numpy())
     return [cmap.get(str(c), "#999999") for c in ad.obs[col].cat.categories]
 
 

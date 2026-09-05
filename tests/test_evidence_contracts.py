@@ -362,3 +362,24 @@ def test_report_renders_inspection_evidence_and_escapes_model_text(tmp_path):
     state.mkdir()
     (state / "inspect.pending").touch()
     assert "Five-test evidence" not in Path(generate_report(tmp_path)).read_text()
+
+
+def test_palette_uses_stanhue_in_category_order_and_falls_back_loudly(monkeypatch, capsys):
+    import sys
+
+    data = data_with_clusters(("b", "a", "b"))
+    data.obs["label"] = pd.Categorical(["b", "a", "b"])
+    calls = []
+
+    def assign_celltype_colors(coords, labels):
+        calls.append((coords.shape, list(labels)))
+        return {"a": "#111111", "b": "#222222"}
+
+    monkeypatch.setitem(sys.modules, "stanhue", None)  # the README name does not resolve
+    monkeypatch.setitem(sys.modules, "scatter_colormap", SimpleNamespace(assign_celltype_colors=assign_celltype_colors))
+    assert annotate._palette(data, "label") == ["#111111", "#222222"]
+    assert calls == [((3, 2), ["b", "a", "b"])]
+
+    monkeypatch.setitem(sys.modules, "scatter_colormap", None)
+    assert annotate._palette(data, "label") is None
+    assert "stanhue palette unavailable" in capsys.readouterr().out

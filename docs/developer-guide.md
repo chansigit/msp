@@ -61,7 +61,6 @@ repeatable CLI `--harmony KEY=VALUE` options pass overrides to Harmony, while
 | --- | --- |
 | `MSP_DEVICE` | Harmony device: `cpu`, `cuda`, or `mps` (default: auto-detect). |
 | `MSP_MAX_THREADS` | Cap on the CPUs the DEG thread pool may use (default: the affinity mask). |
-| `MSP_PALETTE_DIR` | Directory holding stanhue's `scatter_colormap.py`; annotation UMAPs then use its hierarchical palette. Unset: scanpy's default palette. An unusable directory is reported, not ignored. |
 | `HARNESS` | Agent backend when `--harness` is not given; see Agent Harness Bridge. |
 
 | Location | Meaning |

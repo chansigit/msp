@@ -57,9 +57,10 @@ python -m msp A/clustered.h5ad B/clustered.h5ad \
     --annotate --harness openai --model doubao-seed-2-1-turbo-260628
 ```
 
-Annotation UMAPs use scanpy's default colors. To color related cell types in
-shared hue families with stanhue, point `MSP_PALETTE_DIR` at the directory
-containing its `scatter_colormap.py` before running annotation.
+Annotation UMAPs color related cell types in shared hue families using
+[stanhue](https://github.com/chansigit/stanhue), which installs with MSP. If
+stanhue is missing or fails, the run continues with scanpy's default colors
+and prints a notice.
 
 ## Choose how far to run
 

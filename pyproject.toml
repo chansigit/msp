@@ -23,6 +23,9 @@ dependencies = [
     "harmonypy==0.2.0",   # the torch-based release msp was validated on (PyPI 2.0.0 exists, untested; Z_corr orientation handled in msp.integrate)
     "torch",
     "standissect-lite>=0.2.0",
+    # hierarchical cell-type palette for the annotation UMAPs; not on PyPI, and
+    # its 1.0.0 wheel exposes the module as `scatter_colormap` (see msp.annotate)
+    "stanhue @ git+https://github.com/chansigit/stanhue.git",
     "pandas",
     "numpy",
     "scipy",
