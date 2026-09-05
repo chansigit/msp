@@ -31,11 +31,18 @@ the dependency cleanup, the logging switch and the harmonypy 2.0 upgrade
       figure reproducibility is required; this is not a scientific-output
       correctness fix.
 - [ ] `DegTables` still loads every remaining CSV under 64 MB into SQLite on
-      each agent session; consider lazy `ATTACH` if session start-up becomes
-      noticeable.
+      each agent session. Defer optimization until representative session
+      start-up time and peak memory are measured. If warranted, implement
+      on-demand CSV import, checking that query results, available-table
+      descriptions and read-only SQL protections remain unchanged; record
+      before/after start-up time and peak memory. CSV files cannot be loaded
+      directly through SQLite `ATTACH`.
 - [ ] `report.py` section functions read their CSVs with the `csv` module and
       hand-build tables; a shared `_table(rows, columns, style=...)` helper
-      would remove most of the repetition.
+      would remove most of the repetition. Defer this maintenance refactor
+      because it does not resolve a current output defect. Acceptance:
+      preserve each section's rendered content and layout, escaping,
+      missing/empty-table behavior and existing report regression tests.
 
 ## Integration maintenance (2026-09-05)
 
