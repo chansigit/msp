@@ -219,7 +219,7 @@ def _apply_proposal(ad, key, proposal):
         for a in proposal.get("cell_actions", []):
             if a["action"] == verb:
                 mask = (lab == str(a["cluster"])).values
-                mask &= _OPS[a["op"]](ad.obs[a["metric"]].to_numpy(dtype=float), float(a["value"]))
+                mask = mask & _OPS[a["op"]](ad.obs[a["metric"]].to_numpy(dtype=float), float(a["value"]))
                 action[mask] = verb
     ad.obs["_msp_action"] = pd.Categorical(action, categories=["keep", "flag", "drop"])
     ad.obs["_msp_verdict"] = lab.map({str(e["cluster"]): e["verdict"] for e in proposal["clusters"]}).astype("category")

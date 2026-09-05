@@ -59,6 +59,9 @@ All notable changes to msp-sc. The format follows
 - `msp.harness` emits a `DeprecationWarning`; it will be removed in 0.4.
 
 ### Fixed
+- `_apply_proposal` no longer writes in place into the read-only array
+  pandas 3 returns from `Series.values` (cell actions raised
+  `ValueError: output array is read-only`).
 - `_build_removal_mask` aligns a partial cell-outlier table by cell ID
   without pandas' object-dtype downcasting warning.
 
