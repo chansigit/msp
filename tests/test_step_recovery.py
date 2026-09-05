@@ -14,6 +14,7 @@ import pytest
 import msp.annotate as annotate
 import msp.inspect as inspect
 import msp.integrate as integrate
+import msp.integrate.pipeline as pipeline
 import msp.steps as steps
 from msp import report
 from msp.report import generate_report
@@ -170,7 +171,7 @@ def test_integration_rerun_invalidates_all_outputs(completed_run, monkeypatch):
     def fail_normalize(*args, **kwargs):
         raise RuntimeError("interrupted integration")
 
-    monkeypatch.setattr(integrate.sc.pp, "normalize_total", fail_normalize)
+    monkeypatch.setattr(pipeline.sc.pp, "normalize_total", fail_normalize)
     with pytest.raises(RuntimeError, match="interrupted integration"):
         integrate.integrate_adata(data, "batch", root)
     assert step_pending(root, "integrate")
@@ -348,8 +349,8 @@ def test_completed_integration_allows_external_annotation_report(completed_run, 
     # A new upstream run supersedes an older interrupted annotation, too.
     begin_step(completed_run, "annotate")
 
-    monkeypatch.setattr(integrate.sc.pp, "normalize_total", lambda *args, **kwargs: None)
-    monkeypatch.setattr(integrate.sc.pp, "log1p", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.sc.pp, "normalize_total", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.sc.pp, "log1p", lambda *args, **kwargs: None)
 
     def hvg(subset, **kwargs):
         subset.var["highly_variable"] = True
@@ -360,24 +361,19 @@ def test_completed_integration_allows_external_annotation_report(completed_run, 
     def umap(subset):
         subset.obsm["X_umap"] = np.arange(subset.n_obs * 2).reshape(-1, 2).astype(float)
 
-    monkeypatch.setattr(integrate.sc.pp, "highly_variable_genes", hvg)
-    monkeypatch.setattr(integrate.sc.pp, "scale", lambda *args, **kwargs: None)
-    monkeypatch.setattr(integrate.sc.pp, "neighbors", lambda *args, **kwargs: None)
-    monkeypatch.setattr(integrate.sc.tl, "leiden", leiden)
-    monkeypatch.setattr(integrate.sc.tl, "umap", umap)
+    monkeypatch.setattr(pipeline.sc.pp, "highly_variable_genes", hvg)
+    monkeypatch.setattr(pipeline.sc.pp, "scale", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.sc.pp, "neighbors", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.sc.tl, "leiden", leiden)
+    monkeypatch.setattr(pipeline.sc.tl, "umap", umap)
     monkeypatch.setattr(
-        integrate,
+        pipeline,
         "PCA",
         lambda **kwargs: SimpleNamespace(fit_transform=lambda x: np.zeros((len(x), kwargs["n_components"]))),
     )
     data.obs["batch"] = "A"  # One batch takes the existing Harmony skip branch.
     # Isolate numerical libraries from this filesystem recovery test.
     monkeypatch.setitem(sys.modules, "harmonypy", SimpleNamespace())
-    monkeypatch.setitem(
-        sys.modules,
-        "torch",
-        SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False), backends=SimpleNamespace(mps=None)),
-    )
     partition = SimpleNamespace(
         labels=pd.DataFrame({"subcluster": ["c0_0"] * data.n_obs}, index=data.obs_names),
         fragments=pd.DataFrame({"subcluster": ["c0_0"]}),
@@ -396,8 +392,8 @@ def test_completed_integration_allows_external_annotation_report(completed_run, 
         "_qc_outputs",
         "_fractal_marker_heatmap",
     ):
-        monkeypatch.setattr(integrate, name, lambda *args, **kwargs: None)
-    monkeypatch.setattr(integrate, "_build_removal_mask", lambda *args: np.zeros(data.n_obs, dtype=bool))
+        monkeypatch.setattr(pipeline, name, lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "_build_removal_mask", lambda *args: np.zeros(data.n_obs, dtype=bool))
 
     result, summary = integrate.integrate_adata(data, "batch", completed_run)
     assert summary["n_cells"] == data.n_obs
