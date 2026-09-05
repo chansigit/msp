@@ -4,6 +4,15 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.3.3 - Unreleased
+
+### Fixed
+- Retain explicit batch/sample-artifact annotation removals submitted as
+  `remove_reason=other`, preserving the requested reason and explanation in
+  host review records. Saved proposals cannot bypass this check. General
+  batch mentions and specific independent QC removal reasons keep their
+  existing behavior; this narrow safeguard does not validate their evidence.
+
 ## 0.3.2 - 2026-09-05
 
 ### Fixed

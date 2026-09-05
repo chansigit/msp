@@ -41,6 +41,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 
 import matplotlib
 
@@ -356,9 +357,27 @@ def _validate_final(entries, clusters):
     return problems
 
 
+def _batch_annotation_removal(entry):
+    """Recognize explicit batch-artifact claims, not general batch mentions.
+
+    Specific independent QC reasons retain their existing semantics. An
+    ``other`` request describing a batch artifact must instead be reviewed;
+    mentioning ambient RNA alongside that claim is not a separate QC reason.
+    """
+    if entry.get("action") != "remove":
+        return False
+    reason = entry.get("remove_reason")
+    if reason == "batch":
+        return True
+    if reason != "other":
+        return False
+    pattern = r"\b(?:batch|sample)[\s_-]+art[ie]facts?\b|(?:批次|样本)伪影"
+    return any(re.search(pattern, str(entry.get(field, "")), re.IGNORECASE) for field in ("fine_label", "rationale"))
+
+
 def _guard_batch_annotation(entry):
     """Retain batch-only suspicions without changing the model's explanation."""
-    if entry.get("action") == "remove" and entry.get("remove_reason") == "batch":
+    if _batch_annotation_removal(entry):
         entry["requested_action"] = entry["action"]
         entry["requested_remove_reason"] = entry["remove_reason"]
         entry["action"] = "keep"
@@ -381,7 +400,7 @@ def _apply(ad, proposal, pre_removed, pre_sources):
     (keep/remove). Returns the removal archive (removed cells only, with
     their sources)."""
     entries = {str(e["cluster_id"]): e for e in proposal["clusters"]}
-    if any(e.get("action") == "remove" and e.get("remove_reason") == "batch" for e in entries.values()):
+    if any(_batch_annotation_removal(e) for e in entries.values()):
         raise ValueError("unguarded batch-only annotation removal; normalize and validate the proposal before applying")
     comp = _components(entries)
     base = ad.obs[BASE_KEY].astype(str)

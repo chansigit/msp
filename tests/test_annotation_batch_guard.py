@@ -14,9 +14,12 @@ import msp.annotate as A
 from msp.report import _section_annotation
 
 
-def test_submission_normalizes_before_merge_validation_and_persists(tmp_path, monkeypatch):
+@pytest.mark.parametrize("reason", ["batch", "other"])
+def test_submission_normalizes_before_merge_validation_and_persists(tmp_path, monkeypatch, reason):
     data = data_with_clusters()
-    original = annotation_entry("0", action="remove", remove_reason="batch", merge_target="1")
+    original = annotation_entry(
+        "0", action="remove", remove_reason=reason, merge_target="1", rationale="batch artifact with ambient RNA"
+    )
 
     async def run_agent(**kwargs):
         tools = {tool.name: tool.handler for tool in kwargs["tools"]}
@@ -52,13 +55,13 @@ def test_submission_normalizes_before_merge_validation_and_persists(tmp_path, mo
     assert saved == proposal
     entry = saved["clusters"][0]
     assert entry["action"] == "keep" and entry["remove_reason"] is None
-    assert entry["requested_action"] == "remove" and entry["requested_remove_reason"] == "batch"
+    assert entry["requested_action"] == "remove" and entry["requested_remove_reason"] == reason
     assert entry["review_required"] is True
     assert entry["rationale"] == original["rationale"] and entry["evidence"] == original["evidence"]
     assert entry["coarse_label"] == original["coarse_label"]
     assert saved["merged_groups"] == ["0+1"]
     report = _section_annotation(str(tmp_path), [])
-    assert "Host policy adjustments" in report and "requested remove (batch); applied keep" in report
+    assert "Host policy adjustments" in report and f"requested remove ({reason}); applied keep" in report
     assert "review required" in report and original["rationale"] in report
 
 
@@ -99,3 +102,59 @@ def test_normalization_does_not_silently_repair_invalid_merge_target():
     }
     problems = A._validate_final(entries, ["0", "1"])
     assert any("action=remove" in problem for problem in problems)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"fine_label": "Mixed stromal batch artifact", "rationale": "batch artifact with ambient RNA"},
+        {"rationale": "batch artifact with ambient RNA"},
+        {"fine_label": "Sample-artefact"},
+        {"rationale": "批次伪影"},
+    ],
+)
+def test_other_cannot_disguise_explicit_batch_artifact(fields, tmp_path):
+    original = annotation_entry("0", action="remove", remove_reason="other", **fields)
+    data = data_with_clusters()
+    proposal = {"clusters": [copy.deepcopy(original), annotation_entry("1")]}
+    with pytest.raises(ValueError, match="unguarded batch-only"):
+        A._apply(data, proposal, np.zeros(2, bool), {"preannotation": np.zeros(2, bool)})
+    assert "msp_ann_action" not in data.obs
+    guarded = A._guard_batch_annotation(copy.deepcopy(original))
+    assert guarded["requested_remove_reason"] == "other"
+    assert guarded["action"] == "keep" and guarded["review_required"] is True
+    for field in ("fine_label", "rationale", "evidence"):
+        assert guarded[field] == original[field]
+    assert A._guard_batch_annotation(copy.deepcopy(guarded)) == guarded
+    proposal["clusters"][0] = guarded
+    removed = A._apply(data, proposal, np.zeros(2, bool), {"preannotation": np.zeros(2, bool)})
+    assert removed.empty and data.obs["msp_ann_review"].tolist() == [True, False]
+    (tmp_path / "annotation_proposal.json").write_text(json.dumps(proposal))
+    assert "requested remove (other); applied keep" in _section_annotation(str(tmp_path), [])
+
+
+@pytest.mark.parametrize("reason", ["doublet", "low-quality", "ambient", "stress"])
+def test_explicit_independent_qc_reason_not_overridden_by_batch_text(reason):
+    original = annotation_entry(
+        "0",
+        action="remove",
+        remove_reason=reason,
+        rationale="Independent numeric QC evidence; batch artifact is a secondary concern",
+    )
+    assert A._guard_batch_annotation(copy.deepcopy(original)) == original
+
+
+@pytest.mark.parametrize("action", ["keep", "remove"])
+def test_general_batch_mentions_are_not_artifact_classification(action):
+    original = annotation_entry(
+        "0",
+        action=action,
+        remove_reason="other" if action == "remove" else None,
+        rationale="Mixed markers observed across each batch and sample",
+    )
+    assert A._guard_batch_annotation(copy.deepcopy(original)) == original
+
+
+def test_non_removal_with_explicit_batch_artifact_is_unchanged():
+    original = annotation_entry("0", rationale="batch artifact with ambient RNA")
+    assert A._guard_batch_annotation(copy.deepcopy(original)) == original

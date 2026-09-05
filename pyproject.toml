@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "msp-sc"   # PyPI distribution name (plain "msp" is taken); the import name stays `msp`
-version = "0.3.2"
+version = "0.3.3"
 description = "Multi-sample-pipeline: harmony integration of osp per-sample outputs, cluster QC inspection and cell-type annotation agents, self-contained HTML report"
 readme = "README.md"
 license = "MIT"
