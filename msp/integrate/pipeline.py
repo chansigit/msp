@@ -154,15 +154,43 @@ def _reset_state(ad, counts_layer):
     ad.raw = None
 
 
+MIN_HVG_BATCH_CELLS = int(os.environ.get("MSP_HVG_MIN_BATCH_CELLS", "20"))
+
+
 def _preprocess(ad, batch_col, n_top_genes):
-    """normalize_total(1e4) → log1p (kept as .raw) → HVG per batch."""
+    """normalize_total(1e4) → log1p (kept as .raw) → HVG per batch.
+
+    Batches with fewer than MIN_HVG_BATCH_CELLS cells take no part in the
+    per-batch HVG vote (scanpy's seurat flavor cannot rank dispersions on a
+    handful of cells and dies with IndexError on an empty array, e.g. a
+    lineage subset holding one cell of some sample); they are still
+    integrated. With fewer than two eligible batches the vote is global."""
     log.info("== normalize/log1p")
     sc.pp.normalize_total(ad, target_sum=1e4)
     sc.pp.log1p(ad)
     ad.raw = ad
 
-    log.info(f"== HVG per batch (n_top_genes={n_top_genes})")
-    sc.pp.highly_variable_genes(ad, n_top_genes=n_top_genes, flavor="seurat", batch_key=batch_col)
+    key = batch_col
+    eligible = None
+    if key is not None:
+        sizes = ad.obs[key].value_counts()
+        small = sizes.index[sizes < MIN_HVG_BATCH_CELLS]
+        if len(small):
+            eligible = ~ad.obs[key].isin(small).to_numpy()
+            log.info(f"== HVG: {len(small)} batch(es) below {MIN_HVG_BATCH_CELLS} cells excluded from the "
+                     f"per-batch vote ({int((~eligible).sum())} cells): {list(map(str, small[:5]))}")
+            if ad.obs.loc[eligible, key].nunique() < 2:
+                log.info("== HVG: fewer than two eligible batches — global selection")
+                key, eligible = None, None
+    log.info(f"== HVG per batch (n_top_genes={n_top_genes})" if key else f"== HVG (n_top_genes={n_top_genes})")
+    if eligible is None:
+        sc.pp.highly_variable_genes(ad, n_top_genes=n_top_genes, flavor="seurat", batch_key=key)
+    else:
+        hv = sc.pp.highly_variable_genes(ad[eligible], n_top_genes=n_top_genes, flavor="seurat",
+                                         batch_key=key, inplace=False)
+        for col in hv.columns:
+            ad.var[col] = hv[col].to_numpy()
+        ad.uns["hvg"] = {"flavor": "seurat"}
 
 
 def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
