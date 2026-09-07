@@ -15,7 +15,7 @@ import harness_bridge
 
 def configure(level: int | str = logging.INFO, stream=None) -> logging.Handler:
     """Route ``msp`` and ``harness_bridge`` records to ``stream`` (default:
-    stdout), one flushed ``%(message)s`` line per record."""
+    stdout), one flushed, wall-clock-stamped line per record (bridge format)."""
     return harness_bridge.configure_logging("msp", level=level, stream=stream)
 
 

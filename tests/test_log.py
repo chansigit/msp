@@ -2,6 +2,7 @@
 
 import io
 import logging
+import re
 
 import pytest
 
@@ -21,13 +22,22 @@ def _drop_bridge_handlers():
         logger.setLevel(logging.NOTSET)
 
 
-def test_configure_routes_msp_and_bridge_records_with_bare_message_format():
+_STAMP = r"\d\d-\d\d \d\d:\d\d:\d\d "  # harness_bridge stamps every line (durations fall out of any log)
+
+
+def _messages(text: str) -> list[str]:
+    lines = text.splitlines()
+    assert all(re.match(_STAMP, line) for line in lines), text
+    return [re.sub(_STAMP, "", line, count=1) for line in lines]
+
+
+def test_configure_routes_msp_and_bridge_records_with_stamped_message_format():
     buf = io.StringIO()
     msp_log.configure(stream=buf)
     logging.getLogger("msp.integrate.pipeline").info("== PCA (10 comps on 30 HVGs)")
     logging.getLogger("harness_bridge.harness").info("== [inspect] agent: check_deg(5)")
     logging.getLogger("msp.integrate.pipeline").debug("hidden at INFO")
-    assert buf.getvalue() == "== PCA (10 comps on 30 HVGs)\n== [inspect] agent: check_deg(5)\n"
+    assert _messages(buf.getvalue()) == ["== PCA (10 comps on 30 HVGs)", "== [inspect] agent: check_deg(5)"]
 
 
 def test_configure_replaces_its_own_handler_and_records_still_reach_caplog(caplog):
@@ -37,7 +47,7 @@ def test_configure_replaces_its_own_handler_and_records_still_reach_caplog(caplo
     with caplog.at_level(logging.INFO, logger="msp"):
         logging.getLogger("msp.steps").info("once")
     assert first.getvalue() == ""
-    assert second.getvalue() == "once\n"
+    assert _messages(second.getvalue()) == ["once"]
     assert "once" in caplog.text
 
 
