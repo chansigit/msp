@@ -16,7 +16,7 @@ import sys
 
 from .integrate import integrate_adata, run_multi_sample_pipeline
 from .log import configure
-from .report import generate_report, write_report_context
+from .report import generate_report, write_design_context, write_report_context
 from .steps import step_pending
 
 log = logging.getLogger(__name__)
@@ -91,6 +91,14 @@ def build_parser():
         metavar="TEXT",
         help='where this run sits, for report titles (e.g. "round 2 · fu2022-meniscus"); '
         "persisted in <outdir>/report_context.txt so later report refreshes keep it",
+    )
+    parser.add_argument(
+        "--design-context",
+        default=None,
+        metavar="TEXT",
+        help="how the samples were produced (e.g. one plate = one mouse x one FACS gate); shown verbatim "
+        "to the inspect/annotate agents as ground truth about sample composition and persisted in "
+        "<outdir>/design_context.txt",
     )
     parser.add_argument("--force", action="store_true", help="redo steps whose outputs already exist")
     return parser
@@ -197,6 +205,7 @@ def main(argv=None):
 
     out = args.outdir
     write_report_context(out, args.report_context)
+    write_design_context(out, args.design_context)
     harmony_kwargs = _parse_kv(args.harmony)
 
     if (

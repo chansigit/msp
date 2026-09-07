@@ -62,7 +62,7 @@ from .evidence import (
     parse_reference,
 )
 from .log import configure, ensure
-from .report import generate_report
+from .report import design_block, generate_report
 from .steps import begin_step, complete_step, require_upstream_ready
 
 log = logging.getLogger(__name__)
@@ -510,7 +510,7 @@ inspection. Task: annotate EVERY cluster of the base clustering {BASE_KEY} \
 for each whether it is a distinct population or should MERGE into another base cluster, or whether \
 it is noise / low-quality cells to REMOVE — and submit one JSON per cluster.
 {context}
-Prior label columns detected in obs (reference evidence only, never ground truth — datasets name \
+{design_block(outdir)}Prior label columns detected in obs (reference evidence only, never ground truth — datasets name \
 these differently, so they were detected, not assumed): {priors}.
 
 Reasoning chain, answered for every cluster in this order:

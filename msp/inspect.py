@@ -67,7 +67,7 @@ from .evidence import (
     stability_table,
 )
 from .log import configure, ensure
-from .report import generate_report
+from .report import design_block, generate_report
 from .steps import begin_step, complete_step, require_upstream_ready
 
 log = logging.getLogger(__name__)
@@ -291,7 +291,7 @@ msp (multi-sample pipeline) integration output. Task: put EVERY integrated clust
 ({cluster_key}, {len(clusters)} clusters: {clusters}) through the five-test battery and submit \
 a verdict + action per cluster.
 {context}
-
+{design_block(outdir)}
 The five tests (all five must be answered for every cluster):
 (a) markers — own specific positive markers? ribo/mito/stress modules with flat logFC → noise;
 (b) QC axis — separated from neighbors mainly along QC metrics (mt/doublet/contamination/depth) → technical;

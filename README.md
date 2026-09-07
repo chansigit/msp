@@ -110,6 +110,11 @@ python -m msp A/clustered.h5ad B/clustered.h5ad \
     --annotate --harness openai --model doubao-seed-2-1-turbo-260628
 ```
 
+Add `--design-context "one plate = one mouse x one FACS sort gate"` when sample
+identity encodes the study design: the text is shown verbatim to the inspection
+and annotation agents (and kept in `msp_out/design_context.txt`) so a cluster
+confined to one sample is judged against the design rather than as a batch artefact.
+
 </details>
 
 ## Find and understand your results

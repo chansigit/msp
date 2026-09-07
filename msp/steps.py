@@ -74,7 +74,7 @@ def require_upstream_ready(outdir, step):
 def begin_step(outdir, step):
     """Invalidate first, then archive only the outputs owned by affected steps.
 
-    Caller inputs such as sample_decisions.csv, report_context.txt, and
+    Caller inputs such as sample_decisions.csv, report_context.txt, design_context.txt, and
     unrelated files stay in place. Inspection shares integrated.h5ad with
     integration: retain a snapshot in the archive while keeping it available
     as input. All H5AD writers replace files atomically, so a hard link is a

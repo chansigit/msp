@@ -4,6 +4,14 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- `--design-context TEXT`: a caller-supplied description of how samples were
+  produced, persisted as `design_context.txt` (found from per-lineage
+  sub-directories too) and injected verbatim as a delimited "Study design" block
+  into the inspect and annotate prompts. Absent text changes nothing.
+
 ## 0.3.3 - 2026-09-05
 
 ### Fixed
