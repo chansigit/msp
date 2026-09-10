@@ -40,7 +40,7 @@ def _cell_level_outliers(ad, leiden_keys, resolutions, outdir):
     if not targets:
         return None
 
-    df = pd.DataFrame(index=ad.obs_names)
+    df = pd.DataFrame(index=ad.obs_names.copy())  # own Index: naming it "cell" below must not rename ad.obs.index
     for m in metrics:
         df[m] = ad.obs[m]
 
