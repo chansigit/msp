@@ -13,24 +13,22 @@ import msp.resources as resources
 
 
 @pytest.mark.parametrize("sparse_input", [False, True])
-def test_parallel_deg_matches_serial_with_raw_axis_and_forced_overlap(tmp_path, monkeypatch, sparse_input):
+def test_parallel_deg_matches_serial_with_forced_overlap(tmp_path, monkeypatch, sparse_input):
     rng = np.random.default_rng(21)
     values = np.log1p(rng.poisson(3, (36, 7))).astype(float)
     if sparse_input:
         values = sparse.csr_matrix(values)
-    raw = ad.AnnData(
+    data = ad.AnnData(
         values,
         obs=pd.DataFrame({"k": pd.Categorical(np.repeat(["0", "1", "2"], 12))}, index=[f"c{i}" for i in range(36)]),
         var=pd.DataFrame(index=[f"g{i}" for i in range(7)]),
     )
-    raw.uns["log1p"] = {"base": 2}
-    data = raw[:, :3].copy()
-    data.raw = raw
-    before = data.raw.X.copy()
+    data.uns["log1p"] = {"base": 2}
+    before = data.X.copy()
     workspace = D._global_deg_workspace(data)
-    assert workspace.raw.var_names.tolist() == raw.var_names.tolist()
+    assert workspace.var_names.tolist() == data.var_names.tolist()
     assert workspace.uns["log1p"] == {"base": 2}
-    assert workspace.X is data.X and workspace.raw.X is data.raw.X
+    assert workspace.X is data.X and workspace.raw is None  # DE reads X; no .raw copy since 0.3.6
     workspace.uns["log1p"]["base"] = 10
     assert data.uns["log1p"]["base"] == 2
 
@@ -84,6 +82,6 @@ def test_parallel_deg_matches_serial_with_raw_axis_and_forced_overlap(tmp_path, 
     for path in serial.iterdir():
         assert path.read_bytes() == (parallel / path.name).read_bytes(), path.name
     np.testing.assert_array_equal(
-        data.raw.X.toarray() if sparse_input else data.raw.X, before.toarray() if sparse_input else before
+        data.X.toarray() if sparse_input else data.X, before.toarray() if sparse_input else before
     )
     assert set(data.uns) == {"log1p"}

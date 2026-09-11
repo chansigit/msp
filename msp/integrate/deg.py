@@ -68,15 +68,12 @@ def _stress_hits(names) -> list[str]:
 
 
 def _global_deg_workspace(ad):
-    """Private mutable metadata with shared, read-only expression matrices.
+    """Private mutable metadata with a shared, read-only expression matrix.
 
-    Scanpy's use_raw Wilcoxon reads X/raw.X and writes obs/uns metadata.
-    Do not copy counts layers or graph arrays for every global task.
+    Scanpy's Wilcoxon reads X and writes obs/uns metadata. Do not copy
+    counts layers or graph arrays for every global task.
     """
-    work = an.AnnData(X=ad.X, obs=ad.obs.copy(), var=ad.var.copy(), uns=deepcopy(ad.uns))
-    if ad.raw is not None:
-        work.raw = an.AnnData(X=ad.raw.X, obs=ad.obs.copy(), var=ad.raw.var.copy())
-    return work
+    return an.AnnData(X=ad.X, obs=ad.obs.copy(), var=ad.var.copy(), uns=deepcopy(ad.uns))
 
 
 def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_n_de=50):
@@ -170,7 +167,7 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         key = item["key"]
         slot = f"_rgg_{key}"
         work = _global_deg_workspace(ad_excl)
-        rank_genes_groups(work, key, groups=item["valid"], method="wilcoxon", use_raw=True, pts=True, key_added=slot)
+        rank_genes_groups(work, key, groups=item["valid"], method="wilcoxon", use_raw=False, pts=True, key_added=slot)
         gdf = sc.get.rank_genes_groups_df(work, group=None, key=slot)
         # Scanpy omits group when only one group qualifies for testing.
         if "group" not in gdf and len(item["valid"]) == 1:
@@ -185,7 +182,7 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
         sub = ad_excl[ad_excl.obs[key].isin([c, *neighbors])].copy()
         if int((sub.obs[key] == c).sum()) < MIN_DE_GROUP_SIZE:
             return None
-        rank_genes_groups(sub, key, groups=[c], reference="rest", method="wilcoxon", use_raw=True, pts=True)
+        rank_genes_groups(sub, key, groups=[c], reference="rest", method="wilcoxon", use_raw=False, pts=True)
         ldf = sc.get.rank_genes_groups_df(sub, group=c)
         ldf = ldf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
         # rank_genes_groups_df drops the "group" column when `group` is a scalar

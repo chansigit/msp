@@ -145,20 +145,30 @@ def _reset_state(ad, counts_layer):
     for key in list(ad.obs.columns):
         if key in ("_msp_action", "_msp_verdict") or key.startswith(("inspect_sub", "msp_leiden_r")):
             del ad.obs[key]
-    ad.X = ad.layers[counts_layer].copy()
+    counts = ad.layers[counts_layer]
+    # int64 counts double the layer for nothing (a UMI count never nears
+    # 2^31); narrow to int32 once here, the one place every input path
+    # (merged osp samples, --from-h5ad, zmip lineage subsets) passes
+    # through. Float counts are left alone: values would change.
+    if np.issubdtype(counts.dtype, np.integer) and counts.dtype.itemsize > 4 and counts.max() <= np.iinfo(np.int32).max:
+        counts = ad.layers[counts_layer] = counts.astype(np.int32)
+    ad.X = counts.copy()
     for k in list(ad.obsm.keys()):
         del ad.obsm[k]
     for k in list(ad.obsp.keys()):
         del ad.obsp[k]
     ad.uns.clear()
-    ad.raw = None
+    ad.raw = None  # inputs from before 0.3.6 carried a byte-identical copy of X here
 
 
 MIN_HVG_BATCH_CELLS = int(os.environ.get("MSP_HVG_MIN_BATCH_CELLS", "20"))
 
 
 def _preprocess(ad, batch_col, n_top_genes):
-    """normalize_total(1e4) → log1p (kept as .raw) → HVG per batch.
+    """normalize_total(1e4) → log1p → HVG per batch. X stays the full
+    log-normalized gene space from here on (HVG/scale work on copies), so
+    every DE call reads X directly; no .raw copy is kept (0.3.6 — it was a
+    byte-identical duplicate that cost ~28% of every h5ad downstream).
 
     Batches with fewer than MIN_HVG_BATCH_CELLS cells take no part in the
     per-batch HVG vote (scanpy's seurat flavor cannot rank dispersions on a
@@ -168,7 +178,6 @@ def _preprocess(ad, batch_col, n_top_genes):
     log.info("== normalize/log1p")
     sc.pp.normalize_total(ad, target_sum=1e4)
     sc.pp.log1p(ad)
-    ad.raw = ad
 
     key = batch_col
     eligible = None
@@ -202,7 +211,8 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
     if n_comps < 1:
         raise ValueError(f"not enough variable genes/cells for PCA: {hvg.shape}, n_comps={n_comps}")
     log.info(f"== PCA ({n_comps} comps on {hvg.n_vars} HVGs)")
-    ad.obsm["X_pca"] = PCA(n_components=n_comps, svd_solver="arpack", random_state=0).fit_transform(hvg.X)
+    # float32: neighbours/leiden/plots never use more, and float64 doubles the embedding on disk
+    ad.obsm["X_pca"] = PCA(n_components=n_comps, svd_solver="arpack", random_state=0).fit_transform(hvg.X).astype(np.float32)
     del hvg
 
     # harmonypy >= 2.0 (C++ backend, numpy-only): Z_corr is cells-by-PCs.
@@ -233,7 +243,7 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
         harmony_record = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in harmony_kwargs.items()}
     if Z.shape != (ad.n_obs, n_comps):
         raise ValueError(f"harmony returned shape {Z.shape}, expected ({ad.n_obs}, {n_comps})")
-    ad.obsm["X_pca_harmony"] = Z
+    ad.obsm["X_pca_harmony"] = Z.astype(np.float32)
     return n_comps, harmony_record
 
 

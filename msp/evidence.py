@@ -189,7 +189,7 @@ def deg_frame(ad, cluster_key, cluster, ref_groups, remove_mask):
     if cluster not in set(lab):
         return None
     sub = base if ref_groups == "rest" else base[lab.isin([cluster, *ref_groups])].copy()
-    rank_genes_groups(sub, cluster_key, groups=[cluster], reference="rest", method="wilcoxon", use_raw=True, pts=True)
+    rank_genes_groups(sub, cluster_key, groups=[cluster], reference="rest", method="wilcoxon", use_raw=False, pts=True)
     df = sc.get.rank_genes_groups_df(sub, group=cluster)
     # natural scanpy ranking (by test score), not resorted by raw logFC —
     # sorting by logFC alone surfaces near-zero-expression noise genes with
@@ -574,7 +574,7 @@ class DegCache:
     one-vs-rest wilcoxon on 59k cells costs ~35 s, so a 40-cluster annotate
     session used to spend 5-10 min recomputing tables it could have read.
     Numbers are identical either way (same test, same exclusion, same
-    use_raw, same ranking). If too few cached rows pass the requested filters,
+    matrix, same ranking). If too few cached rows pass the requested filters,
     compute the full table before claiming that fewer genes are available."""
 
     def __init__(self, ad, outdir, remove_mask, label="check_deg"):
