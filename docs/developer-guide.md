@@ -7,8 +7,7 @@
 MSP owns integration, biological tools, proposal validation, output updates,
 and reports. [Agent Harness Bridge](https://github.com/chansigit/agent-harness-bridge)
 owns backend execution and shared agent controls; import it as
-`harness_bridge`. The `msp.harness` re-export shim is deprecated and will be
-removed in 0.4.
+`harness_bridge` (the `msp.harness` re-export shim was removed in 0.4).
 
 | Module | Responsibility |
 | --- | --- |

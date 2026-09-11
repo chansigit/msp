@@ -5,11 +5,6 @@ evidence/tool split, the statistics tests, the report and resources tests,
 the dependency cleanup, the logging switch and the harmonypy 2.0 upgrade
 (see `CHANGELOG.md`). Items below are what remains, in the recommended order.
 
-## Needs a decision or an external step
-
-- [ ] **Remove `msp.harness`** in 0.4 (it warns since 0.3). ZMIP and ECA-RSI
-      already import `harness_bridge` directly (both on bridge 0.2).
-
 ## Phase 3 leftovers
 
 - [x] Keep `test_step_recovery.py::test_completed_integration_allows_external_annotation_report`

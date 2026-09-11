@@ -4,6 +4,22 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.0 - 2026-09-11
+
+- Remove the deprecated `msp.harness` re-export shim (warned since 0.3, no
+  remaining consumers -- ZMIP and ECA-RSI import `harness_bridge` directly).
+
+## 0.3.6 - 2026-09-10
+
+- Drop the byte-identical `.raw` copy of X, narrow oversized integer counts
+  layers to int32, and cast PCA/Harmony embeddings to float32 (eca-rsi#2).
+
+## 0.3.5 - 2026-09-10
+
+- `_cell_level_outliers` no longer renames the shared `obs` index in place
+  (a `cell` obs column on the input, as in Tabula Muris Senis, made anndata
+  refuse to write `integrated.h5ad`).
+
 ## 0.3.4 - 2026-09-07
 
 ### Added
