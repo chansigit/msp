@@ -325,6 +325,13 @@ the node, the whole synthetic pipeline in-process with the switch on (`local` ba
 through a pool — GPU worker on the 3090 node, client on another node, all three tasks routed to
 it by `tier="gpu"`.
 
+**End to end through ecarsi (2026-09-12, chondroatlas 12_Yangetal, 12,880 cells × 22,492 genes, 3
+samples)**: `eca-rsi run` with `MSP_COMPUTE_ENDPOINT=dask MSP_COMPUTE_GPU=1`, a one-worker GPU pool on
+the 3090 node, driver on another node. Round-1 integrate: `_run_harmony_gpu` 2.2 s, `_run_cluster_gpu`
+2.4 s, `_compute_de` (gpu) 22.5 s of compute on the worker; the whole integrate stage 2.5 min wall,
+the rest being normalize / HVG / PCA / QC tables / figures on the driver. The agent stages (inspect
+16 requests, 700k input tokens) dominate the round as before — which is the point of eca-rsi#8.
+
 **Install path that works** (the rsc blog's nanobind rewrite explains the rest): the prebuilt
 wheel is the separately named `rapids-singlecell-cu12[rapids]` from `pypi.nvidia.com`; plain
 `rapids-singlecell` ≥ 0.15 on PyPI is sdist-only (CMake + nvcc + C++). RAPIDS must be pinned to
