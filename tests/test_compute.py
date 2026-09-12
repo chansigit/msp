@@ -41,3 +41,7 @@ def test_resolve_endpoint_rejects_an_unknown_name(monkeypatch):
     monkeypatch.setenv("MSP_COMPUTE_ENDPOINT", "quantum")
     with pytest.raises(ValueError, match="quantum"):
         resolve_endpoint()
+
+
+def test_local_endpoint_ignores_tier():
+    assert LocalEndpoint().submit(lambda: "ran", tier="gpu").result() == "ran"

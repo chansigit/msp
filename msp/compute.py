@@ -42,7 +42,7 @@ class ComputeEndpoint(Protocol):
     already implements ``submit() -> Future`` natively, so a Dask backend
     is close to a passthrough rather than an adapter layer."""
 
-    def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future: ...
+    def submit(self, fn: Callable[..., Any], *args: Any, tier: str = "cpu", **kwargs: Any) -> Future: ...
     def __enter__(self) -> "ComputeEndpoint": ...
     def __exit__(self, *exc: Any) -> None: ...
 
@@ -50,9 +50,10 @@ class ComputeEndpoint(Protocol):
 class LocalEndpoint:
     """Runs ``fn`` synchronously in-process. Same call, same thread, same
     timing as calling ``fn`` directly -- the default, and the only backend
-    that needs no extra dependency."""
+    that needs no extra dependency. ``tier`` is ignored: in-process, the
+    GPU is whatever this process can see."""
 
-    def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
+    def submit(self, fn: Callable[..., Any], *args: Any, tier: str = "cpu", **kwargs: Any) -> Future:
         fut: Future = Future()
         try:
             fut.set_result(fn(*args, **kwargs))
@@ -100,9 +101,11 @@ class DaskLocalEndpoint:
         self._client = Client(self._cluster)
         return self
 
-    def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
+    def submit(self, fn: Callable[..., Any], *args: Any, tier: str = "cpu", **kwargs: Any) -> Future:
         if self._client is None:
             raise RuntimeError("DaskLocalEndpoint.submit() called outside its `with` block")
+        if tier != "cpu":
+            raise ValueError(f"dask-local has no {tier!r} tier; use MSP_COMPUTE_ENDPOINT=dask with a --gpu worker, or local")
         # pure=False: dask's default keys a task by (function, argument
         # contents) and hands two clients that submit the same call ONE
         # result. Correct for pure functions, but on a long-lived shared pool
@@ -156,16 +159,34 @@ class DaskEndpoint:
             self._client = Client(scheduler_file=target)
         return self
 
-    def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
+    def has_tier(self, tier: str) -> bool:
+        """Whether some worker in the pool can take ``tier`` work right now
+        (``cpu``: any worker; ``gpu``: a worker started with ``--resources GPU=1``)."""
+        if self._client is None:
+            raise RuntimeError("DaskEndpoint.has_tier() called outside its `with` block")
+        if tier == "cpu":
+            return True
+        workers = self._client.scheduler_info()["workers"].values()
+        return any(w.get("resources", {}).get(tier.upper(), 0) >= 1 for w in workers)
+
+    def submit(self, fn: Callable[..., Any], *args: Any, tier: str = "cpu", **kwargs: Any) -> Future:
         if self._client is None:
             raise RuntimeError("DaskEndpoint.submit() called outside its `with` block")
+        # A tier is a dask worker resource: only workers launched with
+        # `--resources GPU=1` may take tier="gpu" work. Checked up front,
+        # because dask would otherwise queue the task forever.
+        resources = None
+        if tier != "cpu":
+            if not self.has_tier(tier):
+                raise RuntimeError(f"no worker in the pool offers tier {tier!r} (dask-pool.sh worker <node> --gpu)")
+            resources = {tier.upper(): 1}
         # pure=False: dask's default keys a task by (function, argument
         # contents) and hands two clients that submit the same call ONE
         # result. Correct for pure functions, but on a long-lived shared pool
         # whose code may be updated while it runs it would also serve a
         # result computed by the previous version -- every step computes its
         # own, at the cost of no dedup between byte-identical concurrent runs.
-        return self._client.submit(fn, *args, pure=False, **kwargs)
+        return self._client.submit(fn, *args, pure=False, resources=resources, **kwargs)
 
     def __exit__(self, *exc: Any) -> None:
         if self._client is not None:

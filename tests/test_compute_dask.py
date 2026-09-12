@@ -110,3 +110,31 @@ def test_dask_endpoint_requires_a_scheduler(monkeypatch):
     with pytest.raises(ValueError, match="MSP_DASK_SCHEDULER"):
         with DaskEndpoint():
             pass
+
+
+# --- tiers: a dask worker resource, checked before submission ------------
+
+def test_dask_endpoint_rejects_gpu_tier_when_no_worker_offers_it(pool):
+    from msp.compute import DaskEndpoint
+
+    with DaskEndpoint(pool.scheduler_address) as ep:
+        assert not ep.has_tier("gpu")
+        with pytest.raises(RuntimeError, match="gpu"):
+            ep.submit(lambda: 1, tier="gpu")
+
+
+def test_dask_endpoint_routes_gpu_tier_to_a_gpu_worker():
+    from distributed import LocalCluster
+
+    from msp.compute import DaskEndpoint
+
+    with LocalCluster(n_workers=1, threads_per_worker=1, processes=True, resources={"GPU": 1}) as gpu_pool:
+        with DaskEndpoint(gpu_pool.scheduler_address) as ep:
+            assert ep.has_tier("gpu")
+            assert ep.submit(lambda: "ran", tier="gpu").result() == "ran"
+
+
+def test_dask_local_endpoint_has_no_gpu_tier():
+    with DaskLocalEndpoint(n_workers=1) as ep:
+        with pytest.raises(ValueError, match="gpu"):
+            ep.submit(lambda: 1, tier="gpu")
