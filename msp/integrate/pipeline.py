@@ -248,8 +248,12 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
             f"== harmony (harmonypy {getattr(harmonypy, '__version__', '?')}, {kwargs['ncores']} thread(s))"
             + (f", overrides {harmony_kwargs}" if harmony_kwargs else ", harmonypy defaults"),
         )
+        # Categorical dtype (the usual obs dtype for a batch column) fails to
+        # deserialize through distributed's task-graph protocol -- decategorize
+        # to plain object dtype before it crosses a ComputeEndpoint boundary.
+        batch_labels = ad.obs[[batch_col]].astype({batch_col: "object"})
         with resolve_endpoint() as ep:
-            fut = ep.submit(_run_harmony, ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col, kwargs)
+            fut = ep.submit(_run_harmony, ad.obsm["X_pca"], batch_labels, batch_col, kwargs)
             Z = fut.result()
         if Z.shape[0] != ad.n_obs:
             Z = Z.T

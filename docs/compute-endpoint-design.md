@@ -155,19 +155,56 @@ when that backend is eventually built, its generated worker launch command shoul
 `apptainer exec ... $VENV/bin/dask worker ...`, the same pattern `venvs/eca-ct/python` already
 uses for every other kernel subprocess.
 
+## `dask-local` build (2026-09-12) — two real gotchas hit and fixed
+
+`DaskLocalEndpoint` (real `distributed.LocalCluster`, `processes=True`, torn down per `with`
+block) is implemented and wired into the same `_embed()` Harmony call site as `local`. Verified
+byte-for-byte identical `X_pca`/`X_pca_harmony`/`X_umap`/`obs` against both unmodified main and
+the `local` backend, on the synthetic two-sample dataset (real Harmony path, not the single-batch
+skip). Two things broke on the way there, both now fixed and worth remembering for any future
+call site:
+
+- **A driver script without `if __name__ == "__main__":` reruns itself in every worker.**
+  `LocalCluster(processes=True)` spawns fresh interpreters that re-import the launching module.
+  The verification script originally ran `write_samples()` at module top level; every spawned
+  worker re-ran it, and several processes writing the same h5ad files at once hit HDF5 file-lock
+  errors (`BlockingIOError: ... Resource temporarily unavailable`). Any script that constructs a
+  `dask-local`/`dask-slurm` endpoint needs its real work behind a `__main__` guard — this is a
+  property of *callers*, not of `compute.py` itself, but it will bite the first person who forgets
+  it, so it is written down here.
+- **A pandas `Categorical` column does not survive distributed's task-graph pickling.** Passing
+  `ad.obs[[batch_col]]` (categorical dtype, the normal dtype for a batch/sample column) into
+  `submit()` failed deep inside distributed's deserialization with
+  `NotImplementedError` from `pandas.core.arrays.categorical.Categorical.__setstate__` — happening
+  even with client and worker as the exact same interpreter, so it is a real serialization gap in
+  the pandas/distributed pickling path, not an environment mismatch (despite dask's generic error
+  text suggesting one). Fix: decategorize (`.astype({batch_col: "object"})`) before the value
+  crosses a `ComputeEndpoint` boundary. This is now the general rule for every future call site,
+  not just Harmony: **never pass a `Categorical`-dtype column through `submit()`** — convert to
+  plain object/string dtype first, on the caller's side, before construting the arguments.
+
 ## Rollout order
 
-1. `msp/compute.py`: `ComputeEndpoint` protocol + `LocalEndpoint` + `resolve_endpoint()`. No
-   behavior change, no new dependency, `local` is the only implemented/default backend.
-2. Wire `_embed()`'s Harmony call through it. Verify byte-identical output vs. the un-wired path
-   on a real dataset.
+1. ~~`msp/compute.py`: `ComputeEndpoint` protocol + `LocalEndpoint` + `resolve_endpoint()`.~~ Done.
+2. ~~Wire `_embed()`'s Harmony call through it. Verify byte-identical output vs. the un-wired
+   path on a real dataset.~~ Done.
 3. Merge to `msp` main at a drain window (no msp stage mid-round anywhere). Release as a normal
-   msp version bump.
-4. Only after 1-3 are living in production: build `dask-local` for real, in a fresh worktree,
-   validated the same way (byte-identical output, now via a local multi-process cluster).
-5. Only after 4: build `dask-slurm`, reusing the spike's Apptainer-wrapped worker-launch pattern.
+   msp version bump. **Deliberately deferred at the user's own call (2026-09-12: "不急吧,我们功能
+   都没开发呢" — nothing worth merging yet) even though steps 1-2 were validated and a drain window
+   existed at the time.**
+4. ~~Build `dask-local` for real, validated the same way (byte-identical output, via a real local
+   multi-process cluster).~~ Done ahead of the original order (originally step 4, gated on 1-3
+   being merged first) at the user's explicit request to build the real backend now rather than
+   wait. Two real bugs found and fixed in the process (see "dask-local build" above); not merged
+   to `msp` main either, same reasoning as step 3.
+5. Build `dask-slurm`, reusing the spike's Apptainer-wrapped worker-launch pattern. Not started.
 
 ## Status
 
-Design only. `msp/compute.py` does not exist yet. Nothing in this worktree has been merged to
-`msp` main.
+`msp/compute.py` has `ComputeEndpoint`, `LocalEndpoint`, `DaskLocalEndpoint`, `resolve_endpoint()`.
+`_embed()`'s Harmony call is wired through it for both backends. All verified byte-identical
+against unmodified main on the synthetic two-sample dataset (real Harmony path). Full worktree
+test suite passes (`tests/test_compute.py`, `tests/test_compute_dask.py` — skipped without
+`dask[distributed]`). `dask-slurm` is still just a reserved name (`NotImplementedError`).
+**Nothing in this worktree has been merged to `msp` main** — that merge is intentionally on hold,
+not blocked by anything technical.

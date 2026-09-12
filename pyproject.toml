@@ -42,6 +42,7 @@ dependencies = [
 
 [project.optional-dependencies]
 agent = ["agent-harness-bridge[all]>=0.2.1,<0.3"]
+dask = ["dask[distributed]>=2024.1"]
 
 [project.urls]
 Homepage = "https://github.com/chansigit/msp"

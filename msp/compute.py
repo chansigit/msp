@@ -58,7 +58,53 @@ class LocalEndpoint:
         pass
 
 
-_RESERVED_NOT_YET_IMPLEMENTED = ("dask-local", "dask-slurm")
+class DaskLocalEndpoint:
+    """A single-node, multi-process ``distributed.LocalCluster`` -- no Slurm
+    needed. Started fresh in ``__enter__`` and torn down in ``__exit__``,
+    scoped to one heavy step rather than held open across a whole pipeline
+    run, same as :class:`LocalEndpoint`. ``dask[distributed]`` is imported
+    lazily here, not at module import time, so it is only ever required
+    when this backend is actually selected (``msp-sc[dask]``).
+
+    Real multi-process workers (not threads) on purpose: a numpy array
+    handed to ``submit()`` really does cross a process boundary and get
+    pickled/unpickled, which is the same constraint a future ``dask-slurm``
+    backend (workers on other nodes) will impose. Threads would hide that."""
+
+    def __init__(self, n_workers: int | None = None):
+        self._n_workers = n_workers
+        self._cluster = None
+        self._client = None
+
+    def __enter__(self) -> "DaskLocalEndpoint":
+        try:
+            from distributed import Client, LocalCluster
+        except ImportError as exc:
+            raise ImportError(
+                "MSP_COMPUTE_ENDPOINT=dask-local needs dask[distributed]: "
+                "pip install 'msp-sc[dask]'"
+            ) from exc
+        from .resources import available_cpus
+
+        n_workers = self._n_workers or max(1, min(4, available_cpus()))
+        self._cluster = LocalCluster(n_workers=n_workers, threads_per_worker=1, processes=True)
+        self._client = Client(self._cluster)
+        return self
+
+    def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
+        if self._client is None:
+            raise RuntimeError("DaskLocalEndpoint.submit() called outside its `with` block")
+        return self._client.submit(fn, *args, **kwargs)
+
+    def __exit__(self, *exc: Any) -> None:
+        if self._client is not None:
+            self._client.close()
+        if self._cluster is not None:
+            self._cluster.close()
+        self._client = self._cluster = None
+
+
+_RESERVED_NOT_YET_IMPLEMENTED = ("dask-slurm",)
 
 
 def resolve_endpoint() -> ComputeEndpoint:
@@ -68,6 +114,8 @@ def resolve_endpoint() -> ComputeEndpoint:
     kind = os.environ.get("MSP_COMPUTE_ENDPOINT", "local")
     if kind == "local":
         return LocalEndpoint()
+    if kind == "dask-local":
+        return DaskLocalEndpoint()
     if kind in _RESERVED_NOT_YET_IMPLEMENTED:
         raise NotImplementedError(f"MSP_COMPUTE_ENDPOINT={kind!r} is not implemented yet")
     raise ValueError(f"unknown MSP_COMPUTE_ENDPOINT={kind!r}")
