@@ -1,8 +1,8 @@
 # ComputeEndpoint design outline
 
-Branch `compute-endpoint` (worktree `$SCRATCH/worktrees/msp-compute-endpoint`), tracking
-[eca-rsi#8](https://github.com/chansigit/eca-rsi/issues/8). This is a design record, not yet
-implemented code — see "Status" at the bottom for what actually exists.
+Design and experiment record for MSP 0.5.0, tracking
+[eca-rsi#8](https://github.com/chansigit/eca-rsi/issues/8). The local, Dask and GPU
+paths are implemented; see "Status" for their scope and validation.
 
 ## Goal
 
@@ -369,7 +369,7 @@ venvs (`gpu-venv-rapids`, `gpu-venv-rsc`) under `$SCRATCH/spikes/` are deletable
 6. ~~A second call site (Leiden / DEG in msp, or ZMIP per-lineage).~~ Done: graph stage and DE
    stage, which cover zmip's lineages too (see above).
 7. ~~GPU implementations behind `tier="gpu"`.~~ Done on an RTX 3090 (see above); branch
-   `compute-gpu` on top of `compute-endpoint`, neither merged.
+   `compute-gpu` builds on `compute-endpoint`; both are included in 0.5.0.
 8. Left on the driver: normalize / HVG / scale / PCA (seconds), standissect, QC tables, figures,
    and the agent calls. Nothing else in msp is minutes-long on 60k cells.
 
@@ -382,5 +382,8 @@ venvs (`gpu-venv-rapids`, `gpu-venv-rsc`) under `$SCRATCH/spikes/` are deletable
 two-node pool (labels identical, embeddings ulp-equivalent, see above). Tests:
 `tests/test_compute.py`, `tests/test_compute_dask.py` (skipped without `dask[distributed]`).
 Pool launcher: `eca-rsi/container/dask-pool.sh`.
-**Nothing in this worktree has been merged to `msp` main** — that merge is intentionally on hold,
-not blocked by anything technical.
+Included in MSP 0.5.0. Worker allocation and startup remain manual. Automatic pool
+scaling, a separate driver tier, and OSP offloading are not implemented. Drivers
+still hold input matrices and perform preprocessing, standissect, figures and I/O.
+Array transfer and worker memory are therefore relevant limits; this is not a
+path-only task protocol. Restart idle workers after changing their imported code.

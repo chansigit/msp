@@ -4,6 +4,12 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.0 - 2026-09-12
+
+- Add local, Dask-local and shared Dask execution for Harmony, graph/clustering and DE, including optional RAPIDS GPU workers.
+- Require explicit evidence and uncertainty for adjacent coarse-label boundaries. Missing local DEG evidence never forces a merge.
+- Accept provider-qualified harness names and require bridge 0.2.13.
+
 ## 0.4.0 - 2026-09-11
 
 - Remove the deprecated `msp.harness` re-export shim (warned since 0.3, no

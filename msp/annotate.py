@@ -357,56 +357,46 @@ def _validate_final(entries, clusters):
     return problems
 
 
-# A different coarse_label between PAGA-adjacent clusters is normal (e.g. Mural
-# next to Mesenchymal). It stops being normal when the cluster has no local DEG
-# evidence separating it from that neighbourhood at all -- that pattern (weak
-# local DEG + a coarse-label split) is how a genuinely single population ends
-# up cut into two named lineages by round-to-round label drift (04_Sunetal
-# round 3: "Stromal cell" vs "Mesenchymal stromal cell" over the same DCN+/LUM+
-# continuum, agents citing "modest differences (logFC ~0.4-0.5)" as their own
-# evidence). Deterministic, like _validate_final: reuses precomputed deg_local
-# rows and the same PAGA neighbour map cluster_context already shows the agent.
-_COARSE_SPLIT_MIN_ABS_LOGFC = 1.0
-_COARSE_SPLIT_MAX_PADJ = 0.05
+def _check_coarse_boundaries(entries, paga, reviews):
+    """Require an explicit review of each adjacent pair of coarse labels.
 
-
-def _weak_local_separation(tables, base_key, cluster):
-    row = tables.conn.execute(
-        "SELECT MAX(ABS(logfc)) FROM deg WHERE key=? AND view='local' AND cluster=? AND padj<?",
-        (base_key, cluster, _COARSE_SPLIT_MAX_PADJ),
-    ).fetchone()
-    best = row[0] if row else None
-    return best is None or best < _COARSE_SPLIT_MIN_ABS_LOGFC
-
-
-def _check_coarse_boundaries(entries, paga, tables, base_key):
-    """PAGA-adjacent kept clusters with different coarse_label but no strong
-    (|log2FC|>=1, padj<0.05) local marker between them: same population, split
-    label. Ask the agent to unify or name the gene(s) that justify the split."""
-    problems = []
-    seen = set()
+    PAGA adjacency asks a question; neither missing local DEG rows nor a
+    fold-change cutoff establishes that two clusters are the same cell type.
+    Reviews may remain uncertain, and never change labels or remove cells.
+    """
+    pairs = set()
     for c, neighbours in paga.items():
         e = entries.get(c)
         if not e or e["action"] != "keep":
             continue
         for n in neighbours:
-            pair = tuple(sorted((c, n)))
-            if pair in seen:
-                continue
-            en = entries.get(n)
-            if not en or en["action"] != "keep":
-                continue
-            if e["coarse_label"].strip() == en["coarse_label"].strip():
-                continue
-            if _weak_local_separation(tables, base_key, c) or _weak_local_separation(tables, base_key, n):
-                seen.add(pair)
-                problems.append(
-                    f"clusters {c} ({e['coarse_label']!r}) and {n} ({en['coarse_label']!r}) are PAGA "
-                    f"neighbours with no local DEG marker reaching |log2FC|>={_COARSE_SPLIT_MIN_ABS_LOGFC} "
-                    f"at padj<{_COARSE_SPLIT_MAX_PADJ} -- give them the same coarse_label (same population) "
-                    "or cite the specific marker(s) that justify treating them as different lineages"
-                )
-    return problems
+            other = entries.get(n)
+            if other and other["action"] == "keep":
+                labels = tuple(sorted({e["coarse_label"].strip(), other["coarse_label"].strip()}))
+                if len(labels) == 2:
+                    pairs.add(labels)
+    if not isinstance(reviews, list):
+        return ["boundary_reviews_json must encode a list"]
+    seen = set()
+    for review in reviews:
+        if not isinstance(review, dict):
+            return ["each boundary review must be an object"]
+        labels = review.get("coarse_labels")
+        if (not isinstance(labels, list) or len(labels) != 2
+                or not all(isinstance(v, str) and v.strip() for v in labels)):
+            return ["each boundary review needs two coarse_labels"]
+        pair = tuple(sorted(v.strip() for v in labels))
+        if pair not in pairs or pair in seen:
+            return [f"unknown, stale or duplicate coarse boundary: {labels}"]
+        if not isinstance(review.get("evidence"), str) or not review["evidence"].strip():
+            return [f"boundary {labels}: explain the lineage markers or the evidence still missing"]
+        if type(review.get("uncertain")) is not bool:
+            return [f"boundary {labels}: uncertain must be a boolean"]
+        seen.add(pair)
+    return [f"Review adjacent coarse labels {list(pair)} in boundary_reviews_json: reconcile synonyms, "
+            "or explain distinguishing lineage markers (not only cell cycle, stress or prior labels). "
+            "If evidence is insufficient, retain the labels with uncertain=true for review."
+            for pair in sorted(pairs - seen)]
 
 
 def _batch_annotation_removal(entry):
@@ -583,9 +573,10 @@ group must share one coarse and one fine label — finalize_annotation checks th
 Coarse labels group fine labels: one fine label belongs to exactly one coarse label across the dataset. \
 Keep the vocabulary consistent across clusters (same population → literally the same string). If prior \
 label columns named r<NN>_zmip_ann_coarse / r<NN>_msp_ann_coarse exist, they are the PREVIOUS ROUND of this \
-same pipeline on these same cells: reuse their coarse vocabulary verbatim for the same populations (a lineage \
-called 'Fibroblast' last round stays 'Fibroblast', not 'Stromal fibroblast'), and change a label only where \
-the evidence contradicts it — label churn between rounds is noise, not progress.
+same pipeline on these same cells: use them to track continuity, never as independent identity evidence. \
+Verify current expression before preserving a boundary. Reconcile synonymous coarse labels across clusters; \
+cell cycle or stress differences alone do not require different coarse lineages. At finalize_annotation, \
+review each adjacent coarse-label pair explicitly; retain uncertainty when evidence is insufficient.
 
 All relevant files (paths relative to the working directory — Read exactly these, no guessing):
 {file_inventory(outdir)}
@@ -764,8 +755,12 @@ async def _run_agent(
 
     async def finalize_annotation(args):
         problems = _validate_final(entries, clusters)
+        try:
+            reviews = json.loads(args.get("boundary_reviews_json") or "[]")
+        except (json.JSONDecodeError, TypeError) as exc:
+            return text_result(f"invalid boundary_reviews_json: {exc}", is_error=True)
         if not problems:
-            problems = _check_coarse_boundaries(entries, paga, tables, BASE_KEY)
+            problems = _check_coarse_boundaries(entries, paga, reviews)
         if problems:
             return text_result("not final yet, fix and call again:\n- " + "\n- ".join(problems), is_error=True)
         comp = _components(entries)
@@ -781,6 +776,7 @@ async def _run_agent(
             "clusters": [entries[c] for c in clusters],
             "merged_groups": ["+".join(g) for g in groups],
             "overall": str(args.get("overall") or ""),
+            "boundary_reviews": reviews,
         }
         path = os.path.join(outdir, "annotation_proposal.json")
         with open(path, "w") as fh:
@@ -835,8 +831,12 @@ async def _run_agent(
         ToolSpec(
             "finalize_annotation",
             "Validate all submissions together (coverage, merge graph consistency, label hierarchy) "
-            "and finish the run. overall is a short overall assessment of the dataset's populations.",
-            {"overall": str},
+            "and finish the run. overall is a short overall assessment. boundary_reviews_json is a JSON list "
+            "of {coarse_labels: [label1, label2], evidence: explanation, uncertain: boolean}, one per "
+            "PAGA-adjacent coarse-label pair. Explain distinguishing lineage markers, or retain uncertain "
+            "boundaries for review. Matching synonyms should use the same coarse label. "
+            "Missing DEG evidence does not establish identical cell types.",
+            {"overall": str, "boundary_reviews_json": str},
             finalize_annotation,
         ),
     ]

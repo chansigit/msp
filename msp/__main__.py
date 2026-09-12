@@ -71,7 +71,7 @@ def build_parser():
     parser.add_argument("--language", default="English", help='agent prose language (default "English")')
     parser.add_argument(
         "--harness",
-        choices=["deepseek", "openai", "claude"],
+        choices=["deepseek", "openai", "claude", "openai@ark", "openai@openrouter", "openai@vllm"],
         default=None,
         help="agent runtime backend (default: HARNESS env, then openai)",
     )

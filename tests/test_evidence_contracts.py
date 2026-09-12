@@ -401,54 +401,45 @@ def _entry(cluster_id, coarse_label):
     }
 
 
-def _deg_tables(tmp_path, rows):
-    """rows: list of (cluster, gene, logfc, padj) for view='local', key='k'."""
-    outdir = tmp_path / "annotate_boundary"
-    outdir.mkdir()
-    df = pd.DataFrame(
-        [
-            {
-                "group": c,
-                "names": g,
-                "logfoldchanges": lfc,
-                "pvals_adj": padj,
-                "pct_nz_group": 1.0,
-                "pct_nz_reference": 0.0,
-                "neighbors": "",
-            }
-            for c, g, lfc, padj in rows
-        ]
-    )
-    df.to_csv(outdir / "deg_local_k.csv", index=False)
-    return evidence.DegTables(str(outdir), base_key="k")
-
-
-def test_coarse_boundary_flags_weak_local_split(tmp_path):
-    # cluster 0 and 1 are PAGA neighbours with different coarse labels but no
-    # local marker clears the |log2FC|>=1, padj<0.05 bar -- same population,
-    # split label (the 04_Sunetal Stromal/Mesenchymal-stromal bug pattern).
+def test_coarse_boundaries_require_explicit_review_without_forcing_merges():
     entries = {"0": _entry("0", "Stromal cell"), "1": _entry("1", "Mesenchymal stromal cell")}
     paga = {"0": ["1"], "1": ["0"]}
-    tables = _deg_tables(tmp_path, [("0", "DCN", 0.4, 0.2), ("1", "LUM", 0.3, 0.9)])
-    problems = annotate._check_coarse_boundaries(entries, paga, tables, "k")
-    assert problems and "0" in problems[0] and "1" in problems[0]
+    assert annotate._check_coarse_boundaries(entries, paga, [])
+    review = {"coarse_labels": ["Stromal cell", "Mesenchymal stromal cell"],
+              "evidence": "DCN and LUM are shared; no reliable lineage distinction yet", "uncertain": True}
+    assert not annotate._check_coarse_boundaries(entries, paga, [review])
+    assert entries["0"]["coarse_label"] != entries["1"]["coarse_label"]
+    assert annotate._check_coarse_boundaries(entries, paga, [{**review, "evidence": ""}])
+    assert annotate._check_coarse_boundaries(entries, paga, [review, review])
+    entries["1"]["coarse_label"] = "Stromal cell"
+    assert not annotate._check_coarse_boundaries(entries, paga, [])
+    assert annotate._check_coarse_boundaries(entries, paga, [review])  # stale review
+    entries["1"]["action"] = "remove"
+    assert not annotate._check_coarse_boundaries(entries, paga, [])
 
 
-def test_coarse_boundary_allows_strong_local_split(tmp_path):
-    # a real, well-separated boundary (e.g. Mural vs Mesenchymal) is untouched
-    # once a real marker clears the bar.
-    entries = {"0": _entry("0", "Mural cell"), "1": _entry("1", "Mesenchymal stromal cell")}
-    paga = {"0": ["1"], "1": ["0"]}
-    tables = _deg_tables(tmp_path, [("0", "MYH11", 3.2, 0.001), ("1", "DCN", 2.9, 0.001)])
-    assert annotate._check_coarse_boundaries(entries, paga, tables, "k") == []
+def test_boundary_review_finalize_recovers_and_persists_without_relabeling(tmp_path, monkeypatch):
+    data = data_with_clusters()
+    data.write_h5ad(tmp_path / "integrated.h5ad")
+    review = {"coarse_labels": ["Stromal", "Mesenchymal"],
+              "evidence": "Shared DCN/LUM; lineage distinction remains unresolved.", "uncertain": True}
+    monkeypatch.setattr(annotate, "load_paga_neighbors", lambda *args: {"0": ["1"], "1": ["0"]})
 
+    async def run_agent(**kwargs):
+        tools = {t.name: t.handler for t in kwargs["tools"]}
+        for cluster, label in [("0", "Stromal"), ("1", "Mesenchymal")]:
+            entry = annotation_entry(cluster, coarse_label=label)
+            assert not (await tools["submit_cluster"]({"cluster_json": json.dumps(entry)})).get("is_error")
+        assert (await tools["finalize_annotation"]({"overall": "Review needed"}))["is_error"]
+        assert not (tmp_path / "annotation_proposal.json").exists()
+        result = await tools["finalize_annotation"]({
+            "overall": "Retained for review", "boundary_reviews_json": json.dumps([review])})
+        return SimpleNamespace(submitted=result["_submitted"], transcript_text="Boundary review saved.")
 
-def test_coarse_boundary_ignores_same_label_or_dropped(tmp_path):
-    entries = {
-        "0": _entry("0", "Stromal cell"),
-        "1": _entry("1", "Stromal cell"),
-        "2": {**_entry("2", "Myeloid cell"), "action": "remove", "remove_reason": "qc"},
-    }
-    paga = {"0": ["1", "2"], "1": ["0"], "2": ["0"]}
-    tables = _deg_tables(tmp_path, [("0", "DCN", 0.1, 0.9), ("1", "DCN", 0.1, 0.9)])
-    assert annotate._check_coarse_boundaries(entries, paga, tables, "k") == []
+    monkeypatch.setattr(harness_bridge, "run_agent", run_agent)
+    annotate.annotate_clusters(tmp_path, model="test-model")
+    proposal = json.loads((tmp_path / "annotation_proposal.json").read_text())
+    assert proposal["boundary_reviews"] == [review]
+    kept = ad.read_h5ad(tmp_path / "annotated.h5ad")
+    assert kept.obs["msp_ann_coarse"].tolist() == ["Stromal", "Mesenchymal"]
+    assert kept.obs_names.tolist() == data.obs_names.tolist()
