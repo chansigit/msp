@@ -103,7 +103,13 @@ class DaskLocalEndpoint:
     def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
         if self._client is None:
             raise RuntimeError("DaskLocalEndpoint.submit() called outside its `with` block")
-        return self._client.submit(fn, *args, **kwargs)
+        # pure=False: dask's default keys a task by (function, argument
+        # contents) and hands two clients that submit the same call ONE
+        # result. Correct for pure functions, but on a long-lived shared pool
+        # whose code may be updated while it runs it would also serve a
+        # result computed by the previous version -- every step computes its
+        # own, at the cost of no dedup between byte-identical concurrent runs.
+        return self._client.submit(fn, *args, pure=False, **kwargs)
 
     def __exit__(self, *exc: Any) -> None:
         if self._client is not None:
@@ -153,7 +159,13 @@ class DaskEndpoint:
     def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
         if self._client is None:
             raise RuntimeError("DaskEndpoint.submit() called outside its `with` block")
-        return self._client.submit(fn, *args, **kwargs)
+        # pure=False: dask's default keys a task by (function, argument
+        # contents) and hands two clients that submit the same call ONE
+        # result. Correct for pure functions, but on a long-lived shared pool
+        # whose code may be updated while it runs it would also serve a
+        # result computed by the previous version -- every step computes its
+        # own, at the cost of no dedup between byte-identical concurrent runs.
+        return self._client.submit(fn, *args, pure=False, **kwargs)
 
     def __exit__(self, *exc: Any) -> None:
         if self._client is not None:

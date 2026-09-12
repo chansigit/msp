@@ -254,6 +254,32 @@ all 22 CSVs under `msp_out/`, the h5ad's obs / obsp / obsm / uns):
 The scanpy warning "unsupported threading environment, rankdata in serial mode" seen in the
 worker log is not pool-specific — unmodified main prints it too.
 
+## Load-balancing test on a three-node pool (2026-09-12)
+
+Pool: scheduler on `sh04-01n16` (Intel Xeon 8462Y+), 4 worker processes each on `sh03-08n39`
+(AMD EPYC 7543) and `sh02-14n13` (a GPU allocation, Intel Xeon E5-2640 v4), all container-wrapped.
+
+- **40 equal CPU-bound tasks**: wall 1.5 s; the faster AMD node took 24, the old E5 node 16
+  (0.22 vs 0.33 s/task). Dask hands work to whoever frees up, so an uneven pool balances itself.
+- **Four pipelines attached concurrently** (four client processes, one pool): 12 distinct tasks,
+  `_run_cluster` and `_run_harmony` split 2/2 across the nodes, `_compute_de` 3/1; every CSV in
+  every run identical to unmodified main. First task on a fresh worker process pays msp import
+  + numba JIT (11–17 s on 150 cells), later tasks on the same process 0.4–0.6 s — a warm pool is
+  warm per worker process, so `--nworkers` should not be far above the concurrent task count.
+- **Found and fixed: dask deduplicates tasks by content.** `Client.submit` defaults to
+  `pure=True`, keying a task on (function, argument contents); the first four-way run collapsed
+  into roughly one computation shared across all four clients (task stream showed +1 task for
+  +4 runs). Semantically fine for pure functions with identical inputs, but on a long-lived pool
+  whose code may be updated mid-life it would serve a result computed by the previous code to a
+  new client. Both Dask backends now submit with `pure=False`; identical concurrent runs each
+  compute their own (test: two `submit(time.perf_counter_ns)` get distinct keys and values).
+- **Bit-identity is per CPU model, not per vendor.** Harmony on the E5-2640 v4 also differs from
+  the 8462Y+ at the ulp level (different SIMD generation, different BLAS kernel selection) even
+  though both are Intel. Labels and all CSVs identical throughout.
+
+Instrumentation lives in the spike dir: `loadbalance.py` (synthetic), `taskstream.py start|report`
+(scheduler-side task stream, no pipeline code touched), `compare_runs.py`.
+
 ## Rollout order
 
 1. ~~`msp/compute.py`: `ComputeEndpoint` protocol + `LocalEndpoint` + `resolve_endpoint()`.~~ Done.

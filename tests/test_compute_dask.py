@@ -76,6 +76,18 @@ def test_dask_endpoint_attaches_by_address_and_leaves_the_pool_running(pool):
         assert ep.submit(lambda x: x * 2, 21).result() == 42
 
 
+def test_dask_endpoint_never_shares_results_between_identical_submits(pool):
+    import time
+
+    from msp.compute import DaskEndpoint
+
+    with DaskEndpoint(pool.scheduler_address) as ep:
+        a = ep.submit(time.perf_counter_ns)
+        b = ep.submit(time.perf_counter_ns)
+        assert a.key != b.key  # pure=False: identical calls are still separate tasks
+        assert a.result() != b.result()
+
+
 def test_dask_endpoint_attaches_by_scheduler_file(pool, tmp_path, monkeypatch):
     import json
 
