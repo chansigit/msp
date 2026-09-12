@@ -18,6 +18,8 @@ import pandas as pd
 import scanpy as sc
 from sklearn.decomposition import PCA
 
+from ..compute import resolve_endpoint
+
 from ..log import ensure
 from ..plots import save_single_umap, slug
 from ..steps import begin_step, complete_step
@@ -202,6 +204,16 @@ def _preprocess(ad, batch_col, n_top_genes):
         ad.uns["hvg"] = {"flavor": "seurat"}
 
 
+def _run_harmony(pca: np.ndarray, batch_labels: pd.DataFrame, batch_col: str, kwargs: dict) -> np.ndarray:
+    """Array-in/array-out so this can go through a ComputeEndpoint that is
+    not necessarily this process: never pass the AnnData itself, only the
+    PCA matrix and the one obs column harmonypy needs."""
+    import harmonypy
+
+    ho = harmonypy.run_harmony(pca, batch_labels, batch_col, **kwargs)
+    return np.asarray(ho.Z_corr)
+
+
 def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
     """Scaled-HVG PCA, then harmony on the batch key (skipped for a single
     batch). Returns ``(n_comps, harmony_record)``."""
@@ -217,8 +229,6 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
 
     # harmonypy >= 2.0 (C++ backend, numpy-only): Z_corr is cells-by-PCs.
     # Accept either orientation anyway and assert the final shape below.
-    import harmonypy
-
     if n_samples < 2:
         # nothing to correct across: one sample / one batch level. The rest of
         # the chain (neighbors, leiden, UMAP, QC tables, agents) runs unchanged
@@ -227,6 +237,8 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
         Z = np.array(ad.obsm["X_pca"], copy=True)
         harmony_record = "skipped: single batch"
     else:
+        import harmonypy
+
         from ..resources import available_cpus
 
         # BLAS threads for the C++ solver: the CPUs this process may really
@@ -236,8 +248,9 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
             f"== harmony (harmonypy {getattr(harmonypy, '__version__', '?')}, {kwargs['ncores']} thread(s))"
             + (f", overrides {harmony_kwargs}" if harmony_kwargs else ", harmonypy defaults"),
         )
-        ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col, **kwargs)
-        Z = np.asarray(ho.Z_corr)
+        with resolve_endpoint() as ep:
+            fut = ep.submit(_run_harmony, ad.obsm["X_pca"], ad.obs[[batch_col]], batch_col, kwargs)
+            Z = fut.result()
         if Z.shape[0] != ad.n_obs:
             Z = Z.T
         harmony_record = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in harmony_kwargs.items()}
