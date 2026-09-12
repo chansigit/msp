@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
-from ..compute import resolve_endpoint
+from ..compute import gpu_requested, resolve_endpoint
 from ..deg_logging import rank_genes_groups
 
 log = logging.getLogger(__name__)
@@ -77,24 +77,37 @@ def _global_deg_workspace(ad):
     return an.AnnData(X=ad.X, obs=ad.obs.copy(), var=ad.var.copy(), uns=deepcopy(ad.uns))
 
 
-def _compute_de(X, var_names, labels, log1p, rep, keys):
+def _compute_de(X, var_names, labels, log1p, rep, keys, gpu=False):
     """Phase 1 (neighbors + PAGA + task list) and phase 2 (the wilcoxon runs)
     of :func:`_cluster_annotations`, on a bare AnnData rebuilt from arrays so
     the DE stage can run on any ComputeEndpoint. ``labels`` maps each leiden
     key to ``(codes, categories)``. Returns per-key PAGA neighbour rows, the
     undersized clusters skipped, the plan, and results as
     ``(key, view, cluster, DataFrame)`` -- keyed by name, never by object
-    identity, because the caller's objects are not these objects."""
+    identity, because the caller's objects are not these objects.
+
+    ``gpu=True``: X lives on the GPU (rapids-singlecell), neighbors and the
+    wilcoxon runs are rsc's, sequential (each takes well under a second;
+    no point sharing one GPU between threads)."""
     from concurrent.futures import ThreadPoolExecutor
 
     from ..resources import available_cpus
+
+    if gpu:
+        import rapids_singlecell as rsc
+
+        neighbors, rgg = rsc.pp.neighbors, (lambda a, key, **kw: rsc.tl.rank_genes_groups(a, key, **{k: v for k, v in kw.items() if k != "use_raw"}))
+    else:
+        neighbors, rgg = sc.pp.neighbors, rank_genes_groups
 
     obs = pd.DataFrame({k: pd.Categorical.from_codes(*labels[k]) for k in keys}, index=pd.RangeIndex(X.shape[0]).astype(str))
     ad_excl = an.AnnData(X=X, obs=obs, var=pd.DataFrame(index=pd.Index(var_names)), uns={"log1p": dict(log1p)})
     if rep is not None:
         ad_excl.obsm["X_pca_harmony"] = rep
-    log.info("== cluster annotations: neighbors on the excluded subset")
-    sc.pp.neighbors(ad_excl, use_rep="X_pca_harmony")
+    if gpu:
+        rsc.get.anndata_to_GPU(ad_excl)
+    log.info("== cluster annotations: neighbors on the excluded subset" + (" [gpu]" if gpu else ""))
+    neighbors(ad_excl, use_rep="X_pca_harmony")
 
     # phase 1 (sequential, cheap): PAGA + neighbour tables + the task list
     plan, paga, skipped = [], {}, {}  # per key: dict(key, cats, valid_groups, top3)
@@ -136,7 +149,7 @@ def _compute_de(X, var_names, labels, log1p, rep, keys):
         key = item["key"]
         slot = f"_rgg_{key}"
         work = _global_deg_workspace(ad_excl)
-        rank_genes_groups(work, key, groups=item["valid"], method="wilcoxon", use_raw=False, pts=True, key_added=slot)
+        rgg(work, key, groups=item["valid"], method="wilcoxon", use_raw=False, pts=True, key_added=slot)
         gdf = sc.get.rank_genes_groups_df(work, group=None, key=slot)
         # Scanpy omits group when only one group qualifies for testing.
         if "group" not in gdf and len(item["valid"]) == 1:
@@ -151,7 +164,7 @@ def _compute_de(X, var_names, labels, log1p, rep, keys):
         sub = ad_excl[ad_excl.obs[key].isin([c, *neighbors])].copy()
         if int((sub.obs[key] == c).sum()) < MIN_DE_GROUP_SIZE:
             return None
-        rank_genes_groups(sub, key, groups=[c], reference="rest", method="wilcoxon", use_raw=False, pts=True)
+        rgg(sub, key, groups=[c], reference="rest", method="wilcoxon", use_raw=False, pts=True)
         ldf = sc.get.rank_genes_groups_df(sub, group=c)
         ldf = ldf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
         # rank_genes_groups_df drops the "group" column when `group` is a scalar
@@ -161,7 +174,7 @@ def _compute_de(X, var_names, labels, log1p, rep, keys):
         ldf["neighbors"] = "|".join(neighbors)
         return ldf
 
-    n_workers = max(1, min(available_cpus(), 8))
+    n_workers = 1 if gpu else max(1, min(available_cpus(), 8))
     log.info(f"== cluster annotations: DE on {n_workers} thread(s)")
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = []
@@ -217,9 +230,11 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
     keys = [key for _, key in target]
     labels = {k: (ad_excl.obs[k].cat.codes.to_numpy(), list(ad_excl.obs[k].cat.categories)) for k in keys}
     rep = ad_excl.obsm["X_pca_harmony"] if "X_pca_harmony" in ad_excl.obsm else None
+    gpu = gpu_requested()
     with resolve_endpoint() as ep:
         out = ep.submit(
-            _compute_de, ad_excl.X, list(ad_excl.var_names), labels, dict(ad_excl.uns.get("log1p", {})), rep, keys
+            _compute_de, ad_excl.X, list(ad_excl.var_names), labels, dict(ad_excl.uns.get("log1p", {})), rep, keys,
+            gpu=gpu, tier="gpu" if gpu else "cpu",
         ).result()
     plan, results = out["plan"], out["results"]
     for key in keys:

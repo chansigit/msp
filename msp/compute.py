@@ -194,6 +194,13 @@ class DaskEndpoint:
         self._client = None
 
 
+def gpu_requested() -> bool:
+    """``MSP_COMPUTE_GPU=1``: call sites pick their rapids-singlecell
+    implementation and submit it with ``tier="gpu"``. Unset (default) is
+    the CPU path, byte for byte. Numerics differ between the two -- accepted."""
+    return os.environ.get("MSP_COMPUTE_GPU", "0") == "1"
+
+
 def resolve_endpoint() -> ComputeEndpoint:
     """``MSP_COMPUTE_ENDPOINT`` (default ``local``) picks the backend. An
     unknown name raises loudly instead of falling back to ``local``."""

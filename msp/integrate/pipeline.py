@@ -18,7 +18,7 @@ import pandas as pd
 import scanpy as sc
 from sklearn.decomposition import PCA
 
-from ..compute import resolve_endpoint
+from ..compute import gpu_requested, resolve_endpoint
 
 from ..log import ensure
 from ..plots import save_single_umap, slug
@@ -214,6 +214,20 @@ def _run_harmony(pca: np.ndarray, batch_labels: pd.DataFrame, batch_col: str, kw
     return np.asarray(ho.Z_corr)
 
 
+def _run_harmony_gpu(pca: np.ndarray, batch_labels: pd.DataFrame, batch_col: str, kwargs: dict) -> np.ndarray:
+    """rapids-singlecell's Harmony (C++ kernel, Harmony2 algorithm) -- the
+    GPU counterpart of :func:`_run_harmony`. Only the harmonypy overrides
+    that have the same name and meaning are forwarded."""
+    import anndata as an
+    import rapids_singlecell as rsc
+
+    shared = {k: v for k, v in kwargs.items() if k in ("theta", "sigma", "tau", "ridge_lambda", "max_iter_harmony")}
+    tmp = an.AnnData(obs=batch_labels.reset_index(drop=True), obsm={"X_pca": np.asarray(pca, dtype=np.float32)})
+    rsc.pp.harmony_integrate(tmp, key=batch_col, basis="X_pca", adjusted_basis="X_h", rng=0, **shared)
+    Z = tmp.obsm["X_h"]
+    return np.asarray(Z.get() if hasattr(Z, "get") else Z)
+
+
 def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
     """Scaled-HVG PCA, then harmony on the batch key (skipped for a single
     batch). Returns ``(n_comps, harmony_record)``."""
@@ -252,8 +266,10 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
         # deserialize through distributed's task-graph protocol -- decategorize
         # to plain object dtype before it crosses a ComputeEndpoint boundary.
         batch_labels = ad.obs[[batch_col]].astype({batch_col: "object"})
+        gpu = gpu_requested()
         with resolve_endpoint() as ep:
-            fut = ep.submit(_run_harmony, ad.obsm["X_pca"], batch_labels, batch_col, kwargs)
+            fut = ep.submit(_run_harmony_gpu if gpu else _run_harmony, ad.obsm["X_pca"], batch_labels, batch_col, kwargs,
+                            tier="gpu" if gpu else "cpu")
             Z = fut.result()
         if Z.shape[0] != ad.n_obs:
             Z = Z.T
@@ -291,13 +307,45 @@ def _run_cluster(rep: np.ndarray, n_neighbors: int, resolutions: tuple) -> dict:
     }
 
 
+def _to_host(x):
+    """cupy / cupyx.sparse -> numpy / scipy; anything else unchanged."""
+    return x.get() if hasattr(x, "get") and not isinstance(x, dict) else x
+
+
+def _run_cluster_gpu(rep: np.ndarray, n_neighbors: int, resolutions: tuple) -> dict:
+    """GPU counterpart of :func:`_run_cluster` on rapids-singlecell: same
+    inputs, same return structure, everything moved back to host arrays
+    before it leaves the worker. cugraph's Leiden is not igraph's: cluster
+    ids and boundaries differ from the CPU path by construction."""
+    import anndata as an
+    import rapids_singlecell as rsc
+
+    tmp = an.AnnData(obs=pd.DataFrame(index=pd.RangeIndex(rep.shape[0]).astype(str)), obsm={"X_pca_harmony": np.asarray(rep, dtype=np.float32)})
+    rsc.pp.neighbors(tmp, use_rep="X_pca_harmony", n_neighbors=n_neighbors, rng=0)
+    leiden = {}
+    for r in resolutions:
+        key = f"msp_leiden_r{r}"
+        rsc.tl.leiden(tmp, resolution=r, key_added=key, rng=0)
+        col = tmp.obs[key]
+        leiden[key] = (col.cat.codes.to_numpy(), list(col.cat.categories))
+    rsc.tl.umap(tmp, rng=0)
+    return {
+        "obsp": {k: _to_host(tmp.obsp[k]) for k in tmp.obsp.keys()},
+        "uns": {k: tmp.uns[k] for k in tmp.uns.keys()},
+        "leiden": leiden,
+        "umap": np.asarray(_to_host(tmp.obsm["X_umap"])),
+    }
+
+
 def _cluster(ad, resolutions, n_neighbors):
     """Neighbors on X_pca_harmony, leiden at every resolution, UMAP -- as one
     ComputeEndpoint task. Returns the leiden keys in resolution order."""
     leiden_keys = [f"msp_leiden_r{r}" for r in resolutions]
-    log.info(f"== neighbors (use_rep=X_pca_harmony) / leiden {leiden_keys} / umap")
+    gpu = gpu_requested()
+    log.info(f"== neighbors (use_rep=X_pca_harmony) / leiden {leiden_keys} / umap" + (" [gpu]" if gpu else ""))
     with resolve_endpoint() as ep:
-        out = ep.submit(_run_cluster, ad.obsm["X_pca_harmony"], n_neighbors, tuple(resolutions)).result()
+        out = ep.submit(_run_cluster_gpu if gpu else _run_cluster, ad.obsm["X_pca_harmony"], n_neighbors, tuple(resolutions),
+                        tier="gpu" if gpu else "cpu").result()
     for k, v in out["obsp"].items():
         ad.obsp[k] = v
     for k, v in out["uns"].items():
