@@ -291,10 +291,13 @@ The pool can hold GPU workers; a heavy step can ask for one. Plumbing, all card-
   forever. `local` ignores the tier (in-process, the GPU is whatever the process sees);
   `dask-local` rejects it. Verified live: a gpu-tier task on the TITAN Xp node saw the card, a
   cpu-tier task on the same node's plain workers did not.
-- No call site uses `tier="gpu"` yet. The intended switch is a single env var (say
-  `MSP_COMPUTE_GPU=1`) read at the call site: pick the GPU implementation of the pure function
-  and submit it with `tier="gpu"`; unset means today's CPU path, byte for byte. Numerical
-  differences between the two implementations are accepted (user's call, 2026-09-12).
+- **`MSP_COMPUTE_GPU=1`** (`compute.gpu_requested()`): each call site picks its rapids-singlecell
+  implementation and submits with `tier="gpu"` — `_run_harmony_gpu` (`rsc.pp.harmony_integrate`,
+  Harmony2), `_run_cluster_gpu` (`rsc.pp.neighbors` / `rsc.tl.leiden` / `rsc.tl.umap`, host arrays
+  on return), `_compute_de(gpu=True)` (X moved to the GPU, `rsc.tl.rank_genes_groups` wilcoxon,
+  sequential). Same inputs, same return shapes. Unset = the CPU path, byte for byte. Numerical
+  differences are accepted (user's call, 2026-09-12); cugraph's Leiden is a different algorithm
+  from igraph's, so partitions differ by construction (19 vs 26 clusters at r=1.0 on pbmc68k).
 
 What the first GPU allocation (`sh02-14n13`, TITAN Xp, compute capability 6.1, driver 550 /
 CUDA 12.4) taught:
@@ -309,8 +312,36 @@ CUDA 12.4) taught:
   53 s) versus harmonypy 2.0's C++ CPU solver at 13 s on 66k. Harmony is not where the GPU pays;
   the graph stage and DE are, and those need RAPIDS.
 
-Nothing GPU-related is installed in the production venv (`venvs/eca-ct`); the probe used a
-throwaway venv at `$SCRATCH/spikes/gpu-venv` (5 GB, torch + harmony-pytorch), deletable.
+### RTX 3090 (`sh03-15n01`, compute capability 8.6, node CPU 8-core EPYC 7502P), pbmc68k 68,579 × 14,771
+
+| call site | CPU (this node) | GPU |
+|---|---|---|
+| `_run_harmony` (4 batches) | 4.7 s | 0.3 s warm; 26 s on a worker's first call (rsc import + JIT) |
+| `_run_cluster` (neighbors + 3 Leiden + UMAP) | 101 s | 18.5 s |
+| `_compute_de` (neighbors + PAGA + global + 26 locals) | 282 s | 14.1 s |
+
+Top DE genes identical, scores agree to ~1e-6. Verified three ways: the functions directly on
+the node, the whole synthetic pipeline in-process with the switch on (`local` backend), and
+through a pool — GPU worker on the 3090 node, client on another node, all three tasks routed to
+it by `tier="gpu"`.
+
+**Install path that works** (the rsc blog's nanobind rewrite explains the rest): the prebuilt
+wheel is the separately named `rapids-singlecell-cu12[rapids]` from `pypi.nvidia.com`; plain
+`rapids-singlecell` ≥ 0.15 on PyPI is sdist-only (CMake + nvcc + C++). RAPIDS must be pinned to
+one release or pip backtracks through cudf versions, downloading a 700 MB `libcudf` wheel per
+candidate. `container/build.sh` has it as `ECA_GPU=1` (`ECA_RAPIDS`, default 26.6), built once
+as `venvs/eca-ct-gpu` — the production venv is untouched. `dask-pool.sh worker <node> --gpu`
+runs that venv when `ECA_CT_GPU_ROOT` is set.
+
+**Cross-venv pool**: the GPU venv carries numpy 2.4.6 and dask 2026.1.1 (RAPIDS pins) against
+the production venv's 2.5.3 / 2026.8.0. Works (distributed prints a VersionMismatchWarning);
+plain workers must never run the GPU venv, so `--gpu` is the only path that uses it. A GPU
+worker also accepts cpu-tier tasks (dask resources restrict, they do not reserve) — so on a
+mixed pool some cpu work may land on the GPU node's venv. Acceptable for now; if it matters,
+give GPU workers `--nworkers 1` only and keep the node's plain workers on the production venv.
+
+The earlier TITAN Xp probe venv (`$SCRATCH/spikes/gpu-venv`, torch) and the two RAPIDS trial
+venvs (`gpu-venv-rapids`, `gpu-venv-rsc`) under `$SCRATCH/spikes/` are deletable.
 
 ## Rollout order
 
@@ -330,9 +361,8 @@ throwaway venv at `$SCRATCH/spikes/gpu-venv` (5 GB, torch + harmony-pytorch), de
    Done as `dask` + `eca-rsi/container/dask-pool.sh` (see above); `dask-slurm` dropped.
 6. ~~A second call site (Leiden / DEG in msp, or ZMIP per-lineage).~~ Done: graph stage and DE
    stage, which cover zmip's lineages too (see above).
-7. GPU implementations behind `tier="gpu"` once a compute-capability ≥ 7.0 allocation exists:
-   install rapids-singlecell into a spike venv first, measure `_run_cluster` and `_compute_de`
-   against CPU on real-size data, then wire the switch. Not started (blocked on hardware).
+7. ~~GPU implementations behind `tier="gpu"`.~~ Done on an RTX 3090 (see above); branch
+   `compute-gpu` on top of `compute-endpoint`, neither merged.
 8. Left on the driver: normalize / HVG / scale / PCA (seconds), standissect, QC tables, figures,
    and the agent calls. Nothing else in msp is minutes-long on 60k cells.
 
