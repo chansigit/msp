@@ -221,6 +221,39 @@ Launcher gotchas already baked into `dask-pool.sh`: `ssh -f` (see spike findings
 file on `$SCRATCH` so nobody needs the scheduler's IP, `--nthreads 1` per worker process so
 Harmony's own `ncores` threading is the only parallelism inside a task.
 
+## Second and third call sites (2026-09-12): the graph stage and the DE stage
+
+Two more `submit()` sites in msp, same array-in/array-out contract, each one task:
+
+- **`_cluster` → `_run_cluster(X_pca_harmony, n_neighbors, resolutions)`**: neighbors + leiden at
+  every resolution + UMAP on a bare AnnData carrying only the embedding. Returns obsp
+  (connectivities / distances), every uns entry scanpy wrote, leiden partitions as
+  `(codes, categories)`, and the UMAP; the driver puts them back so the object is exactly what
+  scanpy-in-place would have produced.
+- **`_cluster_annotations` → `_compute_de(X, var_names, labels, log1p, X_pca_harmony, keys)`**:
+  phase 1 (neighbors on the survivors + PAGA + task list) and phase 2 (the thread-pooled
+  wilcoxon runs) as one task; the driver writes the PAGA tables, logs the undersized clusters,
+  and runs phase 3 unchanged. Results are keyed by leiden key, not object identity — the
+  driver's objects are not the task's objects. This ships the survivors' log-normalized X
+  (~1 GB at 60k cells) through the endpoint; marked `ponytail:` in the code — stage a file
+  path if a remote pool ever makes the transfer the bottleneck.
+
+Because zmip's per-lineage compute *is* `msp.integrate_adata`, every lineage subprocess gets all
+three sites for free — no zmip change; it only needs `MSP_COMPUTE_ENDPOINT` / `MSP_DASK_SCHEDULER`
+in its environment, which it inherits.
+
+Parity against unmodified main (`compare_runs.py` in the spike dir: three embeddings, obs.csv,
+all 22 CSVs under `msp_out/`, the h5ad's obs / obsp / obsm / uns):
+
+| backend | differs from main in |
+|---|---|
+| `local` | nothing |
+| `dask-local` | nothing |
+| `dask` (Harmony, graph and DE all on the AMD node) | `X_pca_harmony`, `X_umap`, obsp (all downstream of the Harmony ulp delta); **every CSV identical**, including `deg_global_*`, `deg_local_*`, `paga_neighbors_*`, `stress_clusters`, and all cluster labels |
+
+The scanpy warning "unsupported threading environment, rankdata in serial mode" seen in the
+worker log is not pool-specific — unmodified main prints it too.
+
 ## Rollout order
 
 1. ~~`msp/compute.py`: `ComputeEndpoint` protocol + `LocalEndpoint` + `resolve_endpoint()`.~~ Done.
@@ -237,13 +270,16 @@ Harmony's own `ncores` threading is the only parallelism inside a task.
    to `msp` main either, same reasoning as step 3.
 5. ~~Build the warm-pool backend, reusing the spike's Apptainer-wrapped worker-launch pattern.~~
    Done as `dask` + `eca-rsi/container/dask-pool.sh` (see above); `dask-slurm` dropped.
-6. A second call site (Leiden / DEG in msp, or ZMIP per-lineage) — the point at which the pool
-   starts paying for itself, since one Harmony call per round is not where the hours go.
+6. ~~A second call site (Leiden / DEG in msp, or ZMIP per-lineage).~~ Done: graph stage and DE
+   stage, which cover zmip's lineages too (see above).
+7. Left on the driver: normalize / HVG / scale / PCA (seconds), standissect, QC tables, figures,
+   and the agent calls. Nothing else in msp is minutes-long on 60k cells.
 
 ## Status
 
 `msp/compute.py` has `ComputeEndpoint`, `LocalEndpoint`, `DaskLocalEndpoint`, `DaskEndpoint`,
-`resolve_endpoint()`. `_embed()`'s Harmony call is wired through it for all three backends.
+`resolve_endpoint()`. Three call sites go through it: Harmony (`_run_harmony`), the graph stage
+(`_run_cluster`) and the DE stage (`_compute_de`) — which is also every heavy step of a zmip lineage.
 `local`/`dask-local` verified byte-identical against unmodified main; `dask` verified on a real
 two-node pool (labels identical, embeddings ulp-equivalent, see above). Tests:
 `tests/test_compute.py`, `tests/test_compute_dask.py` (skipped without `dask[distributed]`).

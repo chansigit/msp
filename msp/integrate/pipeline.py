@@ -264,20 +264,47 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
     return n_comps, harmony_record
 
 
-def _cluster(ad, resolutions, n_neighbors):
-    """Neighbors on X_pca_harmony, leiden at every resolution, UMAP. Returns
-    the leiden keys in resolution order."""
-    log.info("== neighbors (use_rep=X_pca_harmony)")
-    sc.pp.neighbors(ad, use_rep="X_pca_harmony", n_neighbors=n_neighbors)
-    leiden_keys = []
+def _run_cluster(rep: np.ndarray, n_neighbors: int, resolutions: tuple) -> dict:
+    """Array-in/array-out (see :func:`_run_harmony`): neighbors + leiden at
+    every resolution + UMAP on a bare AnnData that carries only the
+    embedding, so the whole graph stage can run on any ComputeEndpoint.
+    Leiden partitions travel as ``(codes, categories)`` -- a pandas
+    Categorical does not survive distributed's pickling -- and every uns
+    entry scanpy wrote (neighbors / leiden params / umap params) comes back
+    so the caller's object ends up exactly as if scanpy had run on it."""
+    import anndata as an
+
+    tmp = an.AnnData(obs=pd.DataFrame(index=pd.RangeIndex(rep.shape[0]).astype(str)), obsm={"X_pca_harmony": rep})
+    sc.pp.neighbors(tmp, use_rep="X_pca_harmony", n_neighbors=n_neighbors)
+    leiden = {}
     for r in resolutions:
         key = f"msp_leiden_r{r}"
-        log.info(f"== leiden {key}")
-        sc.tl.leiden(ad, resolution=r, key_added=key, flavor="igraph", n_iterations=2)
-        leiden_keys.append(key)
+        sc.tl.leiden(tmp, resolution=r, key_added=key, flavor="igraph", n_iterations=2)
+        col = tmp.obs[key]
+        leiden[key] = (col.cat.codes.to_numpy(), list(col.cat.categories))
+    sc.tl.umap(tmp)
+    return {
+        "obsp": {k: tmp.obsp[k] for k in tmp.obsp.keys()},
+        "uns": {k: tmp.uns[k] for k in tmp.uns.keys()},
+        "leiden": leiden,
+        "umap": tmp.obsm["X_umap"],
+    }
 
-    log.info("== umap")
-    sc.tl.umap(ad)
+
+def _cluster(ad, resolutions, n_neighbors):
+    """Neighbors on X_pca_harmony, leiden at every resolution, UMAP -- as one
+    ComputeEndpoint task. Returns the leiden keys in resolution order."""
+    leiden_keys = [f"msp_leiden_r{r}" for r in resolutions]
+    log.info(f"== neighbors (use_rep=X_pca_harmony) / leiden {leiden_keys} / umap")
+    with resolve_endpoint() as ep:
+        out = ep.submit(_run_cluster, ad.obsm["X_pca_harmony"], n_neighbors, tuple(resolutions)).result()
+    for k, v in out["obsp"].items():
+        ad.obsp[k] = v
+    for k, v in out["uns"].items():
+        ad.uns[k] = v
+    for key, (codes, cats) in out["leiden"].items():
+        ad.obs[key] = pd.Categorical.from_codes(codes, cats)
+    ad.obsm["X_umap"] = out["umap"]
     return leiden_keys
 
 
