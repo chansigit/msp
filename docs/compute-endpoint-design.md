@@ -60,12 +60,16 @@ Why this shape:
 | Backend | This round | Later |
 |---|---|---|
 | `local` | **implemented** — `submit()` runs `fn(*args, **kwargs)` synchronously in-process, wraps the result in an already-resolved `concurrent.futures.Future`. Byte-for-byte, timing-for-timing identical to today's direct call. | — |
-| `dask-local` | not implemented, name reserved | `distributed.Client(LocalCluster(...))` — multi-process on one node, no Slurm needed |
-| `dask-slurm` | not implemented, name reserved | `dask_jobqueue.SLURMCluster` — scheduler here, workers spawned via `sbatch` elsewhere |
+| `dask-local` | **implemented** (2026-09-12) — `distributed.LocalCluster(processes=True)`, multi-process on one node, no Slurm needed, torn down per `with` block | — |
+| `dask` | **implemented** (2026-09-12) — attach to an already-running scheduler named by `MSP_DASK_SCHEDULER` (`tcp://host:port` or scheduler-file path). The shared warm pool of eca-rsi#8: pool outlives any step or run, this backend only opens/closes a client | — |
 
-Only `local` ships in this pass. `dask-local`/`dask-slurm` are validated feasible (see "Spike
-findings" below) but deliberately not built yet — one call site, one backend, prove it, then
-decide whether a second call site or a second backend comes first.
+`dask-slurm` was originally reserved for a `dask_jobqueue.SLURMCluster` backend (scheduler here,
+`sbatch` a worker job per step). Dropped without being built: eca-rsi#8's model is a pool
+**shared across concurrent runs** with a lifetime much longer than one step, and an endpoint
+scoped to one heavy step cannot own that pool. So the Slurm-specific part lives outside msp as a
+launcher (`eca-rsi/container/dask-pool.sh`: scheduler on the current node, `ssh -f` a
+container-wrapped `dask worker` into any allocation you hold, `status`, `stop`), and msp only
+knows how to *attach*. `dask_jobqueue` is not a dependency.
 
 ### 3. `resolve_endpoint()`
 
@@ -74,8 +78,10 @@ def resolve_endpoint() -> ComputeEndpoint:
     kind = os.environ.get("MSP_COMPUTE_ENDPOINT", "local")
     if kind == "local":
         return LocalEndpoint()
-    if kind in ("dask-local", "dask-slurm"):
-        raise NotImplementedError(f"MSP_COMPUTE_ENDPOINT={kind} not implemented yet")
+    if kind == "dask-local":
+        return DaskLocalEndpoint()
+    if kind == "dask":
+        return DaskEndpoint()   # MSP_DASK_SCHEDULER names the pool
     raise ValueError(f"unknown MSP_COMPUTE_ENDPOINT={kind!r}")
 ```
 
@@ -112,7 +118,7 @@ Rules for any function passed to `submit()`:
 - **Lifecycle is scoped to the call site.** `resolve_endpoint()` is called fresh at each site that
   needs it, used inside a `with` block, and torn down when that block exits — not held open across
   a whole round or the whole pipeline. Costs nothing for `local` (no real resource); keeps the
-  eventual `dask-local`/`dask-slurm` backends from becoming an accidental long-lived shared
+  eventual `dask-local`/`dask` backends from becoming an accidental long-lived shared
   service by construction.
 
 ## Explicit non-goals this round
@@ -169,7 +175,7 @@ call site:
   The verification script originally ran `write_samples()` at module top level; every spawned
   worker re-ran it, and several processes writing the same h5ad files at once hit HDF5 file-lock
   errors (`BlockingIOError: ... Resource temporarily unavailable`). Any script that constructs a
-  `dask-local`/`dask-slurm` endpoint needs its real work behind a `__main__` guard — this is a
+  `dask-local`/`dask` endpoint needs its real work behind a `__main__` guard — this is a
   property of *callers*, not of `compute.py` itself, but it will bite the first person who forgets
   it, so it is written down here.
 - **A pandas `Categorical` column does not survive distributed's task-graph pickling.** Passing
@@ -182,6 +188,38 @@ call site:
   crosses a `ComputeEndpoint` boundary. This is now the general rule for every future call site,
   not just Harmony: **never pass a `Categorical`-dtype column through `submit()`** — convert to
   plain object/string dtype first, on the caller's side, before construting the arguments.
+
+## `dask` (warm pool) build (2026-09-12) — cross-node parity is ulp-level, not bit-level
+
+Pool: scheduler on the coordinator allocation (`sh04-01n16`, Intel Xeon 8462Y+), two worker
+processes on the other allocation (`sh03-08n39`, AMD EPYC 7543), every process the container
+interpreter with `PYTHONPATH` pointing at this worktree (workers must import the same `msp` as
+the client — `submit(fn)` pickles module-level functions by reference). `_run_harmony` provably
+executed on the remote node inside the container (task returned `sh03-08n39.int` / Debian 13).
+
+Same synthetic two-sample pipeline, all under the container interpreter:
+
+| pair | `X_pca` | `X_pca_harmony` | `X_umap` | `obs.csv` (labels) |
+|---|---|---|---|---|
+| main vs worktree `local` (same node) | identical | identical | identical | identical |
+| main vs `dask-local` (same node) | identical | identical | identical | identical |
+| main vs `dask` (Harmony on the AMD node) | identical | max abs diff 2.4e-7 | differs | identical |
+
+The Harmony delta is float32 ulp noise from a different CPU vendor's BLAS kernels (same
+`ncores`, same `random_state`); UMAP then amplifies it into visibly different coordinates while
+every Leiden label stays the same. Two consequences worth stating plainly:
+
+- **Bit-identity is a same-hardware property, not a backend property.** A heterogeneous pool
+  gives numerically equivalent, not byte-equal, embeddings. Nothing in msp/ecarsi's identity or
+  resume machinery compares embeddings (counts are compared, embeddings are not), so this does
+  not break resume — but "re-run the round on the pool and diff the h5ad" is not a valid check.
+- The earlier "`X_pca` differs" scare was the *host* interpreter (`dl2025`, no-BLAS numpy) vs the
+  container one — two different numeric stacks, nothing to do with Dask. Always compare runs
+  produced by the same interpreter.
+
+Launcher gotchas already baked into `dask-pool.sh`: `ssh -f` (see spike findings), scheduler
+file on `$SCRATCH` so nobody needs the scheduler's IP, `--nthreads 1` per worker process so
+Harmony's own `ncores` threading is the only parallelism inside a task.
 
 ## Rollout order
 
@@ -197,14 +235,18 @@ call site:
    being merged first) at the user's explicit request to build the real backend now rather than
    wait. Two real bugs found and fixed in the process (see "dask-local build" above); not merged
    to `msp` main either, same reasoning as step 3.
-5. Build `dask-slurm`, reusing the spike's Apptainer-wrapped worker-launch pattern. Not started.
+5. ~~Build the warm-pool backend, reusing the spike's Apptainer-wrapped worker-launch pattern.~~
+   Done as `dask` + `eca-rsi/container/dask-pool.sh` (see above); `dask-slurm` dropped.
+6. A second call site (Leiden / DEG in msp, or ZMIP per-lineage) — the point at which the pool
+   starts paying for itself, since one Harmony call per round is not where the hours go.
 
 ## Status
 
-`msp/compute.py` has `ComputeEndpoint`, `LocalEndpoint`, `DaskLocalEndpoint`, `resolve_endpoint()`.
-`_embed()`'s Harmony call is wired through it for both backends. All verified byte-identical
-against unmodified main on the synthetic two-sample dataset (real Harmony path). Full worktree
-test suite passes (`tests/test_compute.py`, `tests/test_compute_dask.py` — skipped without
-`dask[distributed]`). `dask-slurm` is still just a reserved name (`NotImplementedError`).
+`msp/compute.py` has `ComputeEndpoint`, `LocalEndpoint`, `DaskLocalEndpoint`, `DaskEndpoint`,
+`resolve_endpoint()`. `_embed()`'s Harmony call is wired through it for all three backends.
+`local`/`dask-local` verified byte-identical against unmodified main; `dask` verified on a real
+two-node pool (labels identical, embeddings ulp-equivalent, see above). Tests:
+`tests/test_compute.py`, `tests/test_compute_dask.py` (skipped without `dask[distributed]`).
+Pool launcher: `eca-rsi/container/dask-pool.sh`.
 **Nothing in this worktree has been merged to `msp` main** — that merge is intentionally on hold,
 not blocked by anything technical.

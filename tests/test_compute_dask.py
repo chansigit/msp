@@ -54,3 +54,47 @@ def test_resolve_endpoint_returns_dask_local(monkeypatch):
     monkeypatch.setenv("MSP_COMPUTE_ENDPOINT", "dask-local")
     ep = resolve_endpoint()
     assert isinstance(ep, DaskLocalEndpoint)
+
+
+# --- DaskEndpoint: attach to a scheduler we do not own -------------------
+
+@pytest.fixture(scope="module")
+def pool():
+    from distributed import LocalCluster
+
+    with LocalCluster(n_workers=1, threads_per_worker=1, processes=True) as cluster:
+        yield cluster
+
+
+def test_dask_endpoint_attaches_by_address_and_leaves_the_pool_running(pool):
+    from msp.compute import DaskEndpoint
+
+    with DaskEndpoint(pool.scheduler_address) as ep:
+        assert ep.submit(lambda: os.getpid()).result() != os.getpid()
+    assert pool.scheduler.status.name == "running"  # exit closed the client only
+    with DaskEndpoint(pool.scheduler_address) as ep:  # pool still usable
+        assert ep.submit(lambda x: x * 2, 21).result() == 42
+
+
+def test_dask_endpoint_attaches_by_scheduler_file(pool, tmp_path, monkeypatch):
+    import json
+
+    from msp.compute import DaskEndpoint
+
+    f = tmp_path / "scheduler.json"
+    f.write_text(json.dumps({"address": pool.scheduler_address}))
+    monkeypatch.setenv("MSP_COMPUTE_ENDPOINT", "dask")
+    monkeypatch.setenv("MSP_DASK_SCHEDULER", str(f))
+    ep = resolve_endpoint()
+    assert isinstance(ep, DaskEndpoint)
+    with ep:
+        assert ep.submit(sum, [1, 2, 3]).result() == 6
+
+
+def test_dask_endpoint_requires_a_scheduler(monkeypatch):
+    from msp.compute import DaskEndpoint
+
+    monkeypatch.delenv("MSP_DASK_SCHEDULER", raising=False)
+    with pytest.raises(ValueError, match="MSP_DASK_SCHEDULER"):
+        with DaskEndpoint():
+            pass

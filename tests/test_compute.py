@@ -1,7 +1,7 @@
 """LocalEndpoint is a same-process, same-timing passthrough; resolve_endpoint()
-never silently falls back for a reserved-but-unimplemented backend name.
-Needs no optional dependency -- DaskLocalEndpoint has its own test file,
-skipped when dask[distributed] (msp-sc[dask]) is not installed."""
+never silently falls back to local for an unknown backend name. Needs no
+optional dependency -- the Dask backends have their own test file, skipped
+when dask[distributed] (msp-sc[dask]) is not installed."""
 
 import pytest
 
@@ -35,12 +35,6 @@ def test_resolve_endpoint_defaults_to_local(monkeypatch):
 def test_resolve_endpoint_honors_explicit_local(monkeypatch):
     monkeypatch.setenv("MSP_COMPUTE_ENDPOINT", "local")
     assert isinstance(resolve_endpoint(), LocalEndpoint)
-
-
-def test_resolve_endpoint_raises_not_implemented_for_reserved_names(monkeypatch):
-    monkeypatch.setenv("MSP_COMPUTE_ENDPOINT", "dask-slurm")
-    with pytest.raises(NotImplementedError, match="dask-slurm"):
-        resolve_endpoint()
 
 
 def test_resolve_endpoint_rejects_an_unknown_name(monkeypatch):

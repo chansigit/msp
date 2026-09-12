@@ -2,13 +2,22 @@
 *where* it runs, symmetric to the inference-side split (``HARNESS`` /
 ``AGENT_MODEL_POOL`` in ``agent-harness-bridge``) that already exists.
 
-Design record: docs/compute-endpoint-design.md. Only the ``local`` backend
-is implemented; it is a same-process, same-timing wrapper around a direct
-call, so ``MSP_COMPUTE_ENDPOINT`` unset (the default) changes nothing about
-existing behavior. ``dask-local`` / ``dask-slurm`` are reserved names for
-later work and raise ``NotImplementedError`` until built -- they are not a
-silent fallback to ``local``, so a misconfigured environment variable never
-passes unnoticed.
+Design record: docs/compute-endpoint-design.md. Backends, picked by
+``MSP_COMPUTE_ENDPOINT``:
+
+``local`` (default)
+    same-process, same-timing wrapper around a direct call -- unset changes
+    nothing about existing behavior.
+``dask-local``
+    a throwaway single-node ``distributed.LocalCluster``, one per heavy step.
+``dask``
+    attach to an *already running* Dask scheduler named by
+    ``MSP_DASK_SCHEDULER`` (``tcp://host:port`` or a scheduler-file path) --
+    the shared warm pool of eca-rsi#8. The pool outlives any one step or run;
+    this backend only ever opens/closes a client to it.
+
+An unknown name raises rather than silently falling back to ``local``, so a
+misconfigured environment variable never passes unnoticed.
 
 Callers never import a concrete backend; they call :func:`resolve_endpoint`
 and use the result as a context manager scoped to one heavy step::
@@ -68,8 +77,8 @@ class DaskLocalEndpoint:
 
     Real multi-process workers (not threads) on purpose: a numpy array
     handed to ``submit()`` really does cross a process boundary and get
-    pickled/unpickled, which is the same constraint a future ``dask-slurm``
-    backend (workers on other nodes) will impose. Threads would hide that."""
+    pickled/unpickled, which is the same constraint the ``dask`` backend
+    (workers on other nodes) imposes. Threads would hide that."""
 
     def __init__(self, n_workers: int | None = None):
         self._n_workers = n_workers
@@ -104,18 +113,62 @@ class DaskLocalEndpoint:
         self._client = self._cluster = None
 
 
-_RESERVED_NOT_YET_IMPLEMENTED = ("dask-slurm",)
+class DaskEndpoint:
+    """Attach to a Dask scheduler somebody else started (the shared warm
+    pool: one scheduler, workers in whatever Slurm allocations exist, any
+    number of runs connecting concurrently). ``MSP_DASK_SCHEDULER`` is
+    either ``tcp://host:port`` or the path of the scheduler file the
+    scheduler wrote (``dask scheduler --scheduler-file F``; the natural
+    form on a shared filesystem, since nobody has to know the node's IP).
+
+    Only the client is opened/closed here -- the pool is not ours to tear
+    down. Workers must import the same ``msp`` the client runs, because
+    ``submit(fn)`` pickles module-level functions by reference: launch them
+    with the same interpreter and ``PYTHONPATH`` (``container/dask-pool.sh``
+    in eca-rsi does exactly that)."""
+
+    def __init__(self, scheduler: str | None = None):
+        self._scheduler = scheduler
+        self._client = None
+
+    def __enter__(self) -> "DaskEndpoint":
+        try:
+            from distributed import Client
+        except ImportError as exc:
+            raise ImportError(
+                "MSP_COMPUTE_ENDPOINT=dask needs dask[distributed]: pip install 'msp-sc[dask]'"
+            ) from exc
+        target = self._scheduler or os.environ.get("MSP_DASK_SCHEDULER")
+        if not target:
+            raise ValueError(
+                "MSP_COMPUTE_ENDPOINT=dask needs MSP_DASK_SCHEDULER "
+                "(tcp://host:port or a scheduler-file path)"
+            )
+        if "://" in target:
+            self._client = Client(target)
+        else:
+            self._client = Client(scheduler_file=target)
+        return self
+
+    def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
+        if self._client is None:
+            raise RuntimeError("DaskEndpoint.submit() called outside its `with` block")
+        return self._client.submit(fn, *args, **kwargs)
+
+    def __exit__(self, *exc: Any) -> None:
+        if self._client is not None:
+            self._client.close()
+        self._client = None
 
 
 def resolve_endpoint() -> ComputeEndpoint:
-    """``MSP_COMPUTE_ENDPOINT`` (default ``local``) picks the backend.
-    Reserved names raise loudly instead of silently falling back to
-    ``local``, so a typo or an unbuilt backend never passes unnoticed."""
+    """``MSP_COMPUTE_ENDPOINT`` (default ``local``) picks the backend. An
+    unknown name raises loudly instead of falling back to ``local``."""
     kind = os.environ.get("MSP_COMPUTE_ENDPOINT", "local")
     if kind == "local":
         return LocalEndpoint()
     if kind == "dask-local":
         return DaskLocalEndpoint()
-    if kind in _RESERVED_NOT_YET_IMPLEMENTED:
-        raise NotImplementedError(f"MSP_COMPUTE_ENDPOINT={kind!r} is not implemented yet")
+    if kind == "dask":
+        return DaskEndpoint()
     raise ValueError(f"unknown MSP_COMPUTE_ENDPOINT={kind!r}")
