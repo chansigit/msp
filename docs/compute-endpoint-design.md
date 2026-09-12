@@ -280,6 +280,38 @@ Pool: scheduler on `sh04-01n16` (Intel Xeon 8462Y+), 4 worker processes each on 
 Instrumentation lives in the spike dir: `loadbalance.py` (synthetic), `taskstream.py start|report`
 (scheduler-side task stream, no pipeline code touched), `compare_runs.py`.
 
+## GPU tier (2026-09-12, branch `compute-gpu`)
+
+The pool can hold GPU workers; a heavy step can ask for one. Plumbing, all card-agnostic:
+
+- `submit(fn, *args, tier="cpu"|"gpu", **kwargs)`. A tier is a dask worker *resource*:
+  `dask-pool.sh worker <node> --gpu` starts one process per card with `--resources GPU=1` and
+  `APPTAINER_NV=1` (the wrapper then passes `--nv`). `DaskEndpoint.has_tier("gpu")` asks the
+  scheduler; `submit(tier="gpu")` checks it first, because dask would otherwise queue the task
+  forever. `local` ignores the tier (in-process, the GPU is whatever the process sees);
+  `dask-local` rejects it. Verified live: a gpu-tier task on the TITAN Xp node saw the card, a
+  cpu-tier task on the same node's plain workers did not.
+- No call site uses `tier="gpu"` yet. The intended switch is a single env var (say
+  `MSP_COMPUTE_GPU=1`) read at the call site: pick the GPU implementation of the pure function
+  and submit it with `tier="gpu"`; unset means today's CPU path, byte for byte. Numerical
+  differences between the two implementations are accepted (user's call, 2026-09-12).
+
+What the first GPU allocation (`sh02-14n13`, TITAN Xp, compute capability 6.1, driver 550 /
+CUDA 12.4) taught:
+
+- **RAPIDS does not run on Pascal** (needs compute capability ≥ 7.0 since 24.02), so
+  rapids-singlecell — the actual prize: neighbors / UMAP / Leiden / DE on GPU — could not be
+  tested. Needs a Volta-or-newer card: on Sherlock `-C GPU_CC:7.0` at minimum, in practice an
+  Ampere/Hopper node (`-C "GPU_GEN:AMP|GPU_GEN:HPR"`).
+- torch works, but the default wheel (2.14, cu130) refuses the 550 driver; `torch==2.6.0` from
+  the cu124 index runs (sm_50…sm_90 in its arch list). sgemm 4000³ 0.21 s.
+- **harmony-pytorch on this card is a loss**: 60k × 50, 4 batches, GPU 32 s (its own CPU path
+  53 s) versus harmonypy 2.0's C++ CPU solver at 13 s on 66k. Harmony is not where the GPU pays;
+  the graph stage and DE are, and those need RAPIDS.
+
+Nothing GPU-related is installed in the production venv (`venvs/eca-ct`); the probe used a
+throwaway venv at `$SCRATCH/spikes/gpu-venv` (5 GB, torch + harmony-pytorch), deletable.
+
 ## Rollout order
 
 1. ~~`msp/compute.py`: `ComputeEndpoint` protocol + `LocalEndpoint` + `resolve_endpoint()`.~~ Done.
@@ -298,7 +330,10 @@ Instrumentation lives in the spike dir: `loadbalance.py` (synthetic), `taskstrea
    Done as `dask` + `eca-rsi/container/dask-pool.sh` (see above); `dask-slurm` dropped.
 6. ~~A second call site (Leiden / DEG in msp, or ZMIP per-lineage).~~ Done: graph stage and DE
    stage, which cover zmip's lineages too (see above).
-7. Left on the driver: normalize / HVG / scale / PCA (seconds), standissect, QC tables, figures,
+7. GPU implementations behind `tier="gpu"` once a compute-capability ≥ 7.0 allocation exists:
+   install rapids-singlecell into a spike venv first, measure `_run_cluster` and `_compute_de`
+   against CPU on real-size data, then wire the switch. Not started (blocked on hardware).
+8. Left on the driver: normalize / HVG / scale / PCA (seconds), standissect, QC tables, figures,
    and the agent calls. Nothing else in msp is minutes-long on 60k cells.
 
 ## Status
