@@ -357,6 +357,58 @@ def _validate_final(entries, clusters):
     return problems
 
 
+# A different coarse_label between PAGA-adjacent clusters is normal (e.g. Mural
+# next to Mesenchymal). It stops being normal when the cluster has no local DEG
+# evidence separating it from that neighbourhood at all -- that pattern (weak
+# local DEG + a coarse-label split) is how a genuinely single population ends
+# up cut into two named lineages by round-to-round label drift (04_Sunetal
+# round 3: "Stromal cell" vs "Mesenchymal stromal cell" over the same DCN+/LUM+
+# continuum, agents citing "modest differences (logFC ~0.4-0.5)" as their own
+# evidence). Deterministic, like _validate_final: reuses precomputed deg_local
+# rows and the same PAGA neighbour map cluster_context already shows the agent.
+_COARSE_SPLIT_MIN_ABS_LOGFC = 1.0
+_COARSE_SPLIT_MAX_PADJ = 0.05
+
+
+def _weak_local_separation(tables, base_key, cluster):
+    row = tables.conn.execute(
+        "SELECT MAX(ABS(logfc)) FROM deg WHERE key=? AND view='local' AND cluster=? AND padj<?",
+        (base_key, cluster, _COARSE_SPLIT_MAX_PADJ),
+    ).fetchone()
+    best = row[0] if row else None
+    return best is None or best < _COARSE_SPLIT_MIN_ABS_LOGFC
+
+
+def _check_coarse_boundaries(entries, paga, tables, base_key):
+    """PAGA-adjacent kept clusters with different coarse_label but no strong
+    (|log2FC|>=1, padj<0.05) local marker between them: same population, split
+    label. Ask the agent to unify or name the gene(s) that justify the split."""
+    problems = []
+    seen = set()
+    for c, neighbours in paga.items():
+        e = entries.get(c)
+        if not e or e["action"] != "keep":
+            continue
+        for n in neighbours:
+            pair = tuple(sorted((c, n)))
+            if pair in seen:
+                continue
+            en = entries.get(n)
+            if not en or en["action"] != "keep":
+                continue
+            if e["coarse_label"].strip() == en["coarse_label"].strip():
+                continue
+            if _weak_local_separation(tables, base_key, c) or _weak_local_separation(tables, base_key, n):
+                seen.add(pair)
+                problems.append(
+                    f"clusters {c} ({e['coarse_label']!r}) and {n} ({en['coarse_label']!r}) are PAGA "
+                    f"neighbours with no local DEG marker reaching |log2FC|>={_COARSE_SPLIT_MIN_ABS_LOGFC} "
+                    f"at padj<{_COARSE_SPLIT_MAX_PADJ} -- give them the same coarse_label (same population) "
+                    "or cite the specific marker(s) that justify treating them as different lineages"
+                )
+    return problems
+
+
 def _batch_annotation_removal(entry):
     """Recognize explicit batch-artifact claims, not general batch mentions.
 
@@ -712,6 +764,8 @@ async def _run_agent(
 
     async def finalize_annotation(args):
         problems = _validate_final(entries, clusters)
+        if not problems:
+            problems = _check_coarse_boundaries(entries, paga, tables, BASE_KEY)
         if problems:
             return text_result("not final yet, fix and call again:\n- " + "\n- ".join(problems), is_error=True)
         comp = _components(entries)

@@ -385,3 +385,70 @@ def test_palette_uses_stanhue_in_category_order_and_falls_back_loudly(monkeypatc
     with caplog.at_level(logging.WARNING, logger="msp"):
         assert annotate._palette(data, "label") is None
     assert "stanhue palette unavailable" in caplog.text
+
+
+def _entry(cluster_id, coarse_label):
+    return {
+        "cluster_id": cluster_id,
+        "coarse_label": coarse_label,
+        "fine_label": f"{coarse_label} state {cluster_id}",
+        "action": "keep",
+        "remove_reason": None,
+        "confidence": "high",
+        "merge_target": None,
+        "evidence": {"distinctness": "x", "markers": "x", "merge": "x"},
+        "rationale": "x",
+    }
+
+
+def _deg_tables(tmp_path, rows):
+    """rows: list of (cluster, gene, logfc, padj) for view='local', key='k'."""
+    outdir = tmp_path / "annotate_boundary"
+    outdir.mkdir()
+    df = pd.DataFrame(
+        [
+            {
+                "group": c,
+                "names": g,
+                "logfoldchanges": lfc,
+                "pvals_adj": padj,
+                "pct_nz_group": 1.0,
+                "pct_nz_reference": 0.0,
+                "neighbors": "",
+            }
+            for c, g, lfc, padj in rows
+        ]
+    )
+    df.to_csv(outdir / "deg_local_k.csv", index=False)
+    return evidence.DegTables(str(outdir), base_key="k")
+
+
+def test_coarse_boundary_flags_weak_local_split(tmp_path):
+    # cluster 0 and 1 are PAGA neighbours with different coarse labels but no
+    # local marker clears the |log2FC|>=1, padj<0.05 bar -- same population,
+    # split label (the 04_Sunetal Stromal/Mesenchymal-stromal bug pattern).
+    entries = {"0": _entry("0", "Stromal cell"), "1": _entry("1", "Mesenchymal stromal cell")}
+    paga = {"0": ["1"], "1": ["0"]}
+    tables = _deg_tables(tmp_path, [("0", "DCN", 0.4, 0.2), ("1", "LUM", 0.3, 0.9)])
+    problems = annotate._check_coarse_boundaries(entries, paga, tables, "k")
+    assert problems and "0" in problems[0] and "1" in problems[0]
+
+
+def test_coarse_boundary_allows_strong_local_split(tmp_path):
+    # a real, well-separated boundary (e.g. Mural vs Mesenchymal) is untouched
+    # once a real marker clears the bar.
+    entries = {"0": _entry("0", "Mural cell"), "1": _entry("1", "Mesenchymal stromal cell")}
+    paga = {"0": ["1"], "1": ["0"]}
+    tables = _deg_tables(tmp_path, [("0", "MYH11", 3.2, 0.001), ("1", "DCN", 2.9, 0.001)])
+    assert annotate._check_coarse_boundaries(entries, paga, tables, "k") == []
+
+
+def test_coarse_boundary_ignores_same_label_or_dropped(tmp_path):
+    entries = {
+        "0": _entry("0", "Stromal cell"),
+        "1": _entry("1", "Stromal cell"),
+        "2": {**_entry("2", "Myeloid cell"), "action": "remove", "remove_reason": "qc"},
+    }
+    paga = {"0": ["1", "2"], "1": ["0"], "2": ["0"]}
+    tables = _deg_tables(tmp_path, [("0", "DCN", 0.1, 0.9), ("1", "DCN", 0.1, 0.9)])
+    assert annotate._check_coarse_boundaries(entries, paga, tables, "k") == []
