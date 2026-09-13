@@ -93,6 +93,7 @@ def begin_step(outdir, step):
             paths.update(root.glob(pattern))
         if name != step:
             paths.add(state / f"{name}.pending")
+            paths.add(state / f"{name}-progress.json")
     paths = {p for p in paths if p.is_file()}
     snapshot = root / "integrated.h5ad" if step == "inspect" else None
     if not paths and not (snapshot and snapshot.is_file()):

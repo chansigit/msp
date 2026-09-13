@@ -14,6 +14,8 @@ import logging
 import os
 import sys
 
+from harness_bridge.control import pausable, safe_point
+
 from .integrate import integrate_adata, run_multi_sample_pipeline
 from .log import configure
 from .report import generate_report, write_design_context, write_report_context
@@ -189,9 +191,11 @@ def _inspection_applied(out):
         return False
 
 
+@pausable
 def main(argv=None):
     configure()
     args = build_parser().parse_args(argv)
+    safe_point()
 
     if args.harness:
         os.environ["HARNESS"] = args.harness
@@ -233,6 +237,7 @@ def main(argv=None):
     else:
         log.info(f"[resume] integration already done in {out} (integrated.h5ad) — skipping")
 
+    safe_point()
     # Rendering never determines whether an expensive computation must be repeated.
     log.info(f"report: {generate_report(out)}")
 
@@ -251,6 +256,7 @@ def main(argv=None):
         else:
             log.info(f"[resume] inspection_proposal.json exists in {out} — skipping inspect")
 
+    safe_point()
     if args.annotate:
         if args.force or step_pending(out, "annotate") or not _done(out, "annotation_proposal.json", "annotated.h5ad"):
             from .annotate import annotate_clusters
@@ -258,7 +264,9 @@ def main(argv=None):
             annotate_clusters(out, max_turns=args.max_turns or 200, **agent_kw)
         else:
             log.info(f"[resume] annotation_proposal.json + annotated.h5ad exist in {out} — skipping annotate")
+    safe_point()
 
 
 if __name__ == "__main__":
-    main()
+    if rc := main():
+        raise SystemExit(rc)

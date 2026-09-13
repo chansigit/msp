@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "msp-sc"   # PyPI distribution name (plain "msp" is taken); the import name stays `msp`
-version = "0.5.0"
+version = "0.5.1"
 description = "Multi-sample-pipeline: harmony integration of osp per-sample outputs, cluster QC inspection and cell-type annotation agents, self-contained HTML report"
 readme = "README.md"
 license = "MIT"
@@ -21,7 +21,7 @@ classifiers = [
 #   pandas 2.0    groupby(observed=True) everywhere, nullable "boolean" dtype
 #   adjustText 1.0 adjust_text(expand=..., max_move=...)
 dependencies = [
-    "agent-harness-bridge>=0.2.13,<0.3",   # provider-aware agent configuration
+    "agent-harness-bridge>=0.2.14,<0.3",   # cooperative pause and provider-aware agent configuration
     "scanpy>=1.10",
     "anndata>=0.10",
     "igraph>=0.10",
@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-agent = ["agent-harness-bridge[all]>=0.2.13,<0.3"]
+agent = ["agent-harness-bridge[all]>=0.2.14,<0.3"]
 dask = ["dask[distributed]>=2024.1"]
 
 [project.urls]

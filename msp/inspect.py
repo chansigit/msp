@@ -52,7 +52,9 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from harness_bridge import default_model
+from harness_bridge.control import pausable, safe_point
 
+from . import checkpoint
 from .agent_tools import DEG_FILTER_ARGS, deg_filters, shared_tools, text_result
 from .deg_logging import rank_genes_groups
 from .evidence import (
@@ -368,6 +370,33 @@ async def _run_agent(
     from harness_bridge import ToolSpec, run_agent
 
     state = {"key": cluster_key, "n_sub": 0}
+    progress_path = os.path.join(outdir, ".msp-state", "inspect-progress.json")
+    identity = checkpoint.agent_identity(
+        ad,
+        outdir,
+        [cluster_key, other_keys, batch_col, species, remove_mask.tolist()],
+        __file__,
+        ignore_obs=[c for c in ad.obs if c.startswith("inspect_sub") or c in ("_msp_action", "_msp_verdict")],
+    )
+    saved = checkpoint.load(progress_path, identity)
+    if saved:
+        state = saved["state"]
+        checkpoint.restore_clustering(ad, state, saved["columns"], cluster_key, "inspect_sub")
+
+    def save_progress(**extra):
+        checkpoint.save(
+            progress_path,
+            identity,
+            {
+                "state": state,
+                "columns": {
+                    f"inspect_sub{i}": ad.obs[f"inspect_sub{i}"].astype(str).tolist()
+                    for i in range(1, state["n_sub"] + 1)
+                },
+                **extra,
+            },
+        )
+
     deg = DegCache(ad, outdir, remove_mask, label="inspect")
     tables = DegTables(outdir, base_key=cluster_key)
     log.info(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}")
@@ -404,6 +433,7 @@ async def _run_agent(
             state["n_sub"] += 1
             state["key"] = new_key
             text += "\n(working clustering refined; all tools and the submission now use the new ids)"
+            save_progress()
         return text_result(text)
 
     async def submit_inspection(args):
@@ -416,6 +446,7 @@ async def _run_agent(
             return text_result("validation failed, fix and resubmit:\n- " + "\n- ".join(problems), is_error=True)
         _guard_batch_actions(proposal)
         proposal["cluster_key"] = state["key"]
+        save_progress(proposal=proposal)
         path = os.path.join(outdir, "inspection_proposal.json")
         with open(path, "w") as fh:
             json.dump(proposal, fh, ensure_ascii=False, indent=2)
@@ -475,6 +506,11 @@ async def _run_agent(
         ),
     ]
     try:
+        if "proposal" in saved:
+            final = await submit_inspection({"proposal_json": json.dumps(saved["proposal"])})
+            if "_submitted" not in final:
+                raise ValueError("saved inspection no longer passes host validation")
+            return final["_submitted"]
         result = await run_agent(
             tools=tools,
             submit_tool="submit_inspection",
@@ -567,6 +603,7 @@ def inspect_clusters(
     return proposal
 
 
+@pausable
 def main(argv=None):
     configure()
     parser = argparse.ArgumentParser(prog="msp.inspect", description=__doc__)
@@ -579,6 +616,7 @@ def main(argv=None):
     parser.add_argument("--max-turns", type=int, default=100)
     args = parser.parse_args(argv)
 
+    safe_point()
     proposal = inspect_clusters(
         args.outdir,
         species=args.species,
@@ -590,6 +628,7 @@ def main(argv=None):
     )
     for e in proposal["clusters"]:
         print(f"cluster {e['cluster']}: {e['verdict']} -> {e['action']} [{e['confidence']}]")
+    safe_point()
 
 
 __all__ = [
@@ -602,4 +641,5 @@ __all__ = [
 
 
 if __name__ == "__main__":
-    main()
+    if rc := main():
+        raise SystemExit(rc)

@@ -4,6 +4,12 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.1 - 2026-09-12
+
+- Persist accepted inspection and annotation decisions, including cluster refinements, with atomic writes and input/code checks.
+- Revalidate restored submissions through host rules; continue pending clusters without rerunning completed integration.
+- Pause on SIGTERM between completed steps and exit 3.
+
 ## 0.5.0 - 2026-09-12
 
 - Add local, Dask-local and shared Dask execution for Harmony, graph/clustering and DE, including optional RAPIDS GPU workers.

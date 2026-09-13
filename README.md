@@ -147,10 +147,15 @@ removal decisions. It writes survivors to `annotated.h5ad`, preserves
 <details>
 <summary>Can I continue or rerun an analysis?</summary>
 
-Repeat the command to reuse completed steps. Use `--force` or a new output
-directory when replacing input contents at the same path or changing the AI
-model. Rerunning a stage archives its previous outputs and invalidates later
-stages; see [rerunning](docs/user-guide.md#continue-or-rerun).
+Repeat the command to reuse completed steps and accepted cluster submissions.
+Inspection decisions and cluster refinements are saved atomically; annotation
+resumes the pending clusters after checking the saved input identity and each
+decision. Changing models continues from accepted decisions. Use `--force` or
+a new output directory to redo them. Rerunning an upstream stage archives and
+invalidates downstream progress; see [rerunning](docs/user-guide.md#continue-or-rerun).
+
+`SIGTERM` requests a pause after the current integration, inspection, or
+annotation step. The CLI exits with code 3; repeat the command to resume.
 
 </details>
 

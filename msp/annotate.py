@@ -50,7 +50,9 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from harness_bridge import AgentIncompleteError, default_model
+from harness_bridge.control import pausable, safe_point
 
+from . import checkpoint
 from .agent_tools import DEG_FILTER_ARGS, deg_filters, shared_tools, text_result
 from .evidence import (
     DegCache,
@@ -382,8 +384,11 @@ def _check_coarse_boundaries(entries, paga, reviews):
         if not isinstance(review, dict):
             return ["each boundary review must be an object"]
         labels = review.get("coarse_labels")
-        if (not isinstance(labels, list) or len(labels) != 2
-                or not all(isinstance(v, str) and v.strip() for v in labels)):
+        if (
+            not isinstance(labels, list)
+            or len(labels) != 2
+            or not all(isinstance(v, str) and v.strip() for v in labels)
+        ):
             return ["each boundary review needs two coarse_labels"]
         pair = tuple(sorted(v.strip() for v in labels))
         if pair not in pairs or pair in seen:
@@ -393,10 +398,12 @@ def _check_coarse_boundaries(entries, paga, reviews):
         if type(review.get("uncertain")) is not bool:
             return [f"boundary {labels}: uncertain must be a boolean"]
         seen.add(pair)
-    return [f"Review adjacent coarse labels {list(pair)} in boundary_reviews_json: reconcile synonyms, "
-            "or explain distinguishing lineage markers (not only cell cycle, stress or prior labels). "
-            "If evidence is insufficient, retain the labels with uncertain=true for review."
-            for pair in sorted(pairs - seen)]
+    return [
+        f"Review adjacent coarse labels {list(pair)} in boundary_reviews_json: reconcile synonyms, "
+        "or explain distinguishing lineage markers (not only cell cycle, stress or prior labels). "
+        "If evidence is insufficient, retain the labels with uncertain=true for review."
+        for pair in sorted(pairs - seen)
+    ]
 
 
 def _batch_annotation_removal(entry):
@@ -696,7 +703,21 @@ async def _run_agent(
 ):
     from harness_bridge import ToolSpec, run_agent
 
-    entries = {}
+    progress_path = os.path.join(outdir, ".msp-state", "annotate-progress.json")
+    identity = checkpoint.agent_identity(
+        ad, outdir, [clusters, batch_col, species, prior_cols, paga, pre_agent_removed.tolist()], __file__
+    )
+    saved = checkpoint.load(progress_path, identity)
+    entries = saved.get("entries", {})
+    if not isinstance(entries, dict):
+        raise ValueError("invalid annotation checkpoint entries")
+    for key, entry in entries.items():
+        problems = _validate_cluster(entry, clusters)
+        if problems or key != str(entry["cluster_id"]):
+            raise ValueError(f"invalid annotation checkpoint entry {key}: {problems}")
+        _guard_batch_annotation(entry)
+    if entries:
+        log.info(f"== restored {len(entries)}/{len(clusters)} accepted cluster submissions")
     deg = DegCache(ad, outdir, pre_agent_removed, label="annotate")
     tables = DegTables(outdir, base_key=BASE_KEY)
     log.info(f"== precomputed DEG tables loaded: {tables.n_rows} rows for keys {tables.keys}")
@@ -738,6 +759,7 @@ async def _run_agent(
             e.pop(field, None)
         _guard_batch_annotation(e)
         entries[e["cluster_id"]] = e
+        checkpoint.save(progress_path, identity, {"entries": entries})
         left = [c for c in clusters if c not in entries]
         log.info(
             f"== submitted cluster {e['cluster_id']}: {e['coarse_label']} / {e['fine_label']} "
@@ -778,6 +800,7 @@ async def _run_agent(
             "overall": str(args.get("overall") or ""),
             "boundary_reviews": reviews,
         }
+        checkpoint.save(progress_path, identity, {"entries": entries, "final_args": args})
         path = os.path.join(outdir, "annotation_proposal.json")
         with open(path, "w") as fh:
             json.dump(proposal, fh, ensure_ascii=False, indent=2)
@@ -841,11 +864,17 @@ async def _run_agent(
         ),
     ]
     try:
+        if "final_args" in saved:
+            final = await finalize_annotation(saved["final_args"])
+            if "_submitted" not in final:
+                raise ValueError("saved final annotation no longer passes host validation")
+            return final["_submitted"]
         result = await run_agent(
             tools=tools,
             submit_tool="finalize_annotation",
             prompt="Annotate this msp integration directory following the workflow in the system prompt "
-            "exactly: one Task per base cluster, submit_cluster for each, then finalize_annotation.",
+            "exactly: call annotation_status FIRST to restore accepted progress; create Tasks for pending "
+            "clusters, submit_cluster for each, then finalize_annotation. Accepted entries survive restarts.",
             system_prompt=_system_prompt(
                 outdir, clusters, batch_col, species, prior_cols, language, n_batches=int(ad.obs[batch_col].nunique())
             ),
@@ -972,6 +1001,7 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     return proposal
 
 
+@pausable
 def main(argv=None):
     configure()
     parser = argparse.ArgumentParser(prog="msp.annotate", description=__doc__)
@@ -983,6 +1013,7 @@ def main(argv=None):
     parser.add_argument("--max-turns", type=int, default=200)
     args = parser.parse_args(argv)
 
+    safe_point()
     proposal = annotate_clusters(
         args.outdir,
         species=args.species,
@@ -999,7 +1030,9 @@ def main(argv=None):
         )
     if proposal["merged_groups"]:
         print("merged groups: " + ", ".join(proposal["merged_groups"]))
+    safe_point()
 
 
 if __name__ == "__main__":
-    main()
+    if rc := main():
+        raise SystemExit(rc)
