@@ -81,7 +81,7 @@ def resolve_endpoint() -> ComputeEndpoint:
     if kind == "dask-local":
         return DaskLocalEndpoint()
     if kind == "dask":
-        return DaskEndpoint()   # MSP_DASK_SCHEDULER names the pool
+        return DaskEndpoint()  # MSP_DASK_SCHEDULER names the pool
     raise ValueError(f"unknown MSP_COMPUTE_ENDPOINT={kind!r}")
 ```
 
