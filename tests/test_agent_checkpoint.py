@@ -79,7 +79,9 @@ def test_failed_atomic_write_keeps_last_checkpoint(tmp_path, monkeypatch):
 def test_inspection_recovers_accepted_proposal_after_agent_disconnect(tmp_path, monkeypatch):
     from msp import inspect
 
-    obj = ad.AnnData(np.ones((2, 2)), obs=pd.DataFrame({"cluster": pd.Categorical(["0", "0"]), "batch": "A"}, index=["01", "02"]))
+    obj = ad.AnnData(
+        np.ones((2, 2)), obs=pd.DataFrame({"cluster": pd.Categorical(["0", "0"]), "batch": "A"}, index=["01", "02"])
+    )
     calls = []
 
     async def agent(**kwargs):

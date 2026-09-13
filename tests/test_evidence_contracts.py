@@ -405,8 +405,11 @@ def test_coarse_boundaries_require_explicit_review_without_forcing_merges():
     entries = {"0": _entry("0", "Stromal cell"), "1": _entry("1", "Mesenchymal stromal cell")}
     paga = {"0": ["1"], "1": ["0"]}
     assert annotate._check_coarse_boundaries(entries, paga, [])
-    review = {"coarse_labels": ["Stromal cell", "Mesenchymal stromal cell"],
-              "evidence": "DCN and LUM are shared; no reliable lineage distinction yet", "uncertain": True}
+    review = {
+        "coarse_labels": ["Stromal cell", "Mesenchymal stromal cell"],
+        "evidence": "DCN and LUM are shared; no reliable lineage distinction yet",
+        "uncertain": True,
+    }
     assert not annotate._check_coarse_boundaries(entries, paga, [review])
     assert entries["0"]["coarse_label"] != entries["1"]["coarse_label"]
     assert annotate._check_coarse_boundaries(entries, paga, [{**review, "evidence": ""}])
@@ -421,8 +424,11 @@ def test_coarse_boundaries_require_explicit_review_without_forcing_merges():
 def test_boundary_review_finalize_recovers_and_persists_without_relabeling(tmp_path, monkeypatch):
     data = data_with_clusters()
     data.write_h5ad(tmp_path / "integrated.h5ad")
-    review = {"coarse_labels": ["Stromal", "Mesenchymal"],
-              "evidence": "Shared DCN/LUM; lineage distinction remains unresolved.", "uncertain": True}
+    review = {
+        "coarse_labels": ["Stromal", "Mesenchymal"],
+        "evidence": "Shared DCN/LUM; lineage distinction remains unresolved.",
+        "uncertain": True,
+    }
     monkeypatch.setattr(annotate, "load_paga_neighbors", lambda *args: {"0": ["1"], "1": ["0"]})
 
     async def run_agent(**kwargs):
@@ -432,8 +438,9 @@ def test_boundary_review_finalize_recovers_and_persists_without_relabeling(tmp_p
             assert not (await tools["submit_cluster"]({"cluster_json": json.dumps(entry)})).get("is_error")
         assert (await tools["finalize_annotation"]({"overall": "Review needed"}))["is_error"]
         assert not (tmp_path / "annotation_proposal.json").exists()
-        result = await tools["finalize_annotation"]({
-            "overall": "Retained for review", "boundary_reviews_json": json.dumps([review])})
+        result = await tools["finalize_annotation"](
+            {"overall": "Retained for review", "boundary_reviews_json": json.dumps([review])}
+        )
         return SimpleNamespace(submitted=result["_submitted"], transcript_text="Boundary review saved.")
 
     monkeypatch.setattr(harness_bridge, "run_agent", run_agent)

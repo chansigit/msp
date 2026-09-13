@@ -96,11 +96,16 @@ def _compute_de(X, var_names, labels, log1p, rep, keys, gpu=False):
     if gpu:
         import rapids_singlecell as rsc
 
-        neighbors, rgg = rsc.pp.neighbors, (lambda a, key, **kw: rsc.tl.rank_genes_groups(a, key, **{k: v for k, v in kw.items() if k != "use_raw"}))
+        neighbors, rgg = (
+            rsc.pp.neighbors,
+            (lambda a, key, **kw: rsc.tl.rank_genes_groups(a, key, **{k: v for k, v in kw.items() if k != "use_raw"})),
+        )
     else:
         neighbors, rgg = sc.pp.neighbors, rank_genes_groups
 
-    obs = pd.DataFrame({k: pd.Categorical.from_codes(*labels[k]) for k in keys}, index=pd.RangeIndex(X.shape[0]).astype(str))
+    obs = pd.DataFrame(
+        {k: pd.Categorical.from_codes(*labels[k]) for k in keys}, index=pd.RangeIndex(X.shape[0]).astype(str)
+    )
     ad_excl = an.AnnData(X=X, obs=obs, var=pd.DataFrame(index=pd.Index(var_names)), uns={"log1p": dict(log1p)})
     if rep is not None:
         ad_excl.obsm["X_pca_harmony"] = rep
@@ -229,12 +234,19 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
     # ever makes that transfer the bottleneck.
     keys = [key for _, key in target]
     labels = {k: (ad_excl.obs[k].cat.codes.to_numpy(), list(ad_excl.obs[k].cat.categories)) for k in keys}
-    rep = ad_excl.obsm["X_pca_harmony"] if "X_pca_harmony" in ad_excl.obsm else None
+    rep = ad_excl.obsm.get("X_pca_harmony", None)
     gpu = gpu_requested()
     with resolve_endpoint() as ep:
         out = ep.submit(
-            _compute_de, ad_excl.X, list(ad_excl.var_names), labels, dict(ad_excl.uns.get("log1p", {})), rep, keys,
-            gpu=gpu, tier="gpu" if gpu else "cpu",
+            _compute_de,
+            ad_excl.X,
+            list(ad_excl.var_names),
+            labels,
+            dict(ad_excl.uns.get("log1p", {})),
+            rep,
+            keys,
+            gpu=gpu,
+            tier="gpu" if gpu else "cpu",
         ).result()
     plan, results = out["plan"], out["results"]
     for key in keys:

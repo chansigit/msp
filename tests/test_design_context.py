@@ -15,7 +15,9 @@ def prompts(outdir):
 
 
 def test_cli_option_and_persistence(tmp_path):
-    args = build_parser().parse_args(["--from-h5ad", "x.h5ad", "--batch-col", "s", "--outdir", str(tmp_path), "--design-context", DESIGN])
+    args = build_parser().parse_args(
+        ["--from-h5ad", "x.h5ad", "--batch-col", "s", "--outdir", str(tmp_path), "--design-context", DESIGN]
+    )
     write_design_context(str(tmp_path), args.design_context)
     assert (tmp_path / "design_context.txt").read_text() == DESIGN + "\n"
     assert design_context(str(tmp_path)) == DESIGN

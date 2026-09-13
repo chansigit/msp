@@ -19,7 +19,6 @@ import scanpy as sc
 from sklearn.decomposition import PCA
 
 from ..compute import gpu_requested, resolve_endpoint
-
 from ..log import ensure
 from ..plots import save_single_umap, slug
 from ..steps import begin_step, complete_step
@@ -188,8 +187,10 @@ def _preprocess(ad, batch_col, n_top_genes):
         small = sizes.index[sizes < MIN_HVG_BATCH_CELLS]
         if len(small):
             eligible = ~ad.obs[key].isin(small).to_numpy()
-            log.info(f"== HVG: {len(small)} batch(es) below {MIN_HVG_BATCH_CELLS} cells excluded from the "
-                     f"per-batch vote ({int((~eligible).sum())} cells): {list(map(str, small[:5]))}")
+            log.info(
+                f"== HVG: {len(small)} batch(es) below {MIN_HVG_BATCH_CELLS} cells excluded from the "
+                f"per-batch vote ({int((~eligible).sum())} cells): {list(map(str, small[:5]))}"
+            )
             if ad.obs.loc[eligible, key].nunique() < 2:
                 log.info("== HVG: fewer than two eligible batches — global selection")
                 key, eligible = None, None
@@ -197,8 +198,9 @@ def _preprocess(ad, batch_col, n_top_genes):
     if eligible is None:
         sc.pp.highly_variable_genes(ad, n_top_genes=n_top_genes, flavor="seurat", batch_key=key)
     else:
-        hv = sc.pp.highly_variable_genes(ad[eligible], n_top_genes=n_top_genes, flavor="seurat",
-                                         batch_key=key, inplace=False)
+        hv = sc.pp.highly_variable_genes(
+            ad[eligible], n_top_genes=n_top_genes, flavor="seurat", batch_key=key, inplace=False
+        )
         for col in hv.columns:
             ad.var[col] = hv[col].to_numpy()
         ad.uns["hvg"] = {"flavor": "seurat"}
@@ -238,7 +240,9 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
         raise ValueError(f"not enough variable genes/cells for PCA: {hvg.shape}, n_comps={n_comps}")
     log.info(f"== PCA ({n_comps} comps on {hvg.n_vars} HVGs)")
     # float32: neighbours/leiden/plots never use more, and float64 doubles the embedding on disk
-    ad.obsm["X_pca"] = PCA(n_components=n_comps, svd_solver="arpack", random_state=0).fit_transform(hvg.X).astype(np.float32)
+    ad.obsm["X_pca"] = (
+        PCA(n_components=n_comps, svd_solver="arpack", random_state=0).fit_transform(hvg.X).astype(np.float32)
+    )
     del hvg
 
     # harmonypy >= 2.0 (C++ backend, numpy-only): Z_corr is cells-by-PCs.
@@ -268,8 +272,14 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
         batch_labels = ad.obs[[batch_col]].astype({batch_col: "object"})
         gpu = gpu_requested()
         with resolve_endpoint() as ep:
-            fut = ep.submit(_run_harmony_gpu if gpu else _run_harmony, ad.obsm["X_pca"], batch_labels, batch_col, kwargs,
-                            tier="gpu" if gpu else "cpu")
+            fut = ep.submit(
+                _run_harmony_gpu if gpu else _run_harmony,
+                ad.obsm["X_pca"],
+                batch_labels,
+                batch_col,
+                kwargs,
+                tier="gpu" if gpu else "cpu",
+            )
             Z = fut.result()
         if Z.shape[0] != ad.n_obs:
             Z = Z.T
@@ -300,8 +310,8 @@ def _run_cluster(rep: np.ndarray, n_neighbors: int, resolutions: tuple) -> dict:
         leiden[key] = (col.cat.codes.to_numpy(), list(col.cat.categories))
     sc.tl.umap(tmp)
     return {
-        "obsp": {k: tmp.obsp[k] for k in tmp.obsp.keys()},
-        "uns": {k: tmp.uns[k] for k in tmp.uns.keys()},
+        "obsp": {k: tmp.obsp[k] for k in tmp.obsp},
+        "uns": {k: tmp.uns[k] for k in tmp.uns},
         "leiden": leiden,
         "umap": tmp.obsm["X_umap"],
     }
@@ -320,7 +330,10 @@ def _run_cluster_gpu(rep: np.ndarray, n_neighbors: int, resolutions: tuple) -> d
     import anndata as an
     import rapids_singlecell as rsc
 
-    tmp = an.AnnData(obs=pd.DataFrame(index=pd.RangeIndex(rep.shape[0]).astype(str)), obsm={"X_pca_harmony": np.asarray(rep, dtype=np.float32)})
+    tmp = an.AnnData(
+        obs=pd.DataFrame(index=pd.RangeIndex(rep.shape[0]).astype(str)),
+        obsm={"X_pca_harmony": np.asarray(rep, dtype=np.float32)},
+    )
     rsc.pp.neighbors(tmp, use_rep="X_pca_harmony", n_neighbors=n_neighbors, rng=0)
     leiden = {}
     for r in resolutions:
@@ -330,8 +343,8 @@ def _run_cluster_gpu(rep: np.ndarray, n_neighbors: int, resolutions: tuple) -> d
         leiden[key] = (col.cat.codes.to_numpy(), list(col.cat.categories))
     rsc.tl.umap(tmp, rng=0)
     return {
-        "obsp": {k: _to_host(tmp.obsp[k]) for k in tmp.obsp.keys()},
-        "uns": {k: tmp.uns[k] for k in tmp.uns.keys()},
+        "obsp": {k: _to_host(tmp.obsp[k]) for k in tmp.obsp},
+        "uns": {k: tmp.uns[k] for k in tmp.uns},
         "leiden": leiden,
         "umap": np.asarray(_to_host(tmp.obsm["X_umap"])),
     }
@@ -344,8 +357,13 @@ def _cluster(ad, resolutions, n_neighbors):
     gpu = gpu_requested()
     log.info(f"== neighbors (use_rep=X_pca_harmony) / leiden {leiden_keys} / umap" + (" [gpu]" if gpu else ""))
     with resolve_endpoint() as ep:
-        out = ep.submit(_run_cluster_gpu if gpu else _run_cluster, ad.obsm["X_pca_harmony"], n_neighbors, tuple(resolutions),
-                        tier="gpu" if gpu else "cpu").result()
+        out = ep.submit(
+            _run_cluster_gpu if gpu else _run_cluster,
+            ad.obsm["X_pca_harmony"],
+            n_neighbors,
+            tuple(resolutions),
+            tier="gpu" if gpu else "cpu",
+        ).result()
     for k, v in out["obsp"].items():
         ad.obsp[k] = v
     for k, v in out["uns"].items():

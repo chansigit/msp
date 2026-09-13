@@ -1,7 +1,8 @@
 """Per-batch HVG must survive batches with a handful of cells (lineage subsets)."""
+
+import anndata as ad
 import numpy as np
 import pandas as pd
-import anndata as ad
 import pytest
 
 from msp.integrate import pipeline

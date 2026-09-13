@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("distributed")
 
-from msp.compute import DaskLocalEndpoint, resolve_endpoint  # noqa: E402
+from msp.compute import DaskLocalEndpoint, resolve_endpoint
 
 
 def test_dask_local_endpoint_runs_in_a_different_process():
@@ -57,6 +57,7 @@ def test_resolve_endpoint_returns_dask_local(monkeypatch):
 
 
 # --- DaskEndpoint: attach to a scheduler we do not own -------------------
+
 
 @pytest.fixture(scope="module")
 def pool():
@@ -107,12 +108,12 @@ def test_dask_endpoint_requires_a_scheduler(monkeypatch):
     from msp.compute import DaskEndpoint
 
     monkeypatch.delenv("MSP_DASK_SCHEDULER", raising=False)
-    with pytest.raises(ValueError, match="MSP_DASK_SCHEDULER"):
-        with DaskEndpoint():
-            pass
+    with pytest.raises(ValueError, match="MSP_DASK_SCHEDULER"), DaskEndpoint():
+        pass
 
 
 # --- tiers: a dask worker resource, checked before submission ------------
+
 
 def test_dask_endpoint_rejects_gpu_tier_when_no_worker_offers_it(pool):
     from msp.compute import DaskEndpoint
@@ -128,13 +129,14 @@ def test_dask_endpoint_routes_gpu_tier_to_a_gpu_worker():
 
     from msp.compute import DaskEndpoint
 
-    with LocalCluster(n_workers=1, threads_per_worker=1, processes=True, resources={"GPU": 1}) as gpu_pool:
-        with DaskEndpoint(gpu_pool.scheduler_address) as ep:
-            assert ep.has_tier("gpu")
-            assert ep.submit(lambda: "ran", tier="gpu").result() == "ran"
+    with (
+        LocalCluster(n_workers=1, threads_per_worker=1, processes=True, resources={"GPU": 1}) as gpu_pool,
+        DaskEndpoint(gpu_pool.scheduler_address) as ep,
+    ):
+        assert ep.has_tier("gpu")
+        assert ep.submit(lambda: "ran", tier="gpu").result() == "ran"
 
 
 def test_dask_local_endpoint_has_no_gpu_tier():
-    with DaskLocalEndpoint(n_workers=1) as ep:
-        with pytest.raises(ValueError, match="gpu"):
-            ep.submit(lambda: 1, tier="gpu")
+    with DaskLocalEndpoint(n_workers=1) as ep, pytest.raises(ValueError, match="gpu"):
+        ep.submit(lambda: 1, tier="gpu")

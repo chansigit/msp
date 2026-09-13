@@ -30,11 +30,13 @@ and use the result as a context manager scoped to one heavy step::
 objects) -- never an AnnData or other msp-internal object -- so a future
 networked backend only ever serializes small, well-typed payloads.
 """
+
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from concurrent.futures import Future
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 
 class ComputeEndpoint(Protocol):
@@ -43,7 +45,7 @@ class ComputeEndpoint(Protocol):
     is close to a passthrough rather than an adapter layer."""
 
     def submit(self, fn: Callable[..., Any], *args: Any, tier: str = "cpu", **kwargs: Any) -> Future: ...
-    def __enter__(self) -> "ComputeEndpoint": ...
+    def __enter__(self) -> ComputeEndpoint: ...
     def __exit__(self, *exc: Any) -> None: ...
 
 
@@ -61,7 +63,7 @@ class LocalEndpoint:
             fut.set_exception(exc)
         return fut
 
-    def __enter__(self) -> "LocalEndpoint":
+    def __enter__(self) -> LocalEndpoint:
         return self
 
     def __exit__(self, *exc: Any) -> None:
@@ -86,13 +88,12 @@ class DaskLocalEndpoint:
         self._cluster = None
         self._client = None
 
-    def __enter__(self) -> "DaskLocalEndpoint":
+    def __enter__(self) -> DaskLocalEndpoint:
         try:
             from distributed import Client, LocalCluster
         except ImportError as exc:
             raise ImportError(
-                "MSP_COMPUTE_ENDPOINT=dask-local needs dask[distributed]: "
-                "pip install 'msp-sc[dask]'"
+                "MSP_COMPUTE_ENDPOINT=dask-local needs dask[distributed]: pip install 'msp-sc[dask]'"
             ) from exc
         from .resources import available_cpus
 
@@ -105,7 +106,9 @@ class DaskLocalEndpoint:
         if self._client is None:
             raise RuntimeError("DaskLocalEndpoint.submit() called outside its `with` block")
         if tier != "cpu":
-            raise ValueError(f"dask-local has no {tier!r} tier; use MSP_COMPUTE_ENDPOINT=dask with a --gpu worker, or local")
+            raise ValueError(
+                f"dask-local has no {tier!r} tier; use MSP_COMPUTE_ENDPOINT=dask with a --gpu worker, or local"
+            )
         # pure=False: dask's default keys a task by (function, argument
         # contents) and hands two clients that submit the same call ONE
         # result. Correct for pure functions, but on a long-lived shared pool
@@ -140,18 +143,15 @@ class DaskEndpoint:
         self._scheduler = scheduler
         self._client = None
 
-    def __enter__(self) -> "DaskEndpoint":
+    def __enter__(self) -> DaskEndpoint:
         try:
             from distributed import Client
         except ImportError as exc:
-            raise ImportError(
-                "MSP_COMPUTE_ENDPOINT=dask needs dask[distributed]: pip install 'msp-sc[dask]'"
-            ) from exc
+            raise ImportError("MSP_COMPUTE_ENDPOINT=dask needs dask[distributed]: pip install 'msp-sc[dask]'") from exc
         target = self._scheduler or os.environ.get("MSP_DASK_SCHEDULER")
         if not target:
             raise ValueError(
-                "MSP_COMPUTE_ENDPOINT=dask needs MSP_DASK_SCHEDULER "
-                "(tcp://host:port or a scheduler-file path)"
+                "MSP_COMPUTE_ENDPOINT=dask needs MSP_DASK_SCHEDULER (tcp://host:port or a scheduler-file path)"
             )
         if "://" in target:
             self._client = Client(target)
