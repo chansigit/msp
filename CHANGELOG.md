@@ -4,6 +4,10 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.2 - 2026-09-12
+
+- Add opt-in `pool` and `auto` compute endpoints through the separately installed `ecarsi[pool]` adapter. Existing local and Dask modes retain their behavior and dependencies.
+
 ## 0.5.1 - 2026-09-12
 
 - Persist accepted inspection and annotation decisions, including cluster refinements, with atomic writes and input/code checks.

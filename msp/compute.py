@@ -215,6 +215,7 @@ def resolve_endpoint() -> ComputeEndpoint:
     if kind in {"pool", "auto"}:
         # Optional driver adapter; standalone MSP/local/Dask need no RSI install.
         from ecarsi.pool.client import PoolEndpoint
+
         return PoolEndpoint(mode=kind)
     if kind == "dask-local":
         return DaskLocalEndpoint()
