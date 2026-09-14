@@ -428,7 +428,8 @@ async def _run_agent(
         if c not in current_clusters():
             return text_result(f"unknown cluster {c!r}; current: {current_clusters()}", is_error=True)
         new_key = f"inspect_sub{state['n_sub'] + 1}"
-        n, text = _subcluster_once(ad, state["key"], c, float(args["resolution"]), new_key, remove_mask)
+        from .agent_data import apply
+        n, text = apply(_subcluster_once, ad, state["key"], c, float(args["resolution"]), new_key, remove_mask)
         if n >= 2:
             state["n_sub"] += 1
             state["key"] = new_key
@@ -552,7 +553,8 @@ def inspect_clusters(
     """
     ensure()
     require_upstream_ready(outdir, "inspect")
-    ad = sc.read_h5ad(os.path.join(outdir, "integrated.h5ad"))
+    from .agent_data import metadata
+    ad = metadata(os.path.join(outdir, "integrated.h5ad"))
     cluster_key = cluster_key or _detect_primary_key(outdir)
     msp_meta = ad.uns.get("msp", {})
     batch_col = msp_meta.get("batch_col")
@@ -587,19 +589,23 @@ def inspect_clusters(
             remove_mask,
         )
     )
-    _apply_proposal(ad, proposal["cluster_key"], proposal)
-    # Persist the exact guarded actions, including when a saved proposal was
-    # supplied by a caller instead of the live submit tool.
-    proposal_path = os.path.join(outdir, "inspection_proposal.json")
-    with open(proposal_path + ".tmp", "w", encoding="utf-8") as fh:
-        json.dump(proposal, fh, ensure_ascii=False, indent=2)
-    os.replace(proposal_path + ".tmp", proposal_path)
-    _plot_verdicts(ad, os.path.join(outdir, "figures"))
-    tmp = os.path.join(outdir, "integrated.tmp.h5ad")
-    ad.write_h5ad(tmp)
-    os.replace(tmp, os.path.join(outdir, "integrated.h5ad"))
+    from .agent_data import materialize
+    with materialize(ad) as full:
+        _apply_proposal(full, proposal["cluster_key"], proposal)
+        # Persist the exact guarded actions, including when a saved proposal was
+        # supplied by a caller instead of the live submit tool.
+        proposal_path = os.path.join(outdir, "inspection_proposal.json")
+        with open(proposal_path + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(proposal, fh, ensure_ascii=False, indent=2)
+        os.replace(proposal_path + ".tmp", proposal_path)
+        _plot_verdicts(full, os.path.join(outdir, "figures"))
+        tmp = os.path.join(outdir, "integrated.tmp.h5ad")
+        full.write_h5ad(tmp)
+        os.replace(tmp, os.path.join(outdir, "integrated.h5ad"))
     complete_step(outdir, "inspect")
-    log.info(f"== report refreshed: {generate_report(outdir)}")
+    from .agent_data import work
+    with work():
+        log.info(f"== report refreshed: {generate_report(outdir)}")
     return proposal
 
 

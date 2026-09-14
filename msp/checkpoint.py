@@ -61,6 +61,10 @@ def data_identity(ad, context, *, ignore_obs=()):
 
 
 def agent_identity(ad, outdir, context, source_file, *, ignore_obs=()):
+    if getattr(ad, '_agent_source', None) is not None:
+        from .agent_data import materialize
+        with materialize(ad) as full:
+            return agent_identity(full, outdir, context, source_file, ignore_obs=ignore_obs)
     digest = hashlib.sha256(data_identity(ad, context, ignore_obs=ignore_obs).encode())
     roots = {Path(__file__).parent, Path(source_file).parent}
     for root in sorted(roots):

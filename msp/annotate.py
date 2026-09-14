@@ -910,7 +910,8 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
     """
     ensure()
     require_upstream_ready(outdir, "annotate")
-    ad = sc.read_h5ad(os.path.join(outdir, "integrated.h5ad"))
+    from .agent_data import metadata
+    ad = metadata(os.path.join(outdir, "integrated.h5ad"))
     for k in (BASE_KEY, PARENT_KEY):
         if k not in ad.obs:
             raise ValueError(f"integrated.h5ad lacks obs[{k!r}] — not an msp output with r1.0/r2.0 clusterings?")
@@ -985,19 +986,23 @@ def annotate_clusters(outdir, species=None, language="English", model=None, effo
         )
     )
 
-    archive = _apply(ad, proposal, pre_agent_removed, pre_sources)
-    archive.to_csv(os.path.join(outdir, "annotation_removed.csv"), index=False)
-    kept = ad[(ad.obs["msp_ann_action"] == "keep").values].copy()
-    log.info(
-        f"== removed {len(archive)} cells (agent-marked clusters: "
-        f"{int(archive['annotate_remove'].sum())}); annotated.h5ad keeps {kept.n_obs}/{ad.n_obs}",
-    )
-    _plot(ad, kept, os.path.join(outdir, "figures"))
-    tmp = os.path.join(outdir, "annotated.tmp.h5ad")
-    kept.write_h5ad(tmp)
-    os.replace(tmp, os.path.join(outdir, "annotated.h5ad"))
+    from .agent_data import materialize
+    with materialize(ad) as full:
+        archive = _apply(full, proposal, pre_agent_removed, pre_sources)
+        archive.to_csv(os.path.join(outdir, "annotation_removed.csv"), index=False)
+        kept = full[(full.obs["msp_ann_action"] == "keep").values].copy()
+        log.info(
+            f"== removed {len(archive)} cells (agent-marked clusters: "
+            f"{int(archive['annotate_remove'].sum())}); annotated.h5ad keeps {kept.n_obs}/{ad.n_obs}",
+        )
+        _plot(full, kept, os.path.join(outdir, "figures"))
+        tmp = os.path.join(outdir, "annotated.tmp.h5ad")
+        kept.write_h5ad(tmp)
+        os.replace(tmp, os.path.join(outdir, "annotated.h5ad"))
     complete_step(outdir, "annotate")
-    log.info(f"== report refreshed: {generate_report(outdir)}")
+    from .agent_data import work
+    with work():
+        log.info(f"== report refreshed: {generate_report(outdir)}")
     return proposal
 
 

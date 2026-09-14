@@ -234,6 +234,9 @@ def main(argv=None):
         else:
             _, summary = run_multi_sample_pipeline(args.inputs, batch_col=args.batch_col, outdir=out, **kw)
         log.info(summary)
+        del _
+        if args.from_h5ad:
+            del ad
     else:
         log.info(f"[resume] integration already done in {out} (integrated.h5ad) — skipping")
 
