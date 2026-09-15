@@ -28,6 +28,25 @@ from msp.integrate import (
 
 # ---------------------------------------------------------------- minor-sibling QC
 
+@pytest.mark.parametrize("sizes,expected", [([1, 3, 3], {"1", "2"}), ([3, 1, 1], {"0"}), ([1, 1], set())])
+def test_parent_core_deg_retains_singletons_without_testing_them(tmp_path, monkeypatch, sizes, expected):
+    from msp.integrate import fragments
+    labels = [f"c{i}_0" for i, size in enumerate(sizes) for _ in range(size)]
+    data = ad.AnnData(np.log1p(np.random.default_rng(4).poisson(2, (sum(sizes), 8))).astype(float),
+                     obs=pd.DataFrame({"standissect_product": labels}, index=[str(i) for i in range(sum(sizes))]))
+    result = SimpleNamespace(fragments=pd.DataFrame({"subcluster": [f"c{i}_0" for i in range(len(sizes))],
+                                                    "parent": range(len(sizes)), "rank": 0}))
+    monkeypatch.setattr(fragments, "_select_fractal_markers", lambda *args: ([], {}, []))
+    fragments._fractal_marker_heatmap(data, result, tmp_path, tmp_path)
+    assert data.n_obs == sum(sizes) and data.obs.standissect_product.tolist() == labels
+    skipped = pd.read_csv(tmp_path / "parent_core_deg_skipped.csv", dtype={"parent": str})
+    assert set(skipped.parent) == set(map(str, range(len(sizes)))) - expected
+    if expected:
+        assert set(pd.read_csv(tmp_path / "de_parent_core_vs_core.csv", dtype={"group": str}).group) == expected
+    else:
+        assert not (tmp_path / "de_parent_core_vs_core.csv").exists()
+
+
 # (subcluster, n_cells, mt centre, doublet centre, inherited _qc_action)
 FRAGMENTS = [
     ("c0_0", 40, 5.0, 0.05, "keep"),  # parent 0 core

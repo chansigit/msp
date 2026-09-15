@@ -201,16 +201,25 @@ def _fractal_marker_heatmap(ad, res, outdir, figdir, top_n=10):
         core_ad.obs["standissect_product"].astype(str).map(parent_of_core).astype(str).astype("category")
     )
 
-    if core_ad.obs["parent"].nunique() < 2:
-        # one-vs-other-parent DE needs >=2 parents; a lineage that standissect
-        # never split beyond its root has only one, and rank_genes_groups_df
-        # drops the "group" column for a single-group input (KeyError downstream)
-        log.warning("== only one parent-core cluster — skipping parent-core DEG/heatmap")
+    sizes = core_ad.obs["parent"].value_counts()
+    eligible = sizes.index[(sizes >= 2) & (len(core_ad) - sizes >= 2)].tolist()
+    skipped = sizes.loc[~sizes.index.isin(eligible)]
+    if len(skipped):
+        pd.DataFrame({"parent": skipped.index, "n_core_cells": skipped.to_numpy(),
+                      "reference_cells": len(core_ad) - skipped.to_numpy(),
+                      "reason": "target or reference has fewer than two core cells"}).to_csv(
+            os.path.join(outdir, "parent_core_deg_skipped.csv"), index=False)
+        log.warning("== parent-core DEG unavailable for groups %s; cells retained", skipped.index.tolist())
+    if not eligible:
+        log.warning("== no testable parent-core comparisons — skipping parent-core DEG/heatmap")
         return
 
     log.info("== parent-core DEG (one vs other parent cores)")
-    rank_genes_groups(core_ad, "parent", method="wilcoxon", use_raw=False, pts=True)
+    # Untestable target groups remain in the reference and in the plotted cells.
+    rank_genes_groups(core_ad, "parent", groups=eligible, method="wilcoxon", use_raw=False, pts=True)
     de_df = sc.get.rank_genes_groups_df(core_ad, group=None)
+    if "group" not in de_df:
+        de_df["group"] = eligible[0]  # Scanpy omits this column for one tested group.
     de_df.to_csv(os.path.join(outdir, "de_parent_core_vs_core.csv"), index=False)
 
     ribo = set(ad.var_names[ad.var["ribo"]]) if "ribo" in ad.var else set()
