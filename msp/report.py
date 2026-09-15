@@ -252,6 +252,12 @@ def _section_sample_decisions(outdir: str) -> str:
         return ""
     with open(path) as f:
         rows = list(csv.DictReader(f))
+    for row in rows:
+        if "decision" not in row:
+            included = row.get("include", "").strip().lower()
+            if included not in {"true", "false"}:
+                raise ValueError("Sample decisions need decision=include/exclude or include=True/False")
+            row["decision"] = "include" if included == "true" else "exclude"
     n_incl = sum(1 for r in rows if r["decision"] == "include")
     head = "".join(f"<th>{c}</th>" for c in ("sample", "decision", "n_cells", "reason"))
     body = "".join(

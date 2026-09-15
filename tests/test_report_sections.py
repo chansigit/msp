@@ -212,3 +212,14 @@ def test_fmt_cell_rounds_only_medians_and_gene_counts():
     assert _fmt_cell("median_n_genes_by_counts", "1234.56") == "1235"
     assert _fmt_cell("n_cells", "1234.56") == "1234.56"
     assert _fmt_cell("sample", "<A&B>") == "&lt;A&amp;B&gt;"
+
+
+def test_boolean_sample_inclusion_report(tmp_path):
+    from msp.report import _section_sample_decisions
+    import pytest
+    path=tmp_path/'sample_decisions.csv'
+    path.write_text('sample,include,reason\na,True,usable\nb,False,excluded\n')
+    page=_section_sample_decisions(str(tmp_path))
+    assert '1/2 entered integration' in page and '<td>include</td>' in page and '<td>exclude</td>' in page
+    path.write_text('sample,include\na,unknown\n')
+    with pytest.raises(ValueError,match='Sample decisions'):_section_sample_decisions(str(tmp_path))
