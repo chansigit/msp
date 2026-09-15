@@ -240,9 +240,18 @@ def _embed(ad, batch_col, n_pcs, n_samples, harmony_kwargs):
         raise ValueError(f"not enough variable genes/cells for PCA: {hvg.shape}, n_comps={n_comps}")
     log.info(f"== PCA ({n_comps} comps on {hvg.n_vars} HVGs)")
     # float32: neighbours/leiden/plots never use more, and float64 doubles the embedding on disk
-    ad.obsm["X_pca"] = (
-        PCA(n_components=n_comps, svd_solver="arpack", random_state=0).fit_transform(hvg.X).astype(np.float32)
-    )
+    if gpu_requested():
+        import cupy as cp
+        import rapids_singlecell as rsc
+        if cp.cuda.runtime.getDeviceCount() != 1:
+            raise ValueError("GPU integration requires one reserved visible device")
+        rsc.get.anndata_to_GPU(hvg)
+        rsc.pp.pca(hvg, n_comps=n_comps, rng=0)
+        ad.obsm["X_pca"] = cp.asnumpy(hvg.obsm["X_pca"]).astype(np.float32)
+    else:
+        ad.obsm["X_pca"] = (
+            PCA(n_components=n_comps, svd_solver="arpack", random_state=0).fit_transform(hvg.X).astype(np.float32)
+        )
     del hvg
 
     # harmonypy >= 2.0 (C++ backend, numpy-only): Z_corr is cells-by-PCs.
@@ -325,8 +334,8 @@ def _to_host(x):
 def _run_cluster_gpu(rep: np.ndarray, n_neighbors: int, resolutions: tuple) -> dict:
     """GPU counterpart of :func:`_run_cluster` on rapids-singlecell: same
     inputs, same return structure, everything moved back to host arrays
-    before it leaves the worker. cugraph's Leiden is not igraph's: cluster
-    ids and boundaries differ from the CPU path by construction."""
+    before it leaves the worker. Leiden uses the same CPU igraph kernel as
+    the CPU path; embeddings and therefore clusters can still differ."""
     import anndata as an
     import rapids_singlecell as rsc
 
@@ -338,7 +347,7 @@ def _run_cluster_gpu(rep: np.ndarray, n_neighbors: int, resolutions: tuple) -> d
     leiden = {}
     for r in resolutions:
         key = f"msp_leiden_r{r}"
-        rsc.tl.leiden(tmp, resolution=r, key_added=key, rng=0)
+        sc.tl.leiden(tmp, resolution=r, key_added=key, flavor="igraph", n_iterations=2)
         col = tmp.obs[key]
         leiden[key] = (col.cat.codes.to_numpy(), list(col.cat.categories))
     rsc.tl.umap(tmp, rng=0)
@@ -394,7 +403,7 @@ def _dissect(ad, leiden_keys, resolutions, outdir):
     return res
 
 
-def _evidence(ad, res, leiden_keys, resolutions, outdir, figdir, top_n_de):
+def _evidence(ad, res, leiden_keys, resolutions, outdir, figdir, top_n_de, defer_deg=False):
     """Fragment QC, cell-level outliers, the pre-annotation removal union,
     then PAGA + global/local DEG on the survivors."""
     log.info("== minor-sibling QC")
@@ -414,7 +423,9 @@ def _evidence(ad, res, leiden_keys, resolutions, outdir, figdir, top_n_de):
     _preannotation_removal_umap(ad, remove_mask, figdir)
 
     log.info("== cluster annotations (PAGA + global/local DEG)")
-    _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_n_de=top_n_de)
+    if not defer_deg:
+        _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_n_de=top_n_de)
+    return remove_mask
 
 
 def _figures(ad, batch_col, leiden_keys, figdir):
@@ -444,7 +455,7 @@ def _figures(ad, batch_col, leiden_keys, figdir):
     )
 
 
-def _write(ad, batch_col, leiden_keys, n_samples, outdir):
+def _write(ad, batch_col, leiden_keys, n_samples, outdir, complete=True):
     """integration_summary.csv and integrated.h5ad (tmp + rename), then the
     step is complete. Returns the summary dict."""
     summary = {
@@ -459,7 +470,8 @@ def _write(ad, batch_col, leiden_keys, n_samples, outdir):
     tmp = os.path.join(outdir, "integrated.tmp.h5ad")
     ad.write_h5ad(tmp)  # never in place: tmp + rename
     os.replace(tmp, os.path.join(outdir, "integrated.h5ad"))
-    complete_step(outdir, "integrate")
+    if complete:
+        complete_step(outdir, "integrate")
     log.info(f"== wrote {os.path.join(outdir, 'integrated.h5ad')}")
     return summary
 
@@ -478,6 +490,7 @@ def integrate_adata(
     harmony_kwargs=None,
     inputs=(),
     meta_extra=None,
+    defer_deg=False,
 ):
     """The integration core on an in-memory AnnData: X is reset from
     layers[counts_layer] (so any prior normalization/embedding on the object
@@ -512,7 +525,19 @@ def integrate_adata(
 
     figdir = os.path.join(outdir, "figures")
     os.makedirs(figdir, exist_ok=True)
-    _evidence(ad, res, leiden_keys, resolutions, outdir, figdir, top_n_de)
+    remove_mask = _evidence(ad, res, leiden_keys, resolutions, outdir, figdir, top_n_de, defer_deg)
+    if defer_deg:
+        from .deg import prepare_deg, save_deg_input
+        import json
+        eligible = ad[~remove_mask]
+        keys = [k for k, r in zip(leiden_keys, resolutions, strict=True) if r in (1.0, 2.0)]
+        labels = {k: (eligible.obs[k].cat.codes.to_numpy(), list(eligible.obs[k].cat.categories)) for k in keys}
+        deg_data, plan = prepare_deg(eligible.X, list(ad.var_names), labels,
+            dict(ad.uns.get("log1p", {})), eligible.obsm["X_pca_harmony"], keys, gpu=gpu_requested())
+        deg_data.obs_names = eligible.obs_names.copy()
+        save_deg_input(deg_data, os.path.join(outdir, "deg_input"))
+        with open(os.path.join(outdir, "deg_plan.json"), "w") as stream:
+            json.dump({**plan, "keys": keys, "top_n_de": top_n_de}, stream)
 
     ad.uns["msp"] = {
         "batch_col": batch_col,
@@ -539,5 +564,5 @@ def integrate_adata(
     log.info("== fractal marker heatmap")
     _fractal_marker_heatmap(ad, res, outdir, figdir)
 
-    summary = _write(ad, batch_col, leiden_keys, n_samples, outdir)
+    summary = _write(ad, batch_col, leiden_keys, n_samples, outdir, complete=not defer_deg)
     return ad, summary

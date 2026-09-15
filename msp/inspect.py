@@ -88,7 +88,7 @@ def _detect_primary_key(outdir):
     return "msp_leiden_r1.0" if "msp_leiden_r1.0" in keys else keys[0]
 
 
-def _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
+def _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask, *, compute_markers=True):
     """Split one cluster; sizes reported are the FULL split (removed cells
     included, so counts stay honest), but the built-in sibling DE excludes
     remove_mask cells — same DEG-only exclusion as check_deg / the
@@ -108,7 +108,7 @@ def _subcluster_once(ad, key, cluster, resolution, new_key, remove_mask):
     top = None
     clean_sizes = sub_clean.obs["_sub"].value_counts()
     clean_sizes = clean_sizes[clean_sizes > 0]
-    if len(clean_sizes) >= 2 and clean_sizes.min() >= 2:
+    if compute_markers and len(clean_sizes) >= 2 and clean_sizes.min() >= 2:
         rank_genes_groups(sub_clean, "_sub", method="wilcoxon", use_raw=False)
         top = sc.get.rank_genes_groups_df(sub_clean, group=None).groupby("group", observed=True).head(10)
     sizes = sub_labels.value_counts()

@@ -324,10 +324,20 @@ class DegTables:
     # accumulates large exports must not slow down every session.
     MAX_EXTRA_TABLE_BYTES = 64 << 20
 
-    def __init__(self, outdir, base_key=None):
+    def __init__(self, outdir=None, base_key=None, *, database=None):
+        import json
         import sqlite3
+        from pathlib import Path
 
         self.base_key = base_key
+        if database is not None:
+            uri = Path(database).resolve(strict=True).as_uri() + "?mode=ro&immutable=1"
+            self.conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            meta = json.loads(self.conn.execute("SELECT value FROM _evidence_meta").fetchone()[0])
+            self.keys, self.n_rows = meta["keys"], meta["n_rows"]
+            self.extra_tables, self.skipped_tables = meta["extra_tables"], meta["skipped_tables"]
+            self._read_only()
+            return
         self.keys: list[str] = []
         self.conn = sqlite3.connect(":memory:", check_same_thread=False)
         self.conn.execute(
@@ -391,6 +401,11 @@ class DegTables:
             self.extra_tables[name] = (len(df), list(df.columns))
         self.conn.commit()
 
+        self._read_only()
+
+    def _read_only(self):
+        import sqlite3
+
         def _authorizer(action, *_):
             return (
                 sqlite3.SQLITE_OK
@@ -399,6 +414,26 @@ class DegTables:
             )
 
         self.conn.set_authorizer(_authorizer)
+
+    def write_database(self, path, *, provenance):
+        """Publish one immutable snapshot; workers never share a writable database."""
+        import json
+        import sqlite3
+        from pathlib import Path
+        from contextlib import closing
+
+        path = Path(path)
+        # Exclusive creation prevents replacing evidence already used by a model.
+        with path.open("xb"):
+            pass
+        with closing(sqlite3.connect(path)) as target:
+            self.conn.backup(target)
+            target.execute("CREATE TABLE _evidence_meta (value TEXT)")
+            target.execute("INSERT INTO _evidence_meta VALUES (?)", [json.dumps(dict(
+                keys=self.keys, n_rows=self.n_rows, extra_tables=self.extra_tables,
+                skipped_tables=self.skipped_tables, provenance=provenance))])
+            target.commit()
+        path.chmod(0o444)
 
     def close(self):
         self.conn.close()
@@ -518,6 +553,8 @@ class DegTables:
         ]
 
     def sql(self, query, max_rows=200):
+        from time import monotonic
+
         q = str(query or "").strip().rstrip(";").strip()
         if q.lower() in ("schema", "tables", ".tables", "show tables"):
             return self.schema_text()
@@ -525,11 +562,15 @@ class DegTables:
             return "only a single SELECT is allowed (or 'schema' to list tables and columns)"
         if ";" in q:
             return "one statement only"
+        deadline = monotonic() + 2
+        self.conn.set_progress_handler(lambda: monotonic() >= deadline, 10000)
         try:
             cur = self.conn.execute(q)
             rows = cur.fetchmany(max_rows + 1)
         except Exception as exc:  # sqlite3 errors — feed the message back verbatim
             return f"SQL error: {exc}"
+        finally:
+            self.conn.set_progress_handler(None, 0)
         cols = [d[0] for d in cur.description]
         truncated = len(rows) > max_rows
         rows = rows[:max_rows]

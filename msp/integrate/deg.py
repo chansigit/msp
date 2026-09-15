@@ -77,50 +77,61 @@ def _global_deg_workspace(ad):
     return an.AnnData(X=ad.X, obs=ad.obs.copy(), var=ad.var.copy(), uns=deepcopy(ad.uns))
 
 
-def _compute_de(X, var_names, labels, log1p, rep, keys, gpu=False):
-    """Phase 1 (neighbors + PAGA + task list) and phase 2 (the wilcoxon runs)
-    of :func:`_cluster_annotations`, on a bare AnnData rebuilt from arrays so
-    the DE stage can run on any ComputeEndpoint. ``labels`` maps each leiden
-    key to ``(codes, categories)``. Returns per-key PAGA neighbour rows, the
-    undersized clusters skipped, the plan, and results as
-    ``(key, view, cluster, DataFrame)`` -- keyed by name, never by object
-    identity, because the caller's objects are not these objects.
+def save_deg_input(data, directory):
+    """Shared read-only expression buffers; comparisons need no counts or graphs."""
+    from pathlib import Path
+    from scipy import sparse
+    directory = Path(directory)
+    directory.mkdir()
+    if sparse.issparse(data.X):
+        matrix = data.X.tocsr()
+        for name in ("data", "indices", "indptr"):
+            np.save(directory / (name + ".npy"), getattr(matrix, name))
+    else:
+        np.save(directory / "matrix.npy", data.X)
+    an.AnnData(obs=data.obs.copy(), var=data.var.copy(),
+               uns={"log1p": dict(data.uns.get("log1p", {}))}).write_h5ad(directory / "metadata.h5ad")
 
-    ``gpu=True``: X lives on the GPU (rapids-singlecell), neighbors and the
-    wilcoxon runs are rsc's, sequential (each takes well under a second;
-    no point sharing one GPU between threads)."""
-    from concurrent.futures import ThreadPoolExecutor
 
-    from ..resources import available_cpus
+def load_deg_input(directory):
+    from pathlib import Path
+    from scipy import sparse
+    directory = Path(directory)
+    meta = an.read_h5ad(directory / "metadata.h5ad")
+    if (directory / "matrix.npy").exists():
+        matrix = np.load(directory / "matrix.npy", mmap_mode="r")
+    else:
+        matrix = sparse.csr_matrix(tuple(np.load(directory / (n + ".npy"), mmap_mode="r")
+                                         for n in ("data", "indices", "indptr")), shape=meta.shape, copy=False)
+    return an.AnnData(X=matrix, obs=meta.obs, var=meta.var, uns=meta.uns)
 
+
+def prepare_deg(X, var_names, labels, log1p, rep, keys, gpu=False):
+    """Freeze the eligible population, rebuild its graph and define comparisons."""
+    neighbors = sc.pp.neighbors
     if gpu:
         import rapids_singlecell as rsc
-
-        neighbors, rgg = (
-            rsc.pp.neighbors,
-            (lambda a, key, **kw: rsc.tl.rank_genes_groups(a, key, **{k: v for k, v in kw.items() if k != "use_raw"})),
-        )
-    else:
-        neighbors, rgg = sc.pp.neighbors, rank_genes_groups
-
+        neighbors = rsc.pp.neighbors
     obs = pd.DataFrame(
         {k: pd.Categorical.from_codes(*labels[k]) for k in keys}, index=pd.RangeIndex(X.shape[0]).astype(str)
     )
     ad_excl = an.AnnData(X=X, obs=obs, var=pd.DataFrame(index=pd.Index(var_names)), uns={"log1p": dict(log1p)})
     if rep is not None:
         ad_excl.obsm["X_pca_harmony"] = rep
-    if gpu:
-        rsc.get.anndata_to_GPU(ad_excl)
     log.info("== cluster annotations: neighbors on the excluded subset" + (" [gpu]" if gpu else ""))
-    neighbors(ad_excl, use_rep="X_pca_harmony")
+    if ad_excl.n_obs > 2:
+        neighbors(ad_excl, use_rep="X_pca_harmony")
 
     # phase 1 (sequential, cheap): PAGA + neighbour tables + the task list
     plan, paga, skipped = [], {}, {}  # per key: dict(key, cats, valid_groups, top3)
     for key in keys:
         log.info(f"== cluster annotations on {key}")
-        sc.tl.paga(ad_excl, groups=key)
-        conn = ad_excl.uns["paga"]["connectivities"].toarray()
         cats = list(ad_excl.obs[key].cat.categories)
+        if ad_excl.n_obs > 2 and len(cats) > 1:
+            sc.tl.paga(ad_excl, groups=key)
+            conn = ad_excl.uns["paga"]["connectivities"].toarray()
+        else:
+            conn = np.zeros((len(cats), len(cats)))
 
         top3, neighbor_rows = {}, []
         for i, c in enumerate(cats):
@@ -142,15 +153,25 @@ def _compute_de(X, var_names, labels, log1p, rep, keys, gpu=False):
         # tiny (can survive this far when it's PAGA-connected enough not to get
         # merged) doesn't give trustworthy DE either; require MIN_DE_GROUP_SIZE
         sizes = ad_excl.obs[key].value_counts()
-        valid_groups = [c for c in cats if sizes.get(c, 0) >= MIN_DE_GROUP_SIZE]
+        valid_groups = [c for c in cats if sizes.get(c, 0) >= MIN_DE_GROUP_SIZE
+                        and ad_excl.n_obs - sizes.get(c, 0) >= 2]
         skipped[key] = [c for c in cats if c not in valid_groups]
         if not valid_groups:
             continue
         plan.append({"key": key, "cats": cats, "valid": valid_groups, "top3": top3})
 
-    # phase 2 (parallel): ad_excl stays read-only throughout the pool.
-    # Global tasks share expression buffers but own metadata; locals own subsets.
-    def run_global(item):
+    return ad_excl, {"paga": paga, "skipped": skipped, "plan": plan}
+
+
+def compute_deg_task(ad_excl, item, cluster=None, gpu=False):
+    """One global resolution or one local target; input metadata is never mutated."""
+    rgg = rank_genes_groups
+    if gpu:
+        import rapids_singlecell as rsc
+        def rgg(a, key, **kw):
+            rsc.get.anndata_to_GPU(a)
+            return rsc.tl.rank_genes_groups(a, key, **{k: v for k, v in kw.items() if k != "use_raw"})
+    if cluster is None:
         key = item["key"]
         slot = f"_rgg_{key}"
         work = _global_deg_workspace(ad_excl)
@@ -161,7 +182,8 @@ def _compute_de(X, var_names, labels, log1p, rep, keys, gpu=False):
             gdf.insert(0, "group", item["valid"][0])
         return gdf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
 
-    def run_local(item, c):
+    else:
+        c = cluster
         key = item["key"]
         neighbors = item["top3"].get(c, [])
         if not neighbors:
@@ -179,16 +201,22 @@ def _compute_de(X, var_names, labels, log1p, rep, keys, gpu=False):
         ldf["neighbors"] = "|".join(neighbors)
         return ldf
 
+
+
+def _compute_de(X, var_names, labels, log1p, rep, keys, gpu=False):
+    """Legacy combined endpoint, using the same independently schedulable kernels."""
+    from concurrent.futures import ThreadPoolExecutor
+    from ..resources import available_cpus
+    ad_excl, out = prepare_deg(X, var_names, labels, log1p, rep, keys, gpu=gpu)
     n_workers = 1 if gpu else max(1, min(available_cpus(), 8))
-    log.info(f"== cluster annotations: DE on {n_workers} thread(s)")
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = []
-        for item in plan:
-            futures.append((item["key"], "global", None, pool.submit(run_global, item)))
+        for item in out["plan"]:
+            futures.append((item["key"], "global", None, pool.submit(compute_deg_task, ad_excl, item, gpu=gpu)))
             for c in item["cats"]:
-                futures.append((item["key"], "local", c, pool.submit(run_local, item, c)))
-        results = [(key, view, c, f.result()) for key, view, c, f in futures]
-    return {"paga": paga, "skipped": skipped, "plan": plan, "results": results}
+                futures.append((item["key"], "local", c, pool.submit(compute_deg_task, ad_excl, item, c, gpu=gpu)))
+        out["results"] = [(key, view, c, f.result()) for key, view, c, f in futures]
+    return out
 
 
 def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_n_de=50):
@@ -248,6 +276,11 @@ def _cluster_annotations(ad, remove_mask, leiden_keys, resolutions, outdir, top_
             gpu=gpu,
             tier="gpu" if gpu else "cpu",
         ).result()
+    write_deg_results(out, keys, outdir, top_n_de)
+
+
+def write_deg_results(out, keys, outdir, top_n_de=50):
+    """Single writer for legacy and scheduled comparison outputs."""
     plan, results = out["plan"], out["results"]
     for key in keys:
         # Keep the existing columns even when this graph has no positive edges.
