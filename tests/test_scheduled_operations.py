@@ -56,6 +56,19 @@ def test_no_de_when_reference_population_is_empty():
     assert plan['plan']==[] and plan['skipped']=={'key':['only']}
 
 
+def test_empty_deg_key_survives_database_publication(tmp_path):
+    pd.DataFrame(columns=['group','names','logfoldchanges','pvals_adj','pct1','pct2']).to_csv(
+        tmp_path/'deg_global_msp_leiden_r2.0.csv',index=False)
+    with DegTables(tmp_path) as tables:
+        assert tables.keys==['msp_leiden_r2.0']
+        expected=tables.lookup(key='msp_leiden_r2.0',cluster='0')
+        assert 'empty result' in expected and 'check_deg' not in expected
+        tables.write_database(tmp_path/'deg.sqlite',provenance={'version':'empty'})
+    with DegTables(database=tmp_path/'deg.sqlite') as tables:
+        assert tables.lookup(key='msp_leiden_r2.0',cluster='0')==expected
+        assert 'no precomputed tables' in tables.lookup(key='unknown',cluster='0')
+
+
 def test_sparse_global_does_not_modify_mapped_input(tmp_path):
     import anndata as an
     from scipy.sparse import csr_matrix

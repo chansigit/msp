@@ -288,8 +288,8 @@ Selectors: cluster (its ranked markers), gene (which clusters have it among thei
 ('global' = one-vs-rest, 'local' = vs the cluster's 3 pooled PAGA neighbours, 'both'), key (leiden key; \
 default = the base key). Thresholds (0 / empty = off): min_logfc, max_padj, min_pct1, max_pct2 — e.g. \
 min_logfc=1, max_padj=1e-10, max_pct2=0.3 returns just the specific positive markers. top_n per view \
-(default 20). At least one of cluster/gene is required. For an arbitrary a-vs-b comparison use check_deg \
-(same thresholds)."""
+(default 20). At least one of cluster/gene is required. For an arbitrary a-vs-b comparison, check_deg \
+(same thresholds) may be used only if the session provides that tool."""
 
 DEG_SQL_DOC = """Read-only SQL (one SELECT, ≤200 rows returned) over the working directory's tables: deg(key \
 TEXT, view TEXT 'global'|'local', cluster TEXT, rank INTEGER 1=best, gene TEXT, logfc REAL, padj REAL, \
@@ -351,10 +351,12 @@ class DegTables:
             if view not in ("global", "local"):
                 continue
             df = pd.read_csv(path, dtype={"group": str})
-            if "group" not in df or df.empty:
+            if "group" not in df:
                 continue
             if key not in self.keys:
                 self.keys.append(key)
+            if df.empty:
+                continue
             df = df.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
             for c, sub in df.groupby("group", sort=False):
                 nbs = str(sub["neighbors"].iloc[0]) if "neighbors" in sub and pd.notna(sub["neighbors"].iloc[0]) else ""
@@ -477,7 +479,11 @@ class DegTables:
             return "give cluster and/or gene"
         key = key or self.base_key or (self.keys[0] if self.keys else "")
         if key not in self.keys:
-            return f"no precomputed tables for key {key!r}; available: {self.keys} (a subclustered key has none — use check_deg)"
+            return f"no precomputed tables for key {key!r}; available: {self.keys}; select an available key or inspect the computation record"
+        if not self.clusters(key):
+            return (f"precomputed tables for {key!r} contain no marker rows; this is an empty result, "
+                    "not a missing computation. Consult QC and check_genes for expression; "
+                    "absence from DEG does not establish absence of expression.")
         where, params = ["key = ?"], [key]
         if view != "both":
             where.append("view = ?")
@@ -528,7 +534,7 @@ class DegTables:
             + (f" [{filters}]" if filters else "")
             + f": {len(rows)} row(s)"
             + (f" of {n_total} passing" if n_total != len(rows) else "")
-            + " (tables hold each cluster's top-50 per view; for other references or deeper lists use check_deg):"
+            + " (tables hold each cluster's top-50 per view; deeper comparisons require an available computation tool):"
         )
         return self._fmt_rows(rows, head)
 
