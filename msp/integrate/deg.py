@@ -69,12 +69,16 @@ def _stress_hits(names) -> list[str]:
 
 
 def _global_deg_workspace(ad):
-    """Private mutable metadata with a shared, read-only expression matrix.
+    """Private mutable metadata and a safe numerical workspace.
 
-    Scanpy's Wilcoxon reads X and writes obs/uns metadata. Do not copy
-    counts layers or graph arrays for every global task.
+    Scanpy eliminates explicit zeros in sparse X in place, even when no
+    zeros are present. Copy sparse buffers so concurrent globals cannot
+    mutate shared input or fail on read-only mapped files. Dense X remains
+    shared; counts layers and graphs are never copied.
     """
-    return an.AnnData(X=ad.X, obs=ad.obs.copy(), var=ad.var.copy(), uns=deepcopy(ad.uns))
+    from scipy import sparse
+    return an.AnnData(X=ad.X.copy() if sparse.issparse(ad.X) else ad.X,
+                      obs=ad.obs.copy(), var=ad.var.copy(), uns=deepcopy(ad.uns))
 
 
 def save_deg_input(data, directory):

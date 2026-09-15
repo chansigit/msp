@@ -54,3 +54,19 @@ def test_no_de_when_reference_population_is_empty():
     _,plan=prepare_deg(csr_matrix(np.ones((10,3))),['a','b','c'],
         {'key':(np.zeros(10,dtype=int),['only'])},{},np.arange(30).reshape(10,3),['key'])
     assert plan['plan']==[] and plan['skipped']=={'key':['only']}
+
+
+def test_sparse_global_does_not_modify_mapped_input(tmp_path):
+    import anndata as an
+    from scipy.sparse import csr_matrix
+    from msp.integrate.deg import save_deg_input
+    counts=np.random.default_rng(42).poisson(1.,(30,8)).astype('float32')
+    data=an.AnnData(csr_matrix(counts),obs=pd.DataFrame({'group':pd.Categorical(['a']*15+['b']*15)},index=[str(i) for i in range(30)]))
+    data.uns['log1p']={'base':None}
+    save_deg_input(data,tmp_path/'mapped')
+    before={p.name:p.read_bytes() for p in (tmp_path/'mapped').glob('*.npy')}
+    mapped=load_deg_input(tmp_path/'mapped')
+    assert not mapped.X.data.flags.writeable
+    frame=compute_deg_task(mapped,dict(key='group',valid=['a','b']))
+    assert set(frame['group'])=={'a','b'}
+    assert {p.name:p.read_bytes() for p in (tmp_path/'mapped').glob('*.npy')}==before

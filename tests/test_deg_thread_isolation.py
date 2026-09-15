@@ -28,7 +28,11 @@ def test_parallel_deg_matches_serial_with_forced_overlap(tmp_path, monkeypatch, 
     workspace = D._global_deg_workspace(data)
     assert workspace.var_names.tolist() == data.var_names.tolist()
     assert workspace.uns["log1p"] == {"base": 2}
-    assert workspace.X is data.X and workspace.raw is None  # DE reads X; no .raw copy since 0.3.6
+    assert workspace.raw is None
+    if sparse_input:
+        assert not np.shares_memory(workspace.X.data, data.X.data)  # Scanpy eliminates zeros in place.
+    else:
+        assert workspace.X is data.X
     workspace.uns["log1p"]["base"] = 10
     assert data.uns["log1p"]["base"] == 2
 
