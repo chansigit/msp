@@ -71,7 +71,8 @@ def shared_tools(tables, ad, current_key, check_genes_doc):
         unknown = sorted(set(map(str, selected)) - set(available))
         if unknown:
             return text_result(f"unknown cluster IDs: {[c[:64] for c in unknown[:8]]}; {available_note}", is_error=True)
-        result = gene_table(ad, parse_gene_list(args["genes"]), key, cluster_ids=selected)
+        from .agent_data import apply
+        result = apply(gene_table, ad, parse_gene_list(args["genes"]), key, cluster_ids=selected)
         if len(result.encode("utf-8")) > 16 * 1024:
             return text_result(
                 "Expression table exceeds the 16 KiB tool-result limit; no expression rows returned. "

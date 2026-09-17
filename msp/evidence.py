@@ -655,6 +655,10 @@ class DegCache:
             return None
         return self._csv_rows(key, "local", cluster)
 
+    def _compute(self, key, cluster, ref):
+        from .agent_data import apply
+        return apply(deg_frame, self.ad, key, cluster, ref, self.mask)
+
     def table(self, key, cluster, reference, top_n, min_logfc=None, max_padj=None, min_pct1=None, max_pct2=None):
         ref = parse_reference(reference, self.ad.obs[key].astype(str).unique())
         mk = (key, cluster, ref)
@@ -669,7 +673,7 @@ class DegCache:
                 source = "precomputed"
                 self.n_precomputed += 1
             else:
-                df = deg_frame(self.ad, key, cluster, ref, self.mask)
+                df = self._compute(key, cluster, ref)
                 if df is None:
                     return f"cluster {cluster!r} has no cells left once recommend_removal cells are excluded"
                 self._memo[mk] = (df, True)
@@ -679,7 +683,7 @@ class DegCache:
         log.info(f"== [{self.label}] check_deg {cluster} vs {ref_desc}: {source}")
         kept = filter_deg(df, min_logfc, max_padj, min_pct1, max_pct2)
         if not self._memo[mk][1] and len(kept) < top_n:
-            df = deg_frame(self.ad, key, cluster, ref, self.mask)
+            df = self._compute(key, cluster, ref)
             if df is None:
                 return f"cluster {cluster!r} has no cells left once recommend_removal cells are excluded"
             self._memo[mk] = (df, True)
