@@ -4,6 +4,10 @@ All notable changes to msp-sc. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.3 - 2026-10-02
+
+- Add `msp.api`, the names eca-rsi uses, under public names and resolved lazily. eca-rsi imports msp only from there, so everything outside it may change freely.
+
 ## 0.5.2 - 2026-09-12
 
 - Add opt-in `pool` and `auto` compute endpoints through the separately installed `ecarsi[pool]` adapter. Existing local and Dask modes retain their behavior and dependencies.
