@@ -68,17 +68,22 @@ def _stress_hits(names) -> list[str]:
     return [n for n in names if _is_stress_gene(n)]
 
 
-def _global_deg_workspace(ad):
-    """Private mutable metadata and a safe numerical workspace.
+def _global_deg_workspace(ad, genes=None):
+    """Private mutable metadata and a safe numerical workspace, on the `genes` mask if given.
 
     Scanpy eliminates explicit zeros in sparse X in place, even when no
     zeros are present. Copy sparse buffers so concurrent globals cannot
-    mutate shared input or fail on read-only mapped files. Dense X remains
-    shared; counts layers and graphs are never copied.
+    mutate shared input or fail on read-only mapped files (a column subset
+    is a new matrix already). Dense X remains shared when all genes are
+    kept; counts layers and graphs are never copied.
     """
     from scipy import sparse
-    return an.AnnData(X=ad.X.copy() if sparse.issparse(ad.X) else ad.X,
-                      obs=ad.obs.copy(), var=ad.var.copy(), uns=deepcopy(ad.uns))
+    X, var = ad.X, ad.var
+    if genes is not None and not genes.all():
+        X, var = X[:, genes], var.iloc[genes]
+    elif sparse.issparse(X):
+        X = X.copy()
+    return an.AnnData(X=X, obs=ad.obs.copy(), var=var.copy(), uns=deepcopy(ad.uns))
 
 
 def save_deg_input(data, directory):
@@ -167,8 +172,44 @@ def prepare_deg(X, var_names, labels, log1p, rep, keys, gpu=False):
     return ad_excl, {"paga": paga, "skipped": skipped, "plan": plan}
 
 
+def _expressed(ad):
+    """Genes that some cell of `ad` expresses: a stored value in sparse X (an explicit zero keeps its
+    gene, which is only tested for nothing), a nonzero in dense X. Read in blocks: the mapped indices of
+    a 400k-cell input hold about a billion entries."""
+    from scipy import sparse
+    X = ad.X
+    keep = np.zeros(ad.n_vars, bool)
+    if sparse.issparse(X):
+        indices = X.tocsr().indices
+        for start in range(0, len(indices), 1 << 26):
+            keep[indices[start:start + (1 << 26)]] = True
+        return keep
+    for start in range(0, ad.n_obs, 10000):
+        keep |= (np.asarray(X[start:start + 10000]) != 0).any(axis=0)
+    return keep
+
+
+def _adjust_over_all_genes(df, n_genes):
+    """Benjamini-Hochberg over all n_genes genes of the data, as Scanpy computes it: the genes left out
+    have p = 1 and only count toward the number of tests."""
+    from statsmodels.stats.multitest import multipletests
+    df = df.copy()
+    for _, rows in (df.groupby("group", observed=True, sort=False) if "group" in df else [(None, df)]):
+        p = rows["pvals"].fillna(1).to_numpy(float)
+        padded = np.concatenate([p, np.ones(n_genes - len(p))])
+        df.loc[rows.index, "pvals_adj"] = multipletests(padded, alpha=0.05, method="fdr_bh")[1][: len(p)]
+    return df
+
+
 def compute_deg_task(ad_excl, item, cluster=None, gpu=False):
-    """One global resolution or one local target; input metadata is never mutated."""
+    """One global resolution or one local target; input metadata is never mutated.
+
+    Genes no cell of the comparison expresses are left out of the test. Such a gene ties every cell at
+    zero: score 0, p 1, in both groups. A gene expressed in only one of the two groups is kept, of course.
+    Scores, p-values, log fold changes and percentages of the tested genes do not depend on the other
+    genes, and pvals_adj is corrected over all genes, so the tables match the full test. In the
+    2026-10-05 scale test (392k cells, 56k genes) no cell expressed 20 % of the genes, and a cluster
+    alone left out 49 % (median): the Wilcoxon cost is per gene, whatever its zeros."""
     rgg = rank_genes_groups
     if gpu:
         import rapids_singlecell as rsc
@@ -178,12 +219,13 @@ def compute_deg_task(ad_excl, item, cluster=None, gpu=False):
     if cluster is None:
         key = item["key"]
         slot = f"_rgg_{key}"
-        work = _global_deg_workspace(ad_excl)
+        work = _global_deg_workspace(ad_excl, _expressed(ad_excl))
         rgg(work, key, groups=item["valid"], method="wilcoxon", use_raw=False, pts=True, key_added=slot)
         gdf = sc.get.rank_genes_groups_df(work, group=None, key=slot)
         # Scanpy omits group when only one group qualifies for testing.
         if "group" not in gdf and len(item["valid"]) == 1:
             gdf.insert(0, "group", item["valid"][0])
+        gdf = _adjust_over_all_genes(gdf, ad_excl.n_vars)
         return gdf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
 
     else:
@@ -192,11 +234,12 @@ def compute_deg_task(ad_excl, item, cluster=None, gpu=False):
         neighbors = item["top3"].get(c, [])
         if not neighbors:
             return None
-        sub = ad_excl[ad_excl.obs[key].isin([c, *neighbors])].copy()
+        sub = ad_excl[ad_excl.obs[key].isin([c, *neighbors])]
         if int((sub.obs[key] == c).sum()) < MIN_DE_GROUP_SIZE:
             return None
+        sub = sub[:, _expressed(sub)].copy()
         rgg(sub, key, groups=[c], reference="rest", method="wilcoxon", use_raw=False, pts=True)
-        ldf = sc.get.rank_genes_groups_df(sub, group=c)
+        ldf = _adjust_over_all_genes(sc.get.rank_genes_groups_df(sub, group=c), ad_excl.n_vars)
         ldf = ldf.rename(columns={"pct_nz_group": "pct1", "pct_nz_reference": "pct2"})
         # rank_genes_groups_df drops the "group" column when `group` is a scalar
         # (only keeps it for group=None/list) — put it back for schema parity
