@@ -1,3 +1,5 @@
+> **Moved.** Since 2026-10-06 this package lives in [eca-rsi](https://github.com/chansigit/eca-rsi) as `msp/` (its history included; decision 0018). This repository is read-only.
+
 <p align="center">
   <img src="assets/msp-logo.svg" alt="MSP logo: distinct cell populations sharing sample colors" width="176" height="176">
 </p>
